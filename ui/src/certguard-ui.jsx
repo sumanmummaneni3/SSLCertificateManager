@@ -10,7 +10,7 @@ const DEV_MODE = true;               // Set false to use Google OAuth
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 const styles = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -30,7 +30,7 @@ const styles = `
     --red:       var(--color-danger);
     --orange:    var(--color-orange);
     --glow:      var(--color-glow);
-    --font-head: 'Syne', sans-serif;
+    --font-head: 'Inter', sans-serif;
     --font-mono: 'DM Mono', monospace;
     --radius:    8px;
   }
@@ -38,7 +38,7 @@ const styles = `
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-mono);
+    font-family: var(--font-head);
     min-height: 100vh;
     overflow-x: hidden;
   }
@@ -48,8 +48,8 @@ const styles = `
     content: '';
     position: fixed; inset: 0;
     background-image:
-      linear-gradient(color-mix(in srgb, var(--color-primary) 4%, transparent) 1px, transparent 1px),
-      linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 4%, transparent) 1px, transparent 1px);
+      linear-gradient(color-mix(in srgb, var(--color-primary) 2%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 2%, transparent) 1px, transparent 1px);
     background-size: 40px 40px;
     pointer-events: none; z-index: 0;
   }
@@ -72,7 +72,7 @@ const styles = `
 
   .logo-icon {
     width: 56px; height: 56px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    background: var(--accent);
     border-radius: 14px;
     display: flex; align-items: center; justify-content: center;
     font-size: 28px;
@@ -83,8 +83,7 @@ const styles = `
     font-family: var(--font-head);
     font-size: 2rem; font-weight: 800;
     letter-spacing: -0.03em;
-    background: linear-gradient(135deg, var(--text) 40%, var(--accent));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    color: var(--text);
   }
 
   .launch-card {
@@ -161,7 +160,7 @@ const styles = `
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    background: var(--accent);
     color: var(--color-bg);
     font-weight: 600;
   }
@@ -229,10 +228,18 @@ const styles = `
   .sidebar-logo .logo-text { font-size: 1rem; color: var(--sb-text, var(--text)); }
 
   .nav-section {
-    font-size: 0.65rem; color: var(--sb-muted, var(--muted));
-    letter-spacing: 0.1em; text-transform: uppercase;
-    padding: 0 0.5rem; margin: 1rem 0 0.5rem;
+    font-size: 0.6rem; color: var(--sb-muted, var(--muted));
+    letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 0 0.5rem; margin: 1.25rem 0 0.35rem;
+    display: flex; align-items: center; gap: 8px;
   }
+  .nav-section::after {
+    content: '';
+    flex: 1; height: 1px;
+    background: var(--sb-border, var(--border));
+    opacity: 0.5;
+  }
+  .nav-section:first-of-type { margin-top: 0; }
 
   .nav-item {
     display: flex; align-items: center; gap: 10px;
@@ -1324,6 +1331,9 @@ function Dashboard({ token, org, toast }) {
           <LocationsView locations={locations} loading={locationsLoading} token={token}
             onRefresh={loadLocations} toast={toast} />
         )}
+        {view === "team"     && <TeamView     token={token} org={org} toast={toast} />}
+        {view === "settings" && <SettingsView token={token} org={org} toast={toast} />}
+        {view === "msp-orgs" && <MspOrgsView  token={token} toast={toast} />}
       </div>
 
       {showAdd && (
@@ -1353,33 +1363,70 @@ function Dashboard({ token, org, toast }) {
   );
 }
 
+const NAV_GROUPS = [
+  {
+    label: "Monitor",
+    items: [
+      { id: "dashboard", icon: "◈", label: "Dashboard"    },
+      { id: "targets",   icon: "⊕", label: "Targets"      },
+      { id: "certs",     icon: "⊞", label: "Certificates" },
+    ],
+  },
+  {
+    label: "Infrastructure",
+    items: [
+      { id: "locations", icon: "⊙", label: "Locations" },
+      { id: "agents",    icon: "⬡", label: "Agents"    },
+    ],
+  },
+  {
+    label: "Account",
+    items: [
+      { id: "team",     icon: "◎", label: "Team"     },
+      { id: "settings", icon: "⚙", label: "Settings" },
+    ],
+  },
+];
+
+const MSP_GROUP = {
+  label: "Platform",
+  items: [
+    { id: "msp-orgs", icon: "⬡", label: "MSP Orgs" },
+  ],
+};
+
+function NavItem({ item, active, onView }) {
+  return (
+    <div
+      className={`nav-item ${active ? "active" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-current={active ? "page" : undefined}
+      onClick={() => onView(item.id)}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onView(item.id)}
+    >
+      <span aria-hidden="true">{item.icon}</span>{item.label}
+    </div>
+  );
+}
+
 function Sidebar({ view, onView, org, theme = "dark", onTheme }) {
   const { mode, toggle } = useTheme();
   const themeVars = SIDEBAR_THEMES[theme]?.vars || SIDEBAR_THEMES.dark.vars;
+  const isMsp = org?.orgType === "MSP";
+  const groups = isMsp ? [...NAV_GROUPS, MSP_GROUP] : NAV_GROUPS;
   return (
     <nav className="sidebar" style={themeVars} aria-label="Main navigation">
       <div className="sidebar-logo">
         <div className="logo-icon" aria-hidden="true">🔐</div>
         <div className="logo-text">CertGuard</div>
       </div>
-      <div className="nav-section" aria-hidden="true">Navigation</div>
-      {[
-        { id: "dashboard", icon: "◈", label: "Dashboard"    },
-        { id: "targets",   icon: "⊕", label: "Targets"      },
-        { id: "certs",     icon: "⊞", label: "Certificates" },
-        { id: "agents",    icon: "⬡", label: "Agents"       },
-        { id: "locations", icon: "⊙", label: "Locations"    },
-      ].map((item) => (
-        <div
-          key={item.id}
-          className={`nav-item ${view === item.id ? "active" : ""}`}
-          role="button"
-          tabIndex={0}
-          aria-current={view === item.id ? "page" : undefined}
-          onClick={() => onView(item.id)}
-          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onView(item.id)}
-        >
-          <span aria-hidden="true">{item.icon}</span>{item.label}
+      {groups.map((group) => (
+        <div key={group.label}>
+          <div className="nav-section" aria-hidden="true">{group.label}</div>
+          {group.items.map((item) => (
+            <NavItem key={item.id} item={item} active={view === item.id} onView={onView} />
+          ))}
         </div>
       ))}
       <div className="sidebar-footer">
@@ -1908,6 +1955,66 @@ docker run -v ./config:/opt/certguard-agent/config \\
         </div>
       )}
     </>
+  );
+}
+
+// ─── TEAM VIEW ────────────────────────────────────────────────────────────────
+function TeamView({ token, org, toast }) {
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div className="page-title">Team</div>
+      </div>
+      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
+        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>◎</div>
+        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
+          Team Management
+        </div>
+        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+          Invite members, manage roles, and control access to your organisation.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SETTINGS VIEW ────────────────────────────────────────────────────────────
+function SettingsView({ token, org, toast }) {
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div className="page-title">Settings</div>
+      </div>
+      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
+        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>⚙</div>
+        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
+          Organisation Settings
+        </div>
+        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+          Configure alert thresholds, notification channels, and organisation profile.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MSP ORGS VIEW ────────────────────────────────────────────────────────────
+function MspOrgsView({ token, toast }) {
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div className="page-title">MSP Orgs</div>
+      </div>
+      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
+        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>⬡</div>
+        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
+          Managed Client Organisations
+        </div>
+        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+          Provision and manage certificate monitoring for your client organisations.
+        </div>
+      </div>
+    </div>
   );
 }
 
