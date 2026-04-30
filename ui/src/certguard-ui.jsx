@@ -301,6 +301,30 @@ const styles = `
     border-top: 1px solid var(--sb-border, var(--border));
   }
 
+  .logout-btn {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 8px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--sb-muted, var(--muted));
+    font-family: var(--font-head);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: left;
+    margin-top: 0.5rem;
+  }
+  .logout-btn:hover {
+    color: var(--red);
+    background: rgba(255, 82, 82, 0.08);
+    border-color: rgba(255, 82, 82, 0.2);
+  }
+  .logout-btn:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+  }
+
   .org-tag {
     font-size: 0.7rem; color: var(--sb-muted, var(--muted));
     padding: 0 0.5rem; margin-bottom: 0.5rem;
@@ -639,6 +663,7 @@ const api = {
   },
   getDevToken: (email) =>
     api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}`),
+  logout: (token) => api.call("POST", "/api/v1/auth/logout", null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
   updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
   getTargets:    (token) => api.call("GET",  "/api/v1/targets?size=100", null, token),
@@ -1203,7 +1228,7 @@ function FirstTarget({ token, onDone, toast }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
-function Dashboard({ token, org, toast }) {
+function Dashboard({ token, org, toast, onLogout }) {
   const [dash, setDash]           = useState(null);
   const [targets, setTargets]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -1301,7 +1326,7 @@ function Dashboard({ token, org, toast }) {
   if (loading) {
     return (
       <div className="app">
-        <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} />
+        <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} onLogout={onLogout} />
         <div className="main"><div className="loading-center"><Spinner lg /><span>Loading dashboard...</span></div></div>
       </div>
     );
@@ -1309,7 +1334,7 @@ function Dashboard({ token, org, toast }) {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} />
+      <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} onLogout={onLogout} />
       <div className="main">
         {view === "dashboard" && (
           <DashboardView dash={dash} targets={targets} onScan={triggerScan}
@@ -1410,7 +1435,7 @@ function NavItem({ item, active, onView }) {
   );
 }
 
-function Sidebar({ view, onView, org, theme = "dark", onTheme }) {
+function Sidebar({ view, onView, org, theme = "dark", onTheme, onLogout }) {
   const { mode, toggle } = useTheme();
   const themeVars = SIDEBAR_THEMES[theme]?.vars || SIDEBAR_THEMES.dark.vars;
   const isMsp = org?.orgType === "MSP";
@@ -1431,6 +1456,7 @@ function Sidebar({ view, onView, org, theme = "dark", onTheme }) {
       ))}
       <div className="sidebar-footer">
         <div className="org-tag"><span aria-hidden="true">🏢</span> <span>{org?.name || "My Org"}</span></div>
+        {org?.email && <div className="org-tag" style={{ fontSize: "0.62rem" }}>{org.email}</div>}
         <div className="org-tag" style={{ fontSize: "0.62rem" }}>
           Plan: <span>{org?.subscriptionTier || "—"}</span>
         </div>
@@ -1464,6 +1490,9 @@ function Sidebar({ view, onView, org, theme = "dark", onTheme }) {
             </button>
           </div>
         )}
+        <button className="logout-btn" onClick={onLogout} aria-label="Sign out">
+          <span aria-hidden="true">⏻</span> Sign out
+        </button>
       </div>
     </nav>
   );
@@ -2071,6 +2100,13 @@ export default function App() {
     }
   }, []);
 
+  const handleLogout = async () => {
+    try { await api.logout(token); } catch (_) {}
+    setToken(null);
+    setOrgData(null);
+    setPhase("launch");
+  };
+
   const afterOrgSetup = async () => {
     const org = await api.getOrg(token).catch(() => orgData);
     setOrgData(org);
@@ -2103,7 +2139,7 @@ export default function App() {
       {phase === "launch"       && <LaunchScreen onToken={handleToken} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
-      {phase === "app"          && <Dashboard token={token} org={orgData} toast={toast} />}
+      {phase === "app"          && <Dashboard token={token} org={orgData} toast={toast} onLogout={handleLogout} />}
       <Toast toasts={toasts} />
     </>
   );
