@@ -4,7 +4,7 @@ import { SIDEBAR_THEMES } from "./theme/tokens.js";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const API_BASE = "";
-const DEV_MODE = true;               // Set false to use Google OAuth
+const DEV_MODE = false;              // Set true to bypass Google OAuth in local dev
 
 // SIDEBAR_THEMES imported from src/theme/tokens.js — see that file for palette definitions.
 
