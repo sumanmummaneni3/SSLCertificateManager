@@ -2061,6 +2061,16 @@ export default function App() {
     }
   };
 
+  // Pick up the JWT that Spring drops in ?token= after the Google OAuth redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("token");
+    if (urlToken) {
+      window.history.replaceState({}, "", window.location.pathname);
+      handleToken(urlToken);
+    }
+  }, []);
+
   const afterOrgSetup = async () => {
     const org = await api.getOrg(token).catch(() => orgData);
     setOrgData(org);
