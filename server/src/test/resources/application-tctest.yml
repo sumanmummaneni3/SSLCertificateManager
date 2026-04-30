@@ -1,0 +1,61 @@
+# Properties for Testcontainers-backed repository tests.
+# The datasource URL/username/password are overridden dynamically via @DynamicPropertySource.
+spring:
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+  flyway:
+    enabled: false
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: test-client-id
+            client-secret: test-client-secret
+            scope:
+              - email
+              - profile
+  mail:
+    host: localhost
+    port: 25
+
+app:
+  dev-mode: true
+  jwt:
+    secret: test-secret-key-for-unit-tests-must-be-at-least-64-characters-long-padding!!
+    expiration-ms: 3600000
+  base-url: http://localhost
+  alert:
+    warning-days: 30
+    critical-days: 7
+    schedule-cron: "0 0 2 * * *"
+  scanning:
+    public:
+      thread-pool-size: 2
+      connect-timeout-ms: 3000
+      retry-max-attempts: 1
+      schedule-cron: "0 0 2 * * *"
+  agent:
+    offline-threshold-minutes: 10
+    offline-check-interval-ms: 300000
+    cert:
+      validity-days: 365
+
+server:
+  port: 0
+  ssl:
+    enabled: false
+
+management:
+  health:
+    mail:
+      enabled: false

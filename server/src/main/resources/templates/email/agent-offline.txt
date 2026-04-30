@@ -1,0 +1,14 @@
+CertGuard Cloud — Agent Offline Alert
+
+Agent:       [(${agentName})]
+Agent ID:    [(${agentId})]
+Last Seen:   [(${lastSeen})]
+Org:         [(${orgName})]
+Threshold:   [(${thresholdMinutes})] minutes
+
+This agent has not checked in for more than [(${thresholdMinutes})] minute(s).
+Private network certificate scans may be paused until the agent reconnects.
+
+Log in to CertGuard Cloud to review your agents: [(${baseUrl})]
+
+— CertGuard Cloud

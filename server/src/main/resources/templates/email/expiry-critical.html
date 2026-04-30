@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><title>Certificate Expiry Critical</title></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+  <h2 style="color:#dc2626;">&#128680; Certificate Expiry CRITICAL</h2>
+  <div th:if="${daysLeft < 0}">
+    <p>The SSL/TLS certificate for <strong th:text="${host + ':' + port}">example.com:443</strong>
+       has <strong>EXPIRED</strong> <span th:text="${-daysLeft}">1</span> day(s) ago.</p>
+  </div>
+  <div th:if="${daysLeft >= 0}">
+    <p>The SSL/TLS certificate for <strong th:text="${host + ':' + port}">example.com:443</strong>
+       will expire in <strong th:text="${daysLeft}">7</strong> day(s).</p>
+  </div>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+    <tr><td style="padding:8px;border:1px solid #eee;font-weight:bold;">Target</td><td style="padding:8px;border:1px solid #eee;" th:text="${host + ':' + port}">example.com:443</td></tr>
+    <tr><td style="padding:8px;border:1px solid #eee;font-weight:bold;">Days Left</td><td style="padding:8px;border:1px solid #eee;" th:text="${daysLeft}">7</td></tr>
+    <tr><td style="padding:8px;border:1px solid #eee;font-weight:bold;">Severity</td><td style="padding:8px;border:1px solid #eee;color:#dc2626;" th:text="${severity}">CRITICAL</td></tr>
+  </table>
+  <p style="text-align:center;margin:32px 0;">
+    <a th:href="${baseUrl}" style="background:#dc2626;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">View in CertGuard</a>
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
+  <p style="font-size:12px;color:#999;">&mdash; CertGuard Cloud</p>
+</body>
+</html>

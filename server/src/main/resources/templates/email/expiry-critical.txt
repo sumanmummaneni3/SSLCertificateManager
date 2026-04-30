@@ -1,0 +1,11 @@
+CertGuard Cloud — Certificate Expiry CRITICAL
+
+Target:    [(${host + ':' + port})]
+Days Left: [(${daysLeft})]
+Severity:  [(${severity})]
+
+[(${daysLeft < 0 ? 'The certificate has EXPIRED ' + (-daysLeft) + ' day(s) ago.' : 'The certificate will expire in ' + daysLeft + ' day(s).'})]
+
+Log in to CertGuard Cloud immediately to take action: [(${baseUrl})]
+
+— CertGuard Cloud

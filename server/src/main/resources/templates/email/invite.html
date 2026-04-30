@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><title>You've been invited</title></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+  <h2>You're invited to join <span th:text="${orgName}">Acme Corp</span> on CertGuard Cloud</h2>
+  <p>Hi,</p>
+  <p><strong th:text="${inviterName}">Your colleague</strong> has invited you to join
+     <strong th:text="${orgName}">Acme Corp</strong> as <strong th:text="${role}">MEMBER</strong>.</p>
+  <p>Click the button below to accept your invitation (valid for 24 hours):</p>
+  <p style="text-align:center;margin:32px 0;">
+    <a th:href="${inviteLink}" style="background:#1a73e8;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">Accept Invitation</a>
+  </p>
+  <p>Or copy this link into your browser:</p>
+  <p style="word-break:break-all;color:#555;" th:text="${inviteLink}">https://certguard.cloud/invite?token=...</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
+  <p style="font-size:12px;color:#999;">If you did not expect this invitation, you can safely ignore this email. &mdash; CertGuard Cloud</p>
+</body>
+</html>

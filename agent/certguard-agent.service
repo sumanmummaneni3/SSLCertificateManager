@@ -1,0 +1,25 @@
+[Unit]
+Description=CertGuard Agent — Private Network Certificate Scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=certguard-agent
+WorkingDirectory=/opt/certguard-agent
+ExecStart=/usr/bin/java -Xms32m -Xmx128m -jar /opt/certguard-agent/certguard-agent.jar
+Restart=on-failure
+RestartSec=15s
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/certguard-agent
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=certguard-agent
+
+[Install]
+WantedBy=multi-user.target

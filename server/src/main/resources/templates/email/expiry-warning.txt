@@ -1,0 +1,11 @@
+CertGuard Cloud — Certificate Expiry WARNING
+
+Target:    [(${host + ':' + port})]
+Days Left: [(${daysLeft})]
+Severity:  [(${severity})]
+
+The SSL/TLS certificate will expire in [(${daysLeft})] day(s).
+
+Log in to CertGuard Cloud to view details and take action: [(${baseUrl})]
+
+— CertGuard Cloud

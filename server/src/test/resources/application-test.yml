@@ -1,0 +1,68 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:certguard_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DEFAULT_NULL_ORDERING=HIGH
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        # Suppress named-enum type errors in H2
+        globally_quoted_identifiers: false
+  flyway:
+    enabled: false
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: test-client-id
+            client-secret: test-client-secret
+            scope:
+              - email
+              - profile
+  mail:
+    host: localhost
+    port: 25
+
+app:
+  dev-mode: true
+  jwt:
+    secret: test-secret-key-for-unit-tests-must-be-at-least-64-characters-long-padding!!
+    expiration-ms: 3600000
+  base-url: http://localhost
+  alert:
+    warning-days: 30
+    critical-days: 7
+    schedule-cron: "0 0 2 * * *"
+  scanning:
+    public:
+      thread-pool-size: 2
+      connect-timeout-ms: 3000
+      retry-max-attempts: 1
+      schedule-cron: "0 0 2 * * *"
+  agent:
+    offline-threshold-minutes: 10
+    offline-check-interval-ms: 300000
+    cert:
+      validity-days: 365
+
+server:
+  port: 0
+  ssl:
+    enabled: false
+
+management:
+  health:
+    mail:
+      enabled: false

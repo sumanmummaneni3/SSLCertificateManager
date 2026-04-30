@@ -1,0 +1,13 @@
+You've been invited to join [(${orgName})] on CertGuard Cloud
+
+Hi,
+
+[(${inviterName})] has invited you to join [(${orgName})] as [(${role})].
+
+Click the link below to accept your invitation (valid for 24 hours):
+
+[(${inviteLink})]
+
+If you did not expect this invitation, you can safely ignore this email.
+
+— CertGuard Cloud
