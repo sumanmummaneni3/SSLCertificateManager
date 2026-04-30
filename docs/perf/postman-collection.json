@@ -1,0 +1,309 @@
+{
+  "info": {
+    "name": "CertGuard API",
+    "description": "Minimal Postman collection covering core CertGuard REST endpoints.\nSet the collection variables BASE_URL and JWT_TOKEN before running.\nIn dev-mode obtain a token from POST {{BASE_URL}}/api/v1/auth/dev-token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "BASE_URL",   "value": "https://localhost:8443", "type": "string" },
+    { "key": "JWT_TOKEN",  "value": "REPLACE_WITH_TOKEN",      "type": "string" },
+    { "key": "ORG_ID",     "value": "",                        "type": "string" },
+    { "key": "TARGET_ID",  "value": "",                        "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{JWT_TOKEN}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Get auth config",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{BASE_URL}}/api/v1/auth/config", "host": ["{{BASE_URL}}"], "path": ["api","v1","auth","config"] },
+            "description": "Returns devMode flag. No auth required."
+          }
+        },
+        {
+          "name": "Dev token (ADMIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set('JWT_TOKEN', json.token);",
+                  "pm.collectionVariables.set('ORG_ID',    json.orgId);",
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('token present', () => pm.expect(json.token).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/auth/dev-token?email=admin@certguard.local&role=ADMIN",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","auth","dev-token"],
+              "query": [
+                { "key": "email", "value": "admin@certguard.local" },
+                { "key": "role",  "value": "ADMIN" }
+              ]
+            },
+            "description": "Issues a JWT for the given email/role. Requires app.dev-mode=true."
+          }
+        },
+        {
+          "name": "Dev token (VIEWER)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/auth/dev-token?email=viewer@certguard.local&role=VIEWER",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","auth","dev-token"],
+              "query": [
+                { "key": "email", "value": "viewer@certguard.local" },
+                { "key": "role",  "value": "VIEWER" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{BASE_URL}}/api/v1/auth/logout", "host": ["{{BASE_URL}}"], "path": ["api","v1","auth","logout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Targets",
+      "item": [
+        {
+          "name": "List targets",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "var json = pm.response.json();",
+                  "pm.test('content is array', () => pm.expect(json.content).to.be.an('array'));",
+                  "if (json.content.length > 0) {",
+                  "  pm.collectionVariables.set('TARGET_ID', json.content[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets?page=0&size=20",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create target",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "var json = pm.response.json();",
+                  "pm.test('host matches', () => pm.expect(json.host).to.eql('postman-test.example.com'));",
+                  "pm.collectionVariables.set('TARGET_ID', json.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"host\": \"postman-test.example.com\",\n  \"port\": 443,\n  \"isPrivate\": false,\n  \"description\": \"Created by Postman collection\"\n}"
+            },
+            "url": { "raw": "{{BASE_URL}}/api/v1/targets", "host": ["{{BASE_URL}}"], "path": ["api","v1","targets"] }
+          }
+        },
+        {
+          "name": "Create target — missing host (negative)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 400 for missing host', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"port\": 443\n}"
+            },
+            "url": { "raw": "{{BASE_URL}}/api/v1/targets", "host": ["{{BASE_URL}}"], "path": ["api","v1","targets"] }
+          }
+        },
+        {
+          "name": "Trigger scan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('message field present', () => pm.expect(pm.response.json()).to.have.property('message'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets/{{TARGET_ID}}/scan",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets","{{TARGET_ID}}","scan"]
+            }
+          }
+        },
+        {
+          "name": "Scan status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets/{{TARGET_ID}}/scan-status",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets","{{TARGET_ID}}","scan-status"]
+            }
+          }
+        },
+        {
+          "name": "Get notifications",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets/{{TARGET_ID}}/notifications",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets","{{TARGET_ID}}","notifications"]
+            }
+          }
+        },
+        {
+          "name": "Update notifications",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": {\n    \"enabled\": true,\n    \"addresses\": [\"ops@example.com\"]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets/{{TARGET_ID}}/notifications",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets","{{TARGET_ID}}","notifications"]
+            }
+          }
+        },
+        {
+          "name": "Delete target",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/targets/{{TARGET_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","targets","{{TARGET_ID}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get dashboard",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_URL}}/api/v1/org/dashboard",
+              "host": ["{{BASE_URL}}"],
+              "path": ["api","v1","org","dashboard"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unauthenticated (negative)",
+      "item": [
+        {
+          "name": "List targets — no token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 401 when unauthenticated', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{BASE_URL}}/api/v1/targets", "host": ["{{BASE_URL}}"], "path": ["api","v1","targets"] }
+          }
+        }
+      ]
+    }
+  ]
+}
