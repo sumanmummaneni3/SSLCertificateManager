@@ -63,6 +63,9 @@ public class Agent extends BaseEntity {
     @Column(name = "registered_at")
     private Instant registeredAt;
 
+    @Column(name = "last_offline_alert_sent_at")
+    private Instant lastOfflineAlertSentAt;
+
     @OneToMany(mappedBy = "agent", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
     private List<Target> targets = new ArrayList<>();

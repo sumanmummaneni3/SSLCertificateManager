@@ -271,6 +271,9 @@ public class TargetService {
 
     @Transactional
     public TargetResponse updateNotificationChannels(UUID orgId, UUID targetId, Map<String, Object> channels) {
+        if (channels != null && channels.size() > 20) {
+            throw new IllegalArgumentException("notificationChannels map may not exceed 20 entries");
+        }
         Target target = findTargetForOrg(orgId, targetId);
         target.setNotificationChannels(channels);
         return toResponse(targetRepository.save(target));

@@ -249,22 +249,11 @@ public class AgentService {
 
     @Transactional
     public void queueScanJob(Target target) {
-        boolean alreadyPending = scanJobRepository.existsByTargetIdAndStatusIn(
-                target.getId(), List.of(ScanJobStatus.PENDING, ScanJobStatus.CLAIMED));
-        if (alreadyPending) {
-            log.info("Scan job already pending for target {}", target.getId());
-            return;
-        }
-        AgentScanJob job = AgentScanJob.builder()
-                .agent(target.getAgent()).target(target)
-                .orgId(target.getOrganization().getId())
-                .status(ScanJobStatus.PENDING)
-                .build();
-        scanJobRepository.save(job);
-        log.info("Scan job queued — target: {}, agent: {}", target.getHost(), target.getAgent().getName());
+        // Delegate to the org-scoped overload so the tenant check always runs.
+        queueScanJob(target.getId(), target.getOrganization().getId());
     }
 
-        @Transactional
+    @Transactional
     public void queueScanJob(UUID targetId, UUID orgId) {
         Target target = targetRepository.findByIdAndOrganizationId(targetId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Target not found"));
@@ -274,7 +263,10 @@ public class AgentService {
 
         boolean alreadyPending = scanJobRepository.existsByTargetIdAndStatusIn(
                 targetId, List.of(ScanJobStatus.PENDING, ScanJobStatus.CLAIMED));
-        if (alreadyPending) { log.info("Scan job already pending for target {}", targetId); return; }
+        if (alreadyPending) {
+            log.info("Scan job already pending for target {}", targetId);
+            return;
+        }
 
         AgentScanJob job = AgentScanJob.builder()
                 .agent(target.getAgent()).target(target).orgId(orgId).status(ScanJobStatus.PENDING)

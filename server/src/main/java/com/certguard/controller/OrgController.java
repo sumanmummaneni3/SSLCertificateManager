@@ -5,14 +5,17 @@ import com.certguard.dto.response.OrgResponse;
 import com.certguard.security.TenantContext;
 import com.certguard.service.OrgService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
 
+@Validated
 @RestController
 @RequestMapping(value = "/api/v1/org", produces = "application/json")
 @RequiredArgsConstructor
@@ -54,7 +57,7 @@ public class OrgController {
 
     @PutMapping("/admin/orgs/{orgId}/quota")
     @PreAuthorize("hasRole('PLATFORM_ADMIN')")
-    public ResponseEntity<OrgResponse> updateQuota(@PathVariable UUID orgId, @RequestParam int value) {
+    public ResponseEntity<OrgResponse> updateQuota(@PathVariable UUID orgId, @Min(1) @RequestParam int value) {
         return ResponseEntity.ok(orgService.updateCertificateQuota(orgId, value));
     }
 }

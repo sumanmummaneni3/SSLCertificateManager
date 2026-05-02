@@ -37,9 +37,11 @@ public class AgentOfflineScheduler {
     private int offlineThresholdMinutes;
 
     @Scheduled(fixedDelayString = "${app.agent.offline-check-interval-ms:300000}")
-    @Transactional(readOnly = true)
+    @Transactional
     public void checkOfflineAgents() {
-        Instant threshold = Instant.now().minus(offlineThresholdMinutes, ChronoUnit.MINUTES);
+        Instant now = Instant.now();
+        Instant threshold = now.minus(offlineThresholdMinutes, ChronoUnit.MINUTES);
+        Instant alertDeduplicationWindow = now.minus(24, ChronoUnit.HOURS);
 
         List<Agent> offlineAgents = agentRepository.findOfflineAgents(AgentStatus.ACTIVE, threshold);
 
@@ -49,7 +51,17 @@ public class AgentOfflineScheduler {
                 offlineAgents.size(), offlineThresholdMinutes);
 
         for (Agent agent : offlineAgents) {
+            // Skip agents that already received an alert within the last 24 hours.
+            if (agent.getLastOfflineAlertSentAt() != null
+                    && agent.getLastOfflineAlertSentAt().isAfter(alertDeduplicationWindow)) {
+                log.debug("Suppressing duplicate offline alert for agent {} (last sent: {})",
+                        agent.getId(), agent.getLastOfflineAlertSentAt());
+                continue;
+            }
+
             notificationService.dispatchAgentOfflineAlert(agent, agent.getOrganization());
+            agent.setLastOfflineAlertSentAt(now);
+            agentRepository.save(agent);
         }
     }
 }

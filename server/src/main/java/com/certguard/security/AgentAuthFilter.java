@@ -59,7 +59,7 @@ public class AgentAuthFilter extends OncePerRequestFilter {
 
         if (agentKey == null || agentKey.isBlank()
                 || agentIdStr == null || agentIdStr.isBlank()) {
-            sendUnauthorized(response, "Missing agent credentials");
+            sendUnauthorized(request, response, "Missing agent credentials");
             return;
         }
 
@@ -67,24 +67,24 @@ public class AgentAuthFilter extends OncePerRequestFilter {
         try {
             agentId = UUID.fromString(agentIdStr);
         } catch (IllegalArgumentException e) {
-            sendUnauthorized(response, "Invalid agent ID format");
+            sendUnauthorized(request, response, "Invalid agent ID format");
             return;
         }
 
         Agent agent = agentRepository.findById(agentId).orElse(null);
         if (agent == null) {
-            sendUnauthorized(response, "Agent not found");
+            sendUnauthorized(request, response, "Agent not found");
             return;
         }
 
         if (agent.getStatus() != AgentStatus.ACTIVE) {
-            sendUnauthorized(response, "Agent is not active: " + agent.getStatus());
+            sendUnauthorized(request, response, "Agent is not active: " + agent.getStatus());
             return;
         }
 
         if (!passwordEncoder.matches(agentKey, agent.getAgentKeyHash())) {
             log.warn("Invalid agent key for agent: {}", agentId);
-            sendUnauthorized(response, "Invalid agent credentials");
+            sendUnauthorized(request, response, "Invalid agent credentials");
             return;
         }
 
@@ -109,10 +109,22 @@ public class AgentAuthFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    private void sendUnauthorized(HttpServletResponse response, String message)
-            throws IOException {
+    private void sendUnauthorized(HttpServletRequest request,
+                                   HttpServletResponse response,
+                                   String message) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType("application/json");
-        response.getWriter().write("{\"error\":\"" + message + "\"}");
+        response.setContentType("application/problem+json");
+        // RFC 9457 ProblemDetail — consistent with GlobalExceptionHandler
+        String body = String.format(
+                "{\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"%s\",\"instance\":\"%s\"}",
+                escapeJson(message),
+                escapeJson(request.getRequestURI()));
+        response.getWriter().write(body);
+    }
+
+    /** Escapes characters that would break the inline JSON string. */
+    private static String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
