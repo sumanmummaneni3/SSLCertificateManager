@@ -16,7 +16,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -76,7 +75,7 @@ class TargetServiceTest {
                     .organization(org).host("example.com").port(443).isPrivate(false).enabled(true)
                     .build();
             when(targetRepository.save(any(Target.class))).thenReturn(savedTarget);
-            when(certRepository.findAllByTargetId(any())).thenReturn(List.of());
+            when(certRepository.findTopByTargetIdOrderByScannedAtDesc(any())).thenReturn(Optional.empty());
 
             TargetResponse response = targetService.createTarget(orgId, req);
 

@@ -26,7 +26,7 @@ class JwtSecretValidatorTest {
                   // The root cause carries the message; walk the cause chain
                   Throwable root = failure;
                   while (root.getCause() != null) root = root.getCause();
-                  assertThat(root.getMessage()).contains("JWT_SECRET");
+                  assertThat(root.getMessage()).contains("app.jwt.secret");
               });
     }
 
@@ -39,13 +39,15 @@ class JwtSecretValidatorTest {
                   assertThat(failure).isInstanceOfAny(BeanCreationException.class, IllegalStateException.class);
                   Throwable root = failure;
                   while (root.getCause() != null) root = root.getCause();
-                  assertThat(root.getMessage()).contains("JWT_SECRET");
+                  assertThat(root.getMessage()).contains("app.jwt.secret");
               });
     }
 
     @Test
     void contextStartsWhenJwtSecretIsLongEnough() {
-        runner.withPropertyValues("app.jwt.secret=aaaabbbbccccddddeeeeffffgggghhhh")
+        // Exactly 64 characters — the minimum the validator accepts.
+        String secret64 = "aaaabbbbccccddddeeeeffffgggghhhhiiiijjjjkkkkllllmmmmnnnnoooopppp";
+        runner.withPropertyValues("app.jwt.secret=" + secret64)
               .run(ctx -> assertThat(ctx).hasNotFailed());
     }
 }
