@@ -1,0 +1,2 @@
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS last_error_message TEXT;
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;

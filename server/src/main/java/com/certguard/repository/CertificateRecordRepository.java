@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -29,6 +30,19 @@ public interface CertificateRecordRepository extends JpaRepository<CertificateRe
 
     @Query("SELECT c FROM CertificateRecord c WHERE c.orgId = :orgId AND c.expiryDate BETWEEN :from AND :to")
     List<CertificateRecord> findExpiringByOrgId(UUID orgId, Instant from, Instant to);
+
+    /**
+     * Cross-org fetch of all certificates expiring within [now, threshold], eagerly
+     * joining their target. Replaces the per-org loop in CertificateExpiryScheduler
+     * to eliminate the N+1 query pattern.
+     */
+    @Query("SELECT c FROM CertificateRecord c JOIN FETCH c.target t " +
+           "WHERE c.expiryDate BETWEEN :now AND :threshold " +
+           "AND c.status IN ('VALID', 'EXPIRING') " +
+           "AND t.enabled = true")
+    List<CertificateRecord> findExpiringWithTargets(
+            @Param("now") Instant now,
+            @Param("threshold") Instant threshold);
 
     /**
      * Stamps last_alert_sent_at on a single certificate record.

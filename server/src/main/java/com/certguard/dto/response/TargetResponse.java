@@ -24,6 +24,8 @@ public class TargetResponse {
     private UUID locationId;
     private String locationName;
     private Instant lastScannedAt;
+    private String lastErrorMessage;
+    private Instant lastErrorAt;
     private Instant createdAt;
     private CertificateSummary latestCertificate;
     private Map<String, Object> notificationChannels;

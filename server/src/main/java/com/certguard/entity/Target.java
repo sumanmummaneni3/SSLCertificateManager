@@ -47,6 +47,12 @@ public class Target extends BaseEntity {
     @Column(name = "last_scanned_at")
     private Instant lastScannedAt;
 
+    @Column(name = "last_error_message", columnDefinition = "TEXT")
+    private String lastErrorMessage;
+
+    @Column(name = "last_error_at")
+    private Instant lastErrorAt;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "agent_id")
     private Agent agent;

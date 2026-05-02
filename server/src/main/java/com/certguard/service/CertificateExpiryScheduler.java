@@ -3,7 +3,6 @@ package com.certguard.service;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
 import com.certguard.repository.CertificateRecordRepository;
-import com.certguard.repository.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Scheduled job that checks all organisations for certificates nearing expiry
@@ -37,7 +35,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CertificateExpiryScheduler {
 
-    private final OrganizationRepository  organisationRepository;
     private final CertificateRecordRepository certRepository;
     private final NotificationService     notificationService;
 
@@ -47,62 +44,41 @@ public class CertificateExpiryScheduler {
 
     /**
      * Daily sweep across all orgs.
-     * Finds certificates expiring within the warning window (or already expired)
-     * and dispatches alerts, subject to per-record deduplication.
+     * Finds certificates expiring within the warning window and dispatches alerts,
+     * subject to per-record deduplication. Uses a single JOIN FETCH query to avoid
+     * the N+1 pattern that arose from the previous per-org loop.
      */
     @Scheduled(cron = "${app.alert.schedule-cron:0 0 8 * * *}")
     @Transactional
     public void checkExpiringCertificates() {
         log.info("Starting daily certificate expiry notification sweep (dedup window={}h)", dedupHours);
 
-        List<UUID> orgIds = organisationRepository.findAll()
-                .stream()
-                .map(org -> org.getId())
-                .toList();
-
-        Instant now      = Instant.now();
-        Instant warnCutoff = now.plus(warningDays, ChronoUnit.DAYS);
+        Instant now         = Instant.now();
+        Instant warnCutoff  = now.plus(warningDays, ChronoUnit.DAYS);
         // Dedup gate: skip certs already alerted within the last dedupHours
         Instant dedupCutoff = now.minus(dedupHours, ChronoUnit.HOURS);
 
-        int alertsSent  = 0;
+        int alertsSent    = 0;
         int alertsSkipped = 0;
 
-        for (UUID orgId : orgIds) {
-            // Certs expiring within the warning window (includes already-expired
-            // when from < now, because we also pass now.minus(365d)..now below).
-            List<CertificateRecord> expiring = certRepository.findExpiringByOrgId(orgId, now, warnCutoff);
+        // Single query — fetches certs + targets together, no per-org round-trips.
+        List<CertificateRecord> expiring = certRepository.findExpiringWithTargets(now, warnCutoff);
 
-            for (CertificateRecord cert : expiring) {
-                if (shouldSkip(cert, dedupCutoff)) { alertsSkipped++; continue; }
-                Target target = cert.getTarget();
-                if (target == null || !Boolean.TRUE.equals(target.getEnabled())) continue;
+        for (CertificateRecord cert : expiring) {
+            if (shouldSkip(cert, dedupCutoff)) { alertsSkipped++; continue; }
+            Target target = cert.getTarget();
+            // target.enabled is already filtered in the JPQL, but guard against null
+            if (target == null) continue;
 
-                long daysLeft = ChronoUnit.DAYS.between(now, cert.getExpiryDate());
-                String severity = (daysLeft <= criticalDays) ? "CRITICAL" : "WARNING";
+            long daysLeft = ChronoUnit.DAYS.between(now, cert.getExpiryDate());
+            String severity = (daysLeft <= criticalDays) ? "CRITICAL" : "WARNING";
 
-                log.debug("Cert expiry alert — target {}:{} daysLeft={} severity={}",
-                        target.getHost(), target.getPort(), daysLeft, severity);
+            log.debug("Cert expiry alert — target {}:{} daysLeft={} severity={}",
+                    target.getHost(), target.getPort(), daysLeft, severity);
 
-                notificationService.dispatchExpiryAlert(target, (int) daysLeft, severity);
-                certRepository.stampAlertSentAt(cert.getId(), now);
-                alertsSent++;
-            }
-
-            // Already-expired certs (expiry in the past, up to 365 days back)
-            List<CertificateRecord> expired = certRepository.findExpiringByOrgId(
-                    orgId, now.minus(365, ChronoUnit.DAYS), now);
-
-            for (CertificateRecord cert : expired) {
-                if (shouldSkip(cert, dedupCutoff)) { alertsSkipped++; continue; }
-                Target target = cert.getTarget();
-                if (target == null || !Boolean.TRUE.equals(target.getEnabled())) continue;
-
-                long daysLeft = ChronoUnit.DAYS.between(now, cert.getExpiryDate()); // negative
-                notificationService.dispatchExpiryAlert(target, (int) daysLeft, "CRITICAL");
-                certRepository.stampAlertSentAt(cert.getId(), now);
-                alertsSent++;
-            }
+            notificationService.dispatchExpiryAlert(target, (int) daysLeft, severity);
+            certRepository.stampAlertSentAt(cert.getId(), now);
+            alertsSent++;
         }
 
         log.info("Certificate expiry sweep complete — {} alert(s) dispatched, {} skipped (dedup)",

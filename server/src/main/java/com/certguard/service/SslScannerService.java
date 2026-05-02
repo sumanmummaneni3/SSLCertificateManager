@@ -82,7 +82,7 @@ public class SslScannerService {
                 if (chain != null && chain.length > 0) { persistCertificates(target, chain); return; }
             } catch (Exception e) {
                 log.warn("Scan attempt {}/{} failed for {}:{} — {}", attempt, maxRetries, target.getHost(), target.getPort(), e.getMessage());
-                if (attempt == maxRetries) markTargetUnreachable(target);
+                if (attempt == maxRetries) markTargetUnreachable(target, e.getMessage());
                 else sleep(attempt * 2000L);
             }
         }
@@ -131,18 +131,27 @@ public class SslScannerService {
             record.setPublicCertB64(b64); record.setStatus(determineStatus(expiry));
             record.setScannedAt(Instant.now());
             certRepository.save(record);
+
+            // Clear any previous scan error now that the scan succeeded
+            target.setLastErrorMessage(null);
+            target.setLastErrorAt(null);
+            targetRepository.save(target);
+
             log.info("Certificate saved — CN: {}, Expires: {}, Status: {}", cn, expiry, record.getStatus());
         } catch (CertificateEncodingException e) {
             log.error("Failed to encode cert for {}: {}", target.getHost(), e.getMessage());
         }
     }
 
-    private void markTargetUnreachable(Target target) {
+    private void markTargetUnreachable(Target target, String errorMessage) {
         certRepository.findAllByTargetId(target.getId()).forEach(cert -> {
             cert.setStatus(CertStatus.UNREACHABLE); cert.setScannedAt(Instant.now());
             certRepository.save(cert);
         });
-        log.warn("Target UNREACHABLE: {}:{}", target.getHost(), target.getPort());
+        target.setLastErrorMessage(errorMessage);
+        target.setLastErrorAt(Instant.now());
+        targetRepository.save(target);
+        log.warn("Target UNREACHABLE: {}:{} — {}", target.getHost(), target.getPort(), errorMessage);
     }
 
     private CertStatus determineStatus(Instant expiry) {
