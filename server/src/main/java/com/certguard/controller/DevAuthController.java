@@ -6,12 +6,14 @@ import com.certguard.security.JwtTokenProvider;
 import com.certguard.service.OrgService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
 @Slf4j
+@Profile("dev")
 @RestController
 @RequestMapping("/api/v1/auth")
 @ConditionalOnProperty(name = "app.dev-mode", havingValue = "true")

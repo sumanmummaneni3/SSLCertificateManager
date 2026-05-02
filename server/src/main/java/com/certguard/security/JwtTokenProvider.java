@@ -3,6 +3,7 @@ package com.certguard.security;
 import com.certguard.entity.User;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,14 @@ public class JwtTokenProvider {
 
     @Value("${app.jwt.expiration-ms:28800000}")
     private long expirationMs;
+
+    @PostConstruct
+    public void init() {
+        if (jwtSecret == null || jwtSecret.isBlank() || jwtSecret.length() < 64) {
+            throw new IllegalStateException(
+                "app.jwt.secret must be configured with at least 64 characters");
+        }
+    }
 
     private SecretKey getKey() {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));

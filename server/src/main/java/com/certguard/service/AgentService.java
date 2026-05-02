@@ -147,7 +147,10 @@ public class AgentService {
 
     @Transactional
     public List<ScanJobResponse> pollJobs(Agent agent) {
-        List<AgentScanJob> pending = scanJobRepository.findPendingJobsForAgent(agent.getId());
+        // Use FOR UPDATE SKIP LOCKED to atomically claim jobs without races
+        // Cap at max-targets to bound the work per poll cycle
+        List<AgentScanJob> pending = scanJobRepository.claimPendingJobsWithLock(
+                agent.getId(), agent.getMaxTargets());
         Instant now = Instant.now();
         pending.forEach(job -> {
             job.setStatus(ScanJobStatus.CLAIMED);
