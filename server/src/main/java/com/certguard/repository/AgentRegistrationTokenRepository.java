@@ -13,4 +13,7 @@ public interface AgentRegistrationTokenRepository extends JpaRepository<AgentReg
     @Modifying
     @Query("DELETE FROM AgentRegistrationToken t WHERE t.expiresAt < :now OR t.used = true")
     void deleteExpiredAndUsed(Instant now);
+
+    @Query("SELECT t FROM AgentRegistrationToken t WHERE t.expiresAt < :now OR t.used = true")
+    List<AgentRegistrationToken> findExpiredAndUsed(Instant now);
 }

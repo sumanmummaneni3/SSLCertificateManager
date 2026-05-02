@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.List;
@@ -187,7 +188,14 @@ public class AgentConfig {
         if (!found) {
             updated.add(key + "=" + value);
         }
-        Files.write(configPath, updated);
+        Path tmp = Files.createTempFile(configPath.getParent(), ".certguard-cfg-", ".tmp");
+        try {
+            Files.write(tmp, updated, StandardOpenOption.WRITE);
+            Files.move(tmp, configPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Files.deleteIfExists(tmp);
+            throw e;
+        }
         log.debug("Config updated: {}={}", key, value.isEmpty() ? "<cleared>" : "<set>");
     }
 

@@ -52,9 +52,6 @@ public class SecureHttpClient {
                 .setTlsVersions(org.apache.hc.core5.http.ssl.TLS.V_1_3)
                 .setCiphers(CIPHER_SUITES)
                 .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
-                .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
-                .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
-                .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
                 .build();
 
         var connectionManager = PoolingHttpClientConnectionManagerBuilder.create()

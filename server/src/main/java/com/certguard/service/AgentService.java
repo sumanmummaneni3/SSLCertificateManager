@@ -169,9 +169,7 @@ public class AgentService {
 
     @Transactional
     public void submitResult(Agent agent, AgentScanResultRequest request, String plainAgentKey) {
-        boolean hmacValid = hmacService.verify(
-                plainAgentKey, request.getTargetId(), request.getScanType(),
-                request.getSerialNumber(), request.getNotAfter(), request.getHmacSignature());
+        boolean hmacValid = hmacService.verify(plainAgentKey, request, request.getHmacSignature());
         if (!hmacValid) {
             throw new SecurityException("HMAC signature verification failed");
         }
@@ -315,10 +313,16 @@ public class AgentService {
         scanJobRepository.saveAll(stale);
     }
 
-        @Scheduled(fixedDelay = 300_000)
+    @Scheduled(fixedDelay = 300_000)
     @Transactional
     public void cleanupExpiredTokens() {
-        tokenRepository.deleteExpiredAndUsed(Instant.now());
+        List<AgentRegistrationToken> expired = tokenRepository.findExpiredAndUsed(Instant.now());
+        // Skip tokens still linked to a PENDING bundle agent — deleting them would
+        // orphan the agent row and prevent it from ever completing registration.
+        List<AgentRegistrationToken> toDelete = expired.stream()
+                .filter(t -> t.getAgentId() == null)
+                .collect(Collectors.toList());
+        tokenRepository.deleteAll(toDelete);
     }
 
     private void validateCidr(String host, List<String> allowedCidrs) {
