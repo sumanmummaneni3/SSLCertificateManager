@@ -23,7 +23,9 @@ import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -41,7 +43,20 @@ public class TargetService {
 
     @Transactional(readOnly = true)
     public Page<TargetResponse> listTargets(UUID orgId, Pageable pageable) {
-        return targetRepository.findAllByOrganizationId(orgId, pageable).map(this::toResponse);
+        Page<Target> page = targetRepository.findAllByOrganizationId(orgId, pageable);
+
+        // Batch-load the latest cert for every target in one query to avoid N+1.
+        List<UUID> targetIds = page.stream().map(Target::getId).collect(Collectors.toList());
+        Map<UUID, CertificateRecord> latestCertByTarget = certRepository
+                .findLatestByTargetIds(targetIds)
+                .stream()
+                // Ordered DESC by scannedAt; keep only the first occurrence per targetId.
+                .collect(Collectors.toMap(
+                        c -> c.getTarget().getId(),
+                        c -> c,
+                        (existing, replacement) -> existing));  // keep first (latest)
+
+        return page.map(target -> toResponse(target, latestCertByTarget.get(target.getId())));
     }
 
     @Transactional
@@ -292,10 +307,22 @@ public class TargetService {
             throw new QuotaExceededException("Certificate quota of " + sub.getMaxCertificateQuota() + " reached. Contact your platform administrator to increase the limit.");
     }
 
+    /**
+     * Single-target overload used by getTarget() and createTarget() — loads the
+     * latest cert record with a per-target query (acceptable for single lookups).
+     */
     private TargetResponse toResponse(Target target) {
-        CertificateSummary certSummary = certRepository.findAllByTargetId(target.getId())
-                .stream().max((a, b) -> a.getScannedAt().compareTo(b.getScannedAt()))
-                .map(this::toCertSummary).orElse(null);
+        Optional<CertificateRecord> latestCert = certRepository
+                .findTopByTargetIdOrderByScannedAtDesc(target.getId());
+        return toResponse(target, latestCert.orElse(null));
+    }
+
+    /**
+     * Overload used by listTargets() — accepts a pre-loaded cert to avoid N+1.
+     * {@code latestCert} may be null when no cert has been scanned yet.
+     */
+    private TargetResponse toResponse(Target target, CertificateRecord latestCert) {
+        CertificateSummary certSummary = (latestCert != null) ? toCertSummary(latestCert) : null;
 
         return TargetResponse.builder()
                 .id(target.getId()).host(target.getHost()).port(target.getPort())

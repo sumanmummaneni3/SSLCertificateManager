@@ -5,6 +5,7 @@ import com.certguard.entity.Target;
 import com.certguard.repository.CertificateRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -49,6 +50,8 @@ public class CertificateExpiryScheduler {
      * the N+1 pattern that arose from the previous per-org loop.
      */
     @Scheduled(cron = "${app.alert.schedule-cron:0 0 8 * * *}")
+    @SchedulerLock(name = "CertificateExpiryScheduler_checkExpiringCertificates",
+                   lockAtMostFor = "PT2H", lockAtLeastFor = "PT30M")
     @Transactional
     public void checkExpiringCertificates() {
         log.info("Starting daily certificate expiry notification sweep (dedup window={}h)", dedupHours);

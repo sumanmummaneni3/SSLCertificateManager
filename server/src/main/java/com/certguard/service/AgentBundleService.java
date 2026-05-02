@@ -14,6 +14,7 @@ import com.certguard.repository.OrganizationRepository;
 import com.certguard.security.AgentBundleCrypto;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -228,6 +229,8 @@ public class AgentBundleService {
      * Downloaded rows are retained for audit purposes.
      */
     @Scheduled(cron = "0 0 * * * *")
+    @SchedulerLock(name = "AgentBundleService_cleanupExpiredInstallKeys",
+                   lockAtMostFor = "PT45M", lockAtLeastFor = "PT30M")
     @Transactional
     public void cleanupExpiredInstallKeys() {
         installKeyRepository.deleteExpiredUndownloaded(Instant.now());

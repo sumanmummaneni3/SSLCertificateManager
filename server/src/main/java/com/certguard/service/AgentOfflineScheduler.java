@@ -5,6 +5,7 @@ import com.certguard.enums.AgentStatus;
 import com.certguard.repository.AgentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -37,6 +38,8 @@ public class AgentOfflineScheduler {
     private int offlineThresholdMinutes;
 
     @Scheduled(fixedDelayString = "${app.agent.offline-check-interval-ms:300000}")
+    @SchedulerLock(name = "AgentOfflineScheduler_checkOfflineAgents",
+                   lockAtMostFor = "PT5M", lockAtLeastFor = "PT4M")
     @Transactional
     public void checkOfflineAgents() {
         Instant now = Instant.now();

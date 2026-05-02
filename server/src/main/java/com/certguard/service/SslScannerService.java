@@ -7,6 +7,7 @@ import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,8 @@ public class SslScannerService {
     @Value("${app.scanning.public.retry-max-attempts:3}") private int maxRetries;
 
     @Scheduled(cron = "${app.scanning.public.schedule-cron}")
+    @SchedulerLock(name = "SslScannerService_scheduledPublicScan",
+                   lockAtMostFor = "PT30M", lockAtLeastFor = "PT10M")
     public void scheduledPublicScan() {
         log.info("Starting scheduled public certificate scan");
         List<Target> targets = targetRepository.findAllByIsPrivateFalseAndEnabledTrue();

@@ -14,6 +14,7 @@ import com.certguard.repository.*;
 import com.certguard.security.AgentHmacService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -298,6 +299,8 @@ public class AgentService {
      * Runs every 5 minutes.
      */
     @Scheduled(fixedDelay = 300_000)
+    @SchedulerLock(name = "AgentService_resetStaleClaimedJobs",
+                   lockAtMostFor = "PT5M", lockAtLeastFor = "PT4M")
     @Transactional
     public void resetStaleClaimedJobs() {
         Instant threshold = Instant.now().minus(10, ChronoUnit.MINUTES);
@@ -313,6 +316,8 @@ public class AgentService {
     }
 
     @Scheduled(fixedDelay = 300_000)
+    @SchedulerLock(name = "AgentService_cleanupExpiredTokens",
+                   lockAtMostFor = "PT5M", lockAtLeastFor = "PT4M")
     @Transactional
     public void cleanupExpiredTokens() {
         List<AgentRegistrationToken> expired = tokenRepository.findExpiredAndUsed(Instant.now());

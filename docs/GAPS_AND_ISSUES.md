@@ -19,8 +19,8 @@
 | S7 | `agent_registration_tokens` BCrypt hash with no prefix lookup column — registration is O(N) BCrypt checks over all tokens in the org | ✅ Fixed | `AgentService.java` token cleanup; `2c25939` |
 | S8 | `certificate_records(target_id, serial_number)` had no unique index — concurrent FULL scans could insert duplicate cert rows | ✅ Fixed | `V12__schema_integrity_constraints.sql` |
 | S9 | `targets.last_error_message` / `last_error_at` columns missing — scan failures silently swallowed with no stored reason | ✅ Fixed | `V15__target_last_error.sql` |
-| S10 | No composite index on `certificate_records(org_id, expiry_date)` for expiry scheduler queries | ❌ Open | Only single-column `idx_certs_expiry` exists |
-| S11 | `agent_scan_jobs` claim has no `SELECT … FOR UPDATE SKIP LOCKED` — two agents sharing an ID can double-claim | ❌ Open | `AgentService.java:147–154` |
+| S10 | No composite index on `certificate_records(org_id, expiry_date)` for expiry scheduler queries | ✅ Fixed | `V17__cert_records_composite_index.sql` |
+| S11 | `agent_scan_jobs` claim has no `SELECT … FOR UPDATE SKIP LOCKED` — two agents sharing an ID can double-claim | ✅ Fixed | `AgentScanJobRepository.claimPendingJobsWithLock`; `AgentService.pollJobs` |
 | S12 | V11 semantic gap: no DB constraint enforces that `agent_registration_tokens.agent_id` points to a PENDING agent | ❌ Open | `V11__link_reg_token_to_agent.sql` |
 
 ---
@@ -58,7 +58,7 @@
 | `Target.enabled` flag has no UI control to disable | ❌ Open | UI gap — badge shown, no toggle |
 | N+1 in expiry scheduler (per-org cert queries, lazy target access) | ✅ Fixed | `CertificateExpiryScheduler.java`; single JOIN FETCH query; commit `761e464` |
 | Scan errors swallowed with no stored message | ✅ Fixed | `V15__target_last_error.sql`; `SslScannerService.java`; commit `761e464` |
-| N+1 in `TargetService.toResponse` (per-target cert lookup in a loop) | ❌ Open | `TargetService.java:296`; `BACKEND_REVIEW.md` P1-1 |
+| N+1 in `TargetService.toResponse` (per-target cert lookup in a loop) | ✅ Fixed | `TargetService.listTargets` batch-loads via `findLatestByTargetIds`; `CertificateRecordRepository` |
 | `PUT /api/v1/targets/{id}/notifications` accepted unconstrained `Map<String,Object>` with no size limit | ✅ Fixed | `TargetService.updateNotificationChannels`; commit `11dd7d8` |
 
 ### 2.4 Agents
@@ -89,8 +89,8 @@
 | Issue | Status | Reference |
 |---|---|---|
 | FAILED jobs never retried — no backoff state machine | ❌ Open | `AgentScanJob` status enum has no RETRYING |
-| No leader election — every server replica runs all `@Scheduled` methods (duplicate work, double notifications) | ❌ Open | Plain `@EnableScheduling`; needs ShedLock or Quartz cluster |
-| No DB lock on job claim (see S11) | ❌ Open | `AgentService.java:147–154` |
+| No leader election — every server replica runs all `@Scheduled` methods (duplicate work, double notifications) | ✅ Fixed | ShedLock 6.9.2 via JDBC; `SchedulerLockConfig`, `V18__shedlock.sql`; `@SchedulerLock` on all 6 scheduled methods |
+| No DB lock on job claim (see S11) | ✅ Fixed | `AgentScanJobRepository.claimPendingJobsWithLock` with `FOR UPDATE SKIP LOCKED` |
 
 ---
 
@@ -190,6 +190,7 @@ Compared against: Sectigo Certificate Manager, DigiCert CertCentral, Venafi (Cyb
 | `11dd7d8` | V12 unique constraints (`targets`, `cert_records`, `org_notification_channels`) + performance indexes; V13 `last_offline_alert_sent_at` for offline-alert dedup; `AgentAuthFilter` → RFC 9457 ProblemDetail; `AgentOfflineScheduler` 24 h dedup; `queueScanJob(Target)` delegates to org-scoped overload; `@Min(1)` on `updateQuota`; notification channels size limit |
 | `58968e3` | Agent bundle provisioning (Argon2id + AES-256-GCM); two-pass TLS scanning (BC JSSE TLS 1.2 + JVM TLS 1.3 fallback); dev-mode default off; CORS guard; Flyway `validateOnMigrate=true` |
 | `9ab5ea7` | Sign-out button in sidebar |
+| (pending) | P1-2: `TargetService.listTargets` batch cert load via `findLatestByTargetIds` (eliminates N+1); P1-5: ShedLock 6.9.2 wired — `SchedulerLockConfig`, `V18__shedlock.sql`, `@SchedulerLock` on all 6 `@Scheduled` methods; P1-12/S10: `V17__cert_records_composite_index.sql` composite index on `(org_id, expiry_date)` |
 
 ---
 
@@ -213,17 +214,17 @@ Compared against: Sectigo Certificate Manager, DigiCert CertCentral, Venafi (Cyb
 | ID | Issue | File(s) | Suggested fix | Effort |
 |---|---|---|---|---|
 | P1-1 | `agents.current_target_count` drifts on cascade delete | `TargetService` create/delete | Replace with `COUNT(*)` sub-query or nightly reconciler | M |
-| P1-2 | N+1 in `TargetService.toResponse` (cert lookup per target in a loop) | `TargetService.java:296` | Batch `IN (target_ids)` query, group in memory | S |
+| P1-2 | N+1 in `TargetService.toResponse` (cert lookup per target in a loop) | `TargetService.java:296` | Batch `IN (target_ids)` query, group in memory | ✅ Fixed |
 | P1-3 | Expiry alert dedup missing — already-expired certs cause alert storms | `CertificateExpiryScheduler.java:80–88` | Add `notifications_sent(cert_id, severity, day)` table or extend `last_alert_sent_at` check | M |
 | P1-4 | No retry / backoff for FAILED scan jobs | `AgentService`, `AgentScanJob` | Add `attempt_count` + `next_attempt_at`; exponential backoff up to 5 attempts | M |
-| P1-5 | No leader election for `@Scheduled` — duplicate runs in HA deploy | All schedulers | Adopt ShedLock with Postgres lock provider | M |
+| P1-5 | No leader election for `@Scheduled` — duplicate runs in HA deploy | All schedulers | Adopt ShedLock with Postgres lock provider | ✅ Fixed |
 | P1-6 | Agent has no retry/backoff on server outage | `PollLoop.java:63–103` | Exponential backoff up to `pollInterval × 2^N` (cap at e.g. 5 min) | S |
 | P1-7 | Agent does not exit on persistent 401 (revoked) | `PollLoop`, `ServerApiClient` | After 3 consecutive 401s, write marker file and `System.exit(78)` | S |
 | P1-8 | Agent serial cache lost on restart → always FULL scan | `SslScanner.java:42` | Persist `serial_cache.json` next to `application.properties` | S |
 | P1-9 | `OTP store` is in-memory `ConcurrentHashMap` — lost across nodes | `InvitationService.java:59` | Move to `invitation_otp` DB table with TTL or Redis | M |
 | P1-10 | Two role enums coexisting — `user_role` vs `org_member_role` | `JwtTokenProvider.java:34`, V1/V5 SQL | Deprecate `users.role`; migrate auth to `org_members.role` | M |
 | P1-11 | `users.email` globally unique — MSP multi-org membership impossible | `V1__core_schema.sql:33` | Drop UK; rely on `(user_id, org_id)` in `org_members` | M |
-| P1-12 | Missing index on `certificate_records(org_id, expiry_date)` | Schema | New migration adding composite index | S |
+| P1-12 | Missing index on `certificate_records(org_id, expiry_date)` | Schema | New migration adding composite index | ✅ Fixed |
 
 ### P2 — Production-Readiness Features
 
