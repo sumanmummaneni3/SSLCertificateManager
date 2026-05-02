@@ -1,0 +1,362 @@
+package com.certguard.service;
+
+import com.certguard.dto.IssueBundleResult;
+import com.certguard.dto.request.CreateAgentRequest;
+import com.certguard.entity.*;
+import com.certguard.enums.AgentStatus;
+import com.certguard.exception.BundleExpiredException;
+import com.certguard.exception.ResourceNotFoundException;
+import com.certguard.repository.AgentInstallKeyRepository;
+import com.certguard.repository.AgentRegistrationTokenRepository;
+import com.certguard.repository.AgentRepository;
+import com.certguard.repository.OrganizationRepository;
+import com.certguard.security.AgentBundleCrypto;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+@Slf4j
+@Service
+@Transactional(readOnly = true)
+public class AgentBundleService {
+
+    private static final String BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    private final AgentInstallKeyRepository installKeyRepository;
+    private final AgentRepository agentRepository;
+    private final AgentRegistrationTokenRepository tokenRepository;
+    private final OrganizationRepository orgRepository;
+    private final AgentBundleCrypto bundleCrypto;
+    private final BCryptPasswordEncoder passwordEncoder;
+
+    @Value("${app.agent.bundle.download-url-ttl-seconds:3600}")
+    private int downloadUrlTtlSeconds;
+
+    @Value("${app.base-url:http://localhost:8080}")
+    private String baseUrl;
+
+    @Value("${app.agent.bundle.argon2.memory-kib:65536}")
+    private int argon2MemoryKib;
+
+    @Value("${app.agent.bundle.argon2.iterations:3}")
+    private int argon2Iterations;
+
+    @Value("${app.agent.bundle.argon2.parallelism:1}")
+    private int argon2Parallelism;
+
+    public AgentBundleService(AgentInstallKeyRepository installKeyRepository,
+                               AgentRepository agentRepository,
+                               AgentRegistrationTokenRepository tokenRepository,
+                               OrganizationRepository orgRepository,
+                               AgentBundleCrypto bundleCrypto,
+                               BCryptPasswordEncoder passwordEncoder) {
+        this.installKeyRepository = installKeyRepository;
+        this.agentRepository      = agentRepository;
+        this.tokenRepository      = tokenRepository;
+        this.orgRepository        = orgRepository;
+        this.bundleCrypto         = bundleCrypto;
+        this.passwordEncoder      = passwordEncoder;
+    }
+
+    /**
+     * Creates a new agent in PENDING status, generates a registration token, encrypts
+     * the bootstrap config, and returns a single-use bundle download URL + install key.
+     */
+    @Transactional
+    public IssueBundleResult issueBundle(CreateAgentRequest req, UUID orgId, UUID callerUserId)
+            throws Exception {
+
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found: " + orgId));
+
+        // 1. Create agent row in PENDING status
+        Agent agent = Agent.builder()
+                .organization(org)
+                .name(req.getAgentName())
+                .agentKeyHash("PENDING") // placeholder; overwritten at registration time
+                .allowedCidrs(req.getAllowedCidrs())
+                .maxTargets(req.getMaxTargets())
+                .status(AgentStatus.PENDING)
+                .build();
+        agent = agentRepository.save(agent);
+
+        // 2. Create registration token (reuses AgentService token format)
+        String plainToken = "CGR-" + UUID.randomUUID().toString().toUpperCase();
+        String tokenHash  = passwordEncoder.encode(plainToken);
+
+        AgentRegistrationToken regToken = AgentRegistrationToken.builder()
+                .organization(org)
+                .tokenHash(tokenHash)
+                .agentName(req.getAgentName())
+                .agentId(agent.getId())   // link to pre-created agent row
+                .used(false)
+                .expiresAt(Instant.now().plus(downloadUrlTtlSeconds, ChronoUnit.SECONDS))
+                .createdBy(callerUserId)
+                .build();
+        tokenRepository.save(regToken);
+
+        // 3. Generate plaintext install key: "CGK-" + base32(25 random bytes) ~ 125 bits entropy
+        String plainInstallKey = "CGK-" + generateBase32(25);
+
+        // 4. Generate KDF salt and bundle download token
+        SecureRandom rng = new SecureRandom();
+        byte[] kdfSalt = new byte[16];
+        rng.nextBytes(kdfSalt);
+
+        byte[] bundleDownloadTokenBytes = new byte[32];
+        rng.nextBytes(bundleDownloadTokenBytes);
+        String bundleDownloadToken = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(bundleDownloadTokenBytes);
+
+        // 5. Derive wrapping key
+        byte[] wrappingKey = bundleCrypto.deriveWrappingKey(
+                plainInstallKey.toCharArray(), kdfSalt,
+                argon2MemoryKib, argon2Iterations, argon2Parallelism);
+
+        // 6. Build plaintext payload JSON and encrypt
+        Map<String, Object> payloadMap = new LinkedHashMap<>();
+        payloadMap.put("agentId",           agent.getId().toString());
+        payloadMap.put("orgId",             orgId.toString());
+        payloadMap.put("serverUrl",         baseUrl);
+        payloadMap.put("registrationToken", plainToken);
+        payloadMap.put("agentName",         req.getAgentName());
+        payloadMap.put("allowedCidrs",      String.join(",", req.getAllowedCidrs()));
+        payloadMap.put("maxTargets",        req.getMaxTargets());
+
+        byte[] payloadBytes = OBJECT_MAPPER.writeValueAsBytes(payloadMap);
+        byte[] sealedPayload = bundleCrypto.sealPayload(payloadBytes, wrappingKey, kdfSalt);
+
+        // 7. Hash the install key (BCrypt) and bundle download token (SHA-256)
+        String installKeyHash          = passwordEncoder.encode(plainInstallKey);
+        String downloadTokenHash       = sha256Hex(bundleDownloadToken);
+
+        // 8. Persist AgentInstallKey row
+        Instant expiresAt = Instant.now().plus(downloadUrlTtlSeconds, ChronoUnit.SECONDS);
+        AgentInstallKey installKey = AgentInstallKey.builder()
+                .agent(agent)
+                .orgId(orgId)
+                .kdfSalt(kdfSalt)
+                .kdfMemoryKib(argon2MemoryKib)
+                .kdfIterations(argon2Iterations)
+                .kdfParallelism(argon2Parallelism)
+                .installKeyHash(installKeyHash)
+                .bundleDownloadTokenHash(downloadTokenHash)
+                .sealedPayload(sealedPayload)
+                .expiresAt(expiresAt)
+                .createdBy(callerUserId)
+                .build();
+        installKeyRepository.save(installKey);
+
+        // 9. Build download URL
+        String downloadUrl = baseUrl + "/api/v1/agents/" + agent.getId()
+                + "/bundle?dlToken=" + bundleDownloadToken;
+
+        log.info("Bundle issued — agent: {} ({}), org: {}, expires: {}",
+                req.getAgentName(), agent.getId(), orgId, expiresAt);
+
+        return new IssueBundleResult(agent.getId(), plainInstallKey, downloadUrl, expiresAt);
+    }
+
+    /**
+     * Builds the agent install bundle ZIP and marks the download token as consumed.
+     * The returned bytes should be streamed directly to the HTTP response.
+     */
+    @Transactional
+    public byte[] buildBundleZip(UUID agentId, String dlToken) throws Exception {
+        // 1. Hash the token and look up the row
+        String tokenHash = sha256Hex(dlToken);
+        AgentInstallKey installKey = installKeyRepository.findByBundleDownloadTokenHash(tokenHash)
+                .orElseThrow(() -> new ResourceNotFoundException("Bundle not found — token invalid"));
+
+        // 2. Guard: already downloaded or expired
+        if (installKey.getBundleDownloadedAt() != null) {
+            throw new BundleExpiredException(
+                    "Bundle has already been downloaded. Re-issue a new agent to get a fresh bundle.");
+        }
+        if (installKey.getExpiresAt().isBefore(Instant.now())) {
+            throw new BundleExpiredException(
+                    "Bundle download token has expired. Re-issue a new agent to get a fresh bundle.");
+        }
+
+        // 3. Verify the agentId in the path matches the row (prevents token probing across agents)
+        if (!installKey.getAgent().getId().equals(agentId)) {
+            throw new ResourceNotFoundException("Bundle not found — token invalid");
+        }
+
+        // 4. Build ZIP in memory
+        byte[] zipBytes = buildZip(installKey, agentId);
+
+        // 5. Mark downloaded
+        installKey.setBundleDownloadedAt(Instant.now());
+        installKeyRepository.save(installKey);
+
+        log.info("Bundle downloaded — agent: {}, org: {}", agentId, installKey.getOrgId());
+        return zipBytes;
+    }
+
+    /**
+     * Scheduled cleanup: delete expired, never-downloaded install key rows hourly.
+     * Downloaded rows are retained for audit purposes.
+     */
+    @Scheduled(cron = "0 0 * * * *")
+    @Transactional
+    public void cleanupExpiredInstallKeys() {
+        installKeyRepository.deleteExpiredUndownloaded(Instant.now());
+        log.debug("Expired agent install keys cleaned up");
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private byte[] buildZip(AgentInstallKey installKey, UUID agentId) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+
+            // certguard-agent.jar
+            ClassPathResource agentJar = new ClassPathResource("agent/certguard-agent.jar");
+            addZipEntry(zos, "certguard-agent.jar", agentJar.getInputStream());
+
+            // bundle.cgb — the sealed payload
+            addZipEntry(zos, "bundle.cgb", installKey.getSealedPayload());
+
+            // application.properties — non-secret operational defaults only
+            String appProps = """
+                    # CertGuard Agent — operational defaults
+                    # Secrets are stored in bundle.cgb and decrypted on first run.
+                    agent.poll-interval-seconds=30
+                    agent.scan-timeout-seconds=10
+                    agent.scan-threads=4
+                    """;
+            addZipEntry(zos, "application.properties", appProps.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            // run.sh
+            String runSh = "#!/bin/bash\njava -jar certguard-agent.jar --bundle bundle.cgb\n";
+            addZipEntry(zos, "run.sh", runSh.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            // run.bat
+            String runBat = "@echo off\njava -jar certguard-agent.jar --bundle bundle.cgb\n";
+            addZipEntry(zos, "run.bat", runBat.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            // README.txt
+            String readme = buildReadme(agentId);
+            addZipEntry(zos, "README.txt", readme.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return baos.toByteArray();
+    }
+
+    private void addZipEntry(ZipOutputStream zos, String name, InputStream data) throws Exception {
+        zos.putNextEntry(new ZipEntry(name));
+        data.transferTo(zos);
+        zos.closeEntry();
+    }
+
+    private void addZipEntry(ZipOutputStream zos, String name, byte[] data) throws Exception {
+        zos.putNextEntry(new ZipEntry(name));
+        zos.write(data);
+        zos.closeEntry();
+    }
+
+    private String buildReadme(UUID agentId) {
+        return """
+                CertGuard Agent — Installation Instructions
+                ============================================
+
+                This bundle contains:
+                  certguard-agent.jar  — the CertGuard agent executable
+                  bundle.cgb           — encrypted bootstrap configuration
+                  application.properties — operational defaults (non-secret)
+                  run.sh / run.bat     — convenience launch scripts
+
+                Prerequisites
+                -------------
+                  - Java 17 or later must be on your PATH.
+                  - Port 8443 outbound to your CertGuard server must be open.
+
+                First-run Installation
+                ----------------------
+                1. Place all files in the same directory.
+                2. On Linux/macOS, make run.sh executable:
+                      chmod +x run.sh
+                3. Run the agent. You will be prompted for the install key:
+
+                   Linux/macOS:
+                      ./run.sh
+
+                   Windows:
+                      run.bat
+
+                   Or directly:
+                      java -jar certguard-agent.jar --bundle bundle.cgb
+
+                4. When prompted, enter the install key shown in the CertGuard portal.
+                   You can also supply it non-interactively (avoid in production):
+                      java -jar certguard-agent.jar --bundle bundle.cgb --install-key CGK-...
+                   Or via environment variable:
+                      export CERTGUARD_INSTALL_KEY=CGK-...
+                      java -jar certguard-agent.jar --bundle bundle.cgb
+
+                After First Run
+                ---------------
+                The agent decrypts bundle.cgb, registers with the server, and persists
+                its credentials to application.properties. The install key and bundle.cgb
+                are no longer needed after successful registration — you may delete them.
+
+                Agent ID: %s
+
+                For support, visit https://certguard.cloud/docs or contact support@certguard.cloud
+                """.formatted(agentId);
+    }
+
+    private String generateBase32(int byteCount) {
+        SecureRandom rng = new SecureRandom();
+        byte[] raw = new byte[byteCount];
+        rng.nextBytes(raw);
+        // Base32-encode: each byte maps to ~1.6 chars; use simple bit extraction
+        StringBuilder sb = new StringBuilder();
+        int buffer = 0, bitsLeft = 0;
+        for (byte b : raw) {
+            buffer = (buffer << 8) | (b & 0xFF);
+            bitsLeft += 8;
+            while (bitsLeft >= 5) {
+                sb.append(BASE32_ALPHABET.charAt((buffer >> (bitsLeft - 5)) & 0x1F));
+                bitsLeft -= 5;
+            }
+        }
+        if (bitsLeft > 0) {
+            sb.append(BASE32_ALPHABET.charAt((buffer << (5 - bitsLeft)) & 0x1F));
+        }
+        return sb.toString();
+    }
+
+    private String sha256Hex(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("SHA-256 unavailable", e);
+        }
+    }
+}

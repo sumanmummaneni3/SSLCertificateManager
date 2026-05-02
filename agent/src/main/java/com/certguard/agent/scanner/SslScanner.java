@@ -3,6 +3,7 @@ package com.certguard.agent.scanner;
 import com.certguard.agent.model.ScanJob;
 import com.certguard.agent.model.ScanResult;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.jsse.provider.BouncyCastleJsseProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +33,9 @@ public class SslScanner {
         if (Security.getProvider("BC") == null) {
             Security.addProvider(new BouncyCastleProvider());
         }
+        // BC JSSE is NOT registered globally — we instantiate it directly only for
+        // pass-1 (scanCtxBcJsse).  Adding it globally would let it intercept
+        // SSLContext.getInstance("TLS") and interfere with pass-2.
     }
 
     // In-memory serial cache: targetId -> last scanned serial number
@@ -78,17 +82,150 @@ public class SslScanner {
 
     // ── SSL connection ────────────────────────────────────────
 
-    private X509Certificate[] fetchChain(String host, int port, int timeoutSeconds) throws Exception {
-        // Trust-all TrustManager for scanning — we are inspecting certs, not verifying them
-        TrustManager[] trustAll = { new X509TrustManager() {
-            public X509Certificate[] getAcceptedIssuers()                               { return new X509Certificate[0]; }
-            public void checkClientTrusted(X509Certificate[] c, String a)               {}
-            public void checkServerTrusted(X509Certificate[] c, String a)               {}
+    /**
+     * Pass-1 protocols: TLS 1.2 and below only.
+     * Offering TLS 1.3 in the ClientHello adds key_share / supported_versions /
+     * psk_key_exchange_modes extensions that crash many router/NAS/IPMI TLS stacks
+     * (handshake_failure), even though those devices speak TLS 1.2 fine.
+     * Pass-2 retries with TLS 1.3 for the rare server that has dropped TLS 1.2.
+     */
+    private static final String[] SCAN_PROTOCOLS_PASS1 = { "TLSv1.2", "TLSv1.1", "TLSv1" };
+    private static final String[] SCAN_PROTOCOLS_PASS2 = { "TLSv1.3" };
+
+    /**
+     * CVE-audited cipher list for TLS 1.2 scanning.
+     *
+     * Priority order: ECDHE (PFS + AEAD) → DHE (PFS) → RSA (no PFS, needed for
+     * embedded devices that lack ECDHE/DHE).
+     *
+     * EXCLUDED (with CVE references):
+     *   RC4    — CVE-2015-2808 / CVE-2013-2566 (statistical bias, bar-mitzvah)
+     *   3DES   — CVE-2016-2183 (SWEET32, 64-bit block birthday attack)
+     *   NULL   — no encryption
+     *   ANON   — CVE-2014-3569, LOGJAM (no server authentication)
+     *   EXPORT — CVE-2015-0204 (FREAK, deliberately weak key lengths)
+     *   MD5-MAC— CVE-2004-2761 (MD5 collision)
+     *
+     * RSA key-exchange ciphers (TLS_RSA_WITH_AES_*) lack forward secrecy, which
+     * is a design weakness but NOT a CVE.  They are included because many
+     * embedded devices (routers, printers, IPMIs) only support RSA key exchange.
+     *
+     * DHE: LOGJAM (CVE-2015-4000) affects only DH params < 1024-bit.
+     * JDK enforces a minimum of 2048-bit DH, so DHE ciphers here are safe.
+     */
+    private static final String[] TLS12_SCAN_CIPHERS = {
+        // ── ECDHE — forward secrecy, AEAD ─────────────────────
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+        "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+        // ── DHE — forward secrecy ─────────────────────────────
+        "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256",
+        "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
+        "TLS_DHE_RSA_WITH_AES_256_CBC_SHA",
+        "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
+        // ── RSA key exchange — no PFS, required for embedded devices ──
+        "TLS_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_RSA_WITH_AES_256_CBC_SHA256",
+        "TLS_RSA_WITH_AES_128_CBC_SHA256",
+        "TLS_RSA_WITH_AES_256_CBC_SHA",
+        "TLS_RSA_WITH_AES_128_CBC_SHA",
+        // Secure-renegotiation signaling pseudo-suite (prevents CVE-2009-3555)
+        "TLS_EMPTY_RENEGOTIATION_INFO_SCSV",
+    };
+
+    /**
+     * Lazily-initialised scanning SSLContexts — trust-all, no key material.
+     *
+     * Two contexts:
+     *   SCAN_CTX_BCJSSE  — BouncyCastle JSSE provider (pass-1: TLS 1.2 + RSA key-exchange)
+     *   SCAN_CTX_JVM     — JVM default JSSE provider  (pass-2: TLS 1.3)
+     *
+     * JDK 21+ removed TLS_RSA_WITH_* cipher suites from its JSSE implementation.
+     * Many embedded devices (routers, NAS, printers) only support RSA key exchange
+     * (e.g. AES256-GCM-SHA384 / TLS_RSA_WITH_AES_256_GCM_SHA384).
+     * BouncyCastle JSSE still supports those ciphers, so pass-1 uses it.
+     */
+    private static volatile SSLContext SCAN_CTX_BCJSSE;
+    private static volatile SSLContext SCAN_CTX_JVM;
+
+    private static SSLContext scanCtxBcJsse() throws Exception {
+        if (SCAN_CTX_BCJSSE == null) {
+            synchronized (SslScanner.class) {
+                if (SCAN_CTX_BCJSSE == null) {
+                    TrustManager[] trustAll = buildTrustAll();
+                    // Instantiate BC JSSE directly — NOT via Security.addProvider — so it
+                    // doesn't shadow the JVM's SunJSSE for SSLContext.getInstance("TLS").
+                    SSLContext ctx = SSLContext.getInstance("TLS", new BouncyCastleJsseProvider());
+                    ctx.init(null, trustAll, new SecureRandom());
+                    SCAN_CTX_BCJSSE = ctx;
+                }
+            }
+        }
+        return SCAN_CTX_BCJSSE;
+    }
+
+    private static SSLContext scanCtxJvm() throws Exception {
+        if (SCAN_CTX_JVM == null) {
+            synchronized (SslScanner.class) {
+                if (SCAN_CTX_JVM == null) {
+                    TrustManager[] trustAll = buildTrustAll();
+                    SSLContext ctx = SSLContext.getInstance("TLS");
+                    ctx.init(null, trustAll, new SecureRandom());
+                    SCAN_CTX_JVM = ctx;
+                }
+            }
+        }
+        return SCAN_CTX_JVM;
+    }
+
+    private static TrustManager[] buildTrustAll() {
+        return new TrustManager[]{ new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers()             { return new X509Certificate[0]; }
+            public void checkClientTrusted(X509Certificate[] c, String a) {}
+            public void checkServerTrusted(X509Certificate[] c, String a) {}
         }};
+    }
 
-        SSLContext ctx = SSLContext.getInstance("TLS");
-        ctx.init(null, trustAll, new SecureRandom());
+    /**
+     * Pass-1: BC JSSE, TLS 1.2 only + CVE-audited cipher list including RSA key-exchange.
+     *   – Avoids TLS 1.3 extensions that crash old router/NAS/IPMI firmware.
+     *   – BC JSSE supports TLS_RSA_WITH_* ciphers removed from JDK 21+.
+     * Pass-2: JVM JSSE, TLS 1.3 only — for servers that have dropped TLS 1.2.
+     */
+    private X509Certificate[] fetchChain(String host, int port, int timeoutSeconds) throws Exception {
+        try {
+            return fetchChainWithProtocols(host, port, timeoutSeconds,
+                    SCAN_PROTOCOLS_PASS1, TLS12_SCAN_CIPHERS, scanCtxBcJsse());
+        } catch (Exception e) {
+            // Retry with TLS 1.3 on any pass-1 failure.  BC JSSE may throw SSLException
+            // or a subclass for handshake alerts (protocol_version, handshake_failure, etc.).
+            // I/O failures (connect timeout, connection refused) also retry — TLS 1.3 won't
+            // help in that case but the failure will still be reported correctly.
+            log.info("Pass-1 (TLS 1.2/BC) failed for {}:{} — retrying with TLS 1.3: {}",
+                    host, port, e.getMessage());
+            return fetchChainWithProtocols(host, port, timeoutSeconds,
+                    SCAN_PROTOCOLS_PASS2, null, scanCtxJvm());
+        }
+    }
 
+    private X509Certificate[] fetchChainWithProtocols(String host, int port, int timeoutSeconds,
+                                                       String[] protocols, String[] ciphers,
+                                                       SSLContext ctx) throws Exception {
         int timeoutMs = timeoutSeconds * 1000;
 
         try (Socket raw = new Socket()) {
@@ -97,6 +234,7 @@ public class SslScanner {
                     .createSocket(raw, host, port, true)) {
 
                 ssl.setSoTimeout(timeoutMs);
+                enableScanProtocols(ssl, protocols, ciphers);
 
                 // SNI for domain-based hosts
                 if (!host.matches("(\\d{1,3}\\.){3}\\d{1,3}")) {
@@ -106,7 +244,36 @@ public class SslScanner {
                 }
 
                 ssl.startHandshake();
+                log.debug("Connected to {}:{} using {} / {}", host, port,
+                        ssl.getSession().getProtocol(),
+                        ssl.getSession().getCipherSuite());
                 return (X509Certificate[]) ssl.getSession().getPeerCertificates();
+            }
+        }
+    }
+
+    /**
+     * Intersects the requested protocol list with what the JVM actually supports,
+     * then optionally applies an explicit CVE-audited cipher list (TLS 1.2 pass only).
+     * For TLS 1.3 (pass-2), ciphers is null — the JVM manages TLS 1.3 cipher sets
+     * internally and ignores setEnabledCipherSuites for TLS_AES_* suites.
+     */
+    private static void enableScanProtocols(SSLSocket ssl, String[] protocols, String[] ciphers) {
+        Set<String> supportedProtos = new HashSet<>(Arrays.asList(ssl.getSupportedProtocols()));
+        String[] toEnable = Arrays.stream(protocols)
+                .filter(supportedProtos::contains)
+                .toArray(String[]::new);
+        if (toEnable.length > 0) {
+            ssl.setEnabledProtocols(toEnable);
+        }
+
+        if (ciphers != null) {
+            Set<String> supportedCiphers = new HashSet<>(Arrays.asList(ssl.getSupportedCipherSuites()));
+            String[] ciphersToEnable = Arrays.stream(ciphers)
+                    .filter(supportedCiphers::contains)
+                    .toArray(String[]::new);
+            if (ciphersToEnable.length > 0) {
+                ssl.setEnabledCipherSuites(ciphersToEnable);
             }
         }
     }

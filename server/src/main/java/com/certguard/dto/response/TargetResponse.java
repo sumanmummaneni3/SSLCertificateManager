@@ -1,6 +1,7 @@
 package com.certguard.dto.response;
 
 import com.certguard.enums.HostType;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -14,6 +15,7 @@ public class TargetResponse {
     private String host;
     private int port;
     private HostType hostType;
+    @JsonProperty("isPrivate")
     private boolean isPrivate;
     private String description;
     private boolean enabled;

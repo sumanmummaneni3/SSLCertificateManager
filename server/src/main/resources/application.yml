@@ -95,6 +95,12 @@ app:
     offline-check-interval-ms: ${AGENT_OFFLINE_CHECK_INTERVAL_MS:300000}
     cert:
       validity-days: 365
+    bundle:
+      download-url-ttl-seconds: ${AGENT_BUNDLE_DOWNLOAD_URL_TTL_SECONDS:3600}
+      argon2:
+        memory-kib: ${AGENT_BUNDLE_ARGON2_MEMORY_KIB:65536}
+        iterations: ${AGENT_BUNDLE_ARGON2_ITERATIONS:3}
+        parallelism: ${AGENT_BUNDLE_ARGON2_PARALLELISM:1}
 
 management:
   endpoints:

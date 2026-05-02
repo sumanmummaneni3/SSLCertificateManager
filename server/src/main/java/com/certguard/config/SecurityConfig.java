@@ -63,6 +63,7 @@ public class SecurityConfig {
                     // Agent
                     .requestMatchers("/api/v1/agent/ca-cert").permitAll()
                     .requestMatchers("/api/v1/agent/register").permitAll()
+                    .requestMatchers("/api/v1/agents/*/bundle").permitAll()
                     .requestMatchers("/agent/download").permitAll()
                     .requestMatchers("/agent/version").permitAll()
                     // Auth — always public

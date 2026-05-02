@@ -1,5 +1,6 @@
 package com.certguard.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
@@ -15,6 +16,7 @@ public class CreateTargetRequest {
     @Min(1) @Max(65535)
     private int port = 443;
 
+    @JsonProperty("isPrivate")
     private boolean isPrivate = false;
     private UUID agentId;
 

@@ -49,6 +49,12 @@ app:
     offline-check-interval-ms: 300000
     cert:
       validity-days: 365
+    bundle:
+      download-url-ttl-seconds: 3600
+      argon2:
+        memory-kib: 65536
+        iterations: 3
+        parallelism: 1
 
 server:
   port: 0

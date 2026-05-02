@@ -11,12 +11,12 @@ import com.certguard.security.TenantContext;
 import com.certguard.service.AgentService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,17 +27,35 @@ import java.util.UUID;
 @Slf4j
 @RestController
 @RequestMapping(value = "/api/v1/agent", produces = "application/json")
-@RequiredArgsConstructor
 public class AgentController {
 
     private final AgentService agentService;
     private final AgentCertificateAuthority agentCA;
 
-    // ── Admin endpoints (JWT auth) ─────────────────────────────
+    public AgentController(AgentService agentService,
+                           AgentCertificateAuthority agentCA) {
+        this.agentService = agentService;
+        this.agentCA      = agentCA;
+    }
 
+    // ── Admin endpoints (JWT auth) ─────────────────────────────
+    // NOTE: POST /api/v1/agents (create + bundle) and GET /api/v1/agents/{id}/bundle
+    // are served by AgentProvisionController — they were removed from here because
+    // the absolute paths in @PostMapping/@GetMapping values were being concatenated
+    // with this class's /api/v1/agent prefix, producing broken routes.
+
+    /**
+     * POST /api/v1/agent/tokens — generates a standalone registration token.
+     * Requires ADMIN or PLATFORM_ADMIN role (BACKEND_REVIEW P1-5).
+     * agentName validated to prevent content injection (BACKEND_REVIEW P2-6).
+     */
     @PostMapping("/tokens")
+    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
     public ResponseEntity<RegistrationTokenResponse> generateToken(
-            @RequestParam String agentName,
+            @RequestParam @jakarta.validation.constraints.Pattern(
+                regexp = "^[A-Za-z0-9 _.-]{3,64}$",
+                message = "agentName must be 3–64 characters: letters, digits, spaces, hyphens, dots, underscores")
+            String agentName,
             @AuthenticationPrincipal CertGuardUserPrincipal principal) {
 
         RegistrationTokenResponse resp = agentService.generateRegistrationToken(

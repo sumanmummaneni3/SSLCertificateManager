@@ -61,13 +61,15 @@ public class RegistrationService {
         }
         log.info("Client certificate saved to {}", certPath.toAbsolutePath());
 
-        // Persist credentials and clear the one-time token
+        // Persist credentials to disk and update in-memory state.
+        // config.set() always updates props in-memory first, then writes to disk
+        // if configPath is set — so agentId()/agentKey() are immediately correct
+        // without needing a reload().  A reload() would be harmful here because it
+        // wipes in-memory props and re-reads from disk (or the classpath fallback),
+        // which would lose the values when configPath is null.
         config.set("certguard.agent.id",           agentId);
         config.set("certguard.agent.key",           agentKey);
         config.set("certguard.registration.token",  "");   // burn the token
-
-        // Reload config so agentId() and agentKey() return the new values
-        config.reload();
 
         log.info("=========================================");
         log.info("  Registration successful!");

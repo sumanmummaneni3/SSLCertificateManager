@@ -41,3 +41,8 @@ server/monitoring/grafana/data/
 # Environment secrets
 .env
 !.env.example
+
+# Claude Code agent memory and session files
+.claude/
+prompty.txt
+ui/*.txt

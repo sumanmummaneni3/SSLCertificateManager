@@ -41,6 +41,10 @@ public class AgentRegistrationToken {
     @Column(name = "created_by")
     private UUID createdBy;
 
+    /** Pre-created agent row from the bundle-issuance flow. Null for legacy tokens. */
+    @Column(name = "agent_id")
+    private UUID agentId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false, nullable = false)
     private Instant createdAt;

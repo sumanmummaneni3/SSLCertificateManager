@@ -88,16 +88,27 @@ public class AgentService {
 
         Organization org = matchedToken.getOrganization();
 
-        Agent agent = Agent.builder()
-                .organization(org)
-                .name(request.getAgentName())
-                .agentKeyHash(agentKeyHash)
-                .allowedCidrs(request.getAllowedCidrs())
-                .maxTargets(request.getMaxTargets())
-                .status(AgentStatus.ACTIVE)
-                .registeredAt(Instant.now())
-                .lastSeenAt(Instant.now())
-                .build();
+        // If the token was issued via the bundle flow, update the pre-created PENDING
+        // agent row instead of inserting a new one (prevents duplicate list entries).
+        Agent agent;
+        if (matchedToken.getAgentId() != null) {
+            agent = agentRepository.findById(matchedToken.getAgentId())
+                    .orElseGet(() -> Agent.builder().organization(org).build());
+            agent.setName(request.getAgentName());
+            agent.setAllowedCidrs(request.getAllowedCidrs());
+            agent.setMaxTargets(request.getMaxTargets());
+        } else {
+            agent = Agent.builder()
+                    .organization(org)
+                    .name(request.getAgentName())
+                    .allowedCidrs(request.getAllowedCidrs())
+                    .maxTargets(request.getMaxTargets())
+                    .build();
+        }
+        agent.setAgentKeyHash(agentKeyHash);
+        agent.setStatus(AgentStatus.ACTIVE);
+        agent.setRegisteredAt(Instant.now());
+        agent.setLastSeenAt(Instant.now());
 
         agent = agentRepository.save(agent);
 

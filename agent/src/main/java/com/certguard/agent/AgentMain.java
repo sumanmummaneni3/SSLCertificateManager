@@ -25,12 +25,20 @@ public class AgentMain {
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) throws Exception {
+        // Handle --help before anything else
+        for (String arg : args) {
+            if ("--help".equals(arg) || "-h".equals(arg)) {
+                printHelp();
+                return;
+            }
+        }
+
         log.info("===========================================");
         log.info("  CertGuard Agent v1.0 starting");
         log.info("===========================================");
 
-        // 1. Config
-        AgentConfig config = new AgentConfig();
+        // 1. Config — pass CLI args so BundleUnsealer can read --bundle / --install-key
+        AgentConfig config = new AgentConfig(args);
 
         // 2. Build initial HTTP client (pre-registration — no client cert yet)
         SecureHttpClient clientFactory = new SecureHttpClient(config);
@@ -71,5 +79,36 @@ public class AgentMain {
 
         // Block main thread
         Thread.currentThread().join();
+    }
+
+    private static void printHelp() {
+        System.out.println("CertGuard Agent v1.0");
+        System.out.println();
+        System.out.println("Usage: java -jar certguard-agent.jar [OPTIONS]");
+        System.out.println();
+        System.out.println("Options:");
+        System.out.println("  --bundle <path>        Path to the encrypted bundle file (bundle.cgb).");
+        System.out.println("                         Default: ./bundle.cgb");
+        System.out.println("                         Env var: CERTGUARD_BUNDLE_PATH");
+        System.out.println();
+        System.out.println("  --install-key <key>    Plaintext install key (CGK-...) for decrypting the bundle.");
+        System.out.println("                         WARNING: prefer the env var or interactive prompt.");
+        System.out.println("                         Env var: CERTGUARD_INSTALL_KEY");
+        System.out.println();
+        System.out.println("  --install-key-file <path>");
+        System.out.println("                         Path to a file containing the install key (one key per line).");
+        System.out.println("                         Useful in automated deployments with secrets mounted as files.");
+        System.out.println();
+        System.out.println("  --help, -h             Show this help message and exit.");
+        System.out.println();
+        System.out.println("Config file resolution order:");
+        System.out.println("  1. -Dconfig=/path/to/application.properties");
+        System.out.println("  2. -Dspring.config.location=file:/path/...");
+        System.out.println("  3. ./application.properties (next to JAR)");
+        System.out.println("  4. classpath:application.properties (bundled in JAR)");
+        System.out.println();
+        System.out.println("Bundle first-run flow:");
+        System.out.println("  If agent.id is not set and bundle.cgb is found, the agent decrypts the");
+        System.out.println("  bundle, writes credentials to application.properties, and registers.");
     }
 }

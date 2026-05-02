@@ -4,7 +4,7 @@ import { SIDEBAR_THEMES } from "./theme/tokens.js";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const API_BASE = "";
-const DEV_MODE = false;              // Set true to bypass Google OAuth in local dev
+const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
 // SIDEBAR_THEMES imported from src/theme/tokens.js — see that file for palette definitions.
 
@@ -642,6 +642,175 @@ const styles = `
     display: block; font-family: var(--font-head);
     font-size: 1rem; font-weight: 700; margin-bottom: 2px;
   }
+
+  /* ── AGENT INSTALL KEY MODAL ── */
+  .modal-wide {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 16px;
+    padding: 2rem;
+    width: 100%; max-width: 620px;
+    box-shadow: 0 32px 80px color-mix(in srgb, var(--color-bg) 50%, transparent);
+    animation: slideUp 0.2s ease;
+  }
+
+  .install-key-field {
+    display: flex; gap: 8px; align-items: stretch;
+    margin-bottom: 0.75rem;
+  }
+
+  .install-key-field input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--green);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 10px 14px;
+    outline: none;
+    word-break: break-all;
+    letter-spacing: 0.02em;
+  }
+
+  .install-key-field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+  }
+
+  .countdown-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255, 215, 64, 0.1);
+    border: 1px solid rgba(255, 215, 64, 0.3);
+    color: var(--yellow);
+    font-size: 0.72rem; font-weight: 500;
+    padding: 4px 12px; border-radius: 20px;
+    font-family: var(--font-mono);
+    margin-bottom: 1rem;
+  }
+
+  .countdown-badge.urgent {
+    background: rgba(255, 82, 82, 0.1);
+    border-color: rgba(255, 82, 82, 0.3);
+    color: var(--red);
+  }
+
+  /* ── ACCORDION / DISCLOSURE ── */
+  .accordion {
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+  }
+
+  .accordion-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--surface2);
+    cursor: pointer;
+    font-size: 0.78rem; font-weight: 500;
+    color: var(--text);
+    border: none; width: 100%; text-align: left;
+    transition: background 0.15s;
+  }
+
+  .accordion-header:hover { background: color-mix(in srgb, var(--color-primary) 6%, var(--surface2)); }
+  .accordion-header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .accordion-chevron { font-size: 0.65rem; transition: transform 0.2s; color: var(--muted); }
+  .accordion-chevron.open { transform: rotate(180deg); }
+
+  .accordion-body {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .accordion-body pre {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--accent);
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    line-height: 1.7;
+  }
+
+  /* ── CHECKBOX CONFIRMATION ── */
+  .confirm-check {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    margin: 1rem 0;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .confirm-check:hover { border-color: var(--accent); }
+
+  .confirm-check input[type="checkbox"] {
+    margin-top: 2px; flex-shrink: 0;
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .confirm-check label {
+    font-size: 0.8rem; color: var(--text);
+    cursor: pointer; line-height: 1.5;
+  }
+
+  /* ── WIZARD STEPS INDICATOR ── */
+  .wizard-steps {
+    display: flex; align-items: center; gap: 0;
+    margin-bottom: 1.5rem;
+  }
+
+  .wizard-step {
+    flex: 1; text-align: center;
+    padding: 6px 4px; font-size: 0.68rem;
+    border-bottom: 2px solid var(--border);
+    color: var(--muted); transition: all 0.2s;
+  }
+
+  .wizard-step.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .wizard-step.done   { color: var(--green);  border-bottom-color: var(--green); }
+
+  /* ── CLOSE GUARD DIALOG ── */
+  .close-guard-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 110; padding: 1rem;
+  }
+
+  .close-guard-dialog {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    padding: 1.75rem;
+    width: 100%; max-width: 400px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+  }
+
+  .close-guard-title {
+    font-family: var(--font-head);
+    font-size: 1.05rem; font-weight: 700;
+    color: var(--red); margin-bottom: 0.5rem;
+  }
+
+  .close-guard-body {
+    font-size: 0.8rem; color: var(--text);
+    line-height: 1.6; margin-bottom: 1.25rem;
+  }
+
+  /* ── AGENT STATUS BADGES ── */
+  .badge-pending  { background: rgba(90,96,112,0.15);  color: var(--muted);   border: 1px solid var(--border2); }
+  .badge-active   { background: rgba(0,230,118,0.12);  color: var(--green);   border: 1px solid rgba(0,230,118,0.25); }
+  .badge-offline  { background: rgba(255,145,0,0.12);  color: var(--orange);  border: 1px solid rgba(255,145,0,0.25); }
+  .badge-revoked  { background: rgba(255,82,82,0.12);  color: var(--red);     border: 1px solid rgba(255,82,82,0.25); }
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
@@ -655,8 +824,12 @@ const api = {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: res.statusText }));
-      throw new Error(err.message || `HTTP ${res.status}`);
+      const err = await res.json().catch(() => ({}));
+      // ProblemDetail (RFC 9457) uses title + detail; fall back to message for older endpoints
+      const msg = err.detail || err.title || err.message || `HTTP ${res.status}: ${res.statusText}`;
+      const error = new Error(msg);
+      error.problemDetail = err; // preserve full object for callers that want it
+      throw error;
     }
     const text = await res.text();
     return text ? JSON.parse(text) : null;
@@ -678,12 +851,24 @@ const api = {
   listAgents:    (token) => api.call("GET",  "/api/v1/agent/list",                    null,   token),
   genAgentToken: (name, token) => api.call("POST", `/api/v1/agent/tokens?agentName=${encodeURIComponent(name)}`, null, token),
   revokeAgent:   (id, token) => api.call("POST", `/api/v1/agent/${id}/revoke`,        null,   token),
+  createAgent:   (data, token) => api.call("POST", "/api/v1/agents",                  data,   token),
   queueScan:     (targetId, token) => api.call("POST", `/api/v1/targets/${targetId}/scan`, null, token),
   // Location endpoints
   listLocations:   (token) => api.call("GET",  "/api/v1/locations",        null, token),
   createLocation:  (data, token) => api.call("POST", "/api/v1/locations",  data, token),
   updateLocation:  (id, data, token) => api.call("PUT", `/api/v1/locations/${id}`, data, token),
   deleteLocation:  (id, token) => api.call("DELETE", `/api/v1/locations/${id}`, null, token),
+  // Team endpoints
+  listMembers:   (token) => api.call("GET",  "/api/v1/org/members",                    null, token),
+  inviteMember:  (data, token) => api.call("POST", "/api/v1/org/invitations",           data, token),
+  changeRole:    (userId, role, token) => api.call("PUT", `/api/v1/org/members/${userId}/role?role=${role}`, null, token),
+  revokeMember:  (userId, token) => api.call("DELETE", `/api/v1/org/members/${userId}`, null, token),
+  // Org profile endpoints
+  getOrgProfile:    (token) => api.call("GET", "/api/v1/org/profile",       null, token),
+  updateOrgProfile: (data, token) => api.call("PUT", "/api/v1/org/profile", data, token),
+  // Invite acceptance endpoints
+  validateInvite: (token) => api.call("POST", `/api/v1/auth/invite/validate?token=${encodeURIComponent(token)}`),
+  acceptInvite:   (data) => api.call("POST", "/api/v1/auth/invite/accept", data),
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -692,6 +877,16 @@ const hostTypeColor = (t) => t?.toLowerCase() || "unknown";
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysColor = (d) => d < 0 ? "var(--red)" : d <= 7 ? "var(--red)" : d <= 30 ? "var(--yellow)" : "var(--green)";
 const daysWidth = (d) => `${Math.min(100, Math.max(0, (d / 365) * 100))}%`;
+const fmtRelative = (iso) => {
+  if (!iso) return "Never";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+};
 
 // ─── TOAST SYSTEM ────────────────────────────────────────────────────────────
 let toastId = 0;
@@ -997,6 +1192,12 @@ function EditTargetModal({ token, target, onClose, onSaved, toast }) {
   );
 }
 
+function isRfc1918(h) {
+  const s = h.trim();
+  return s.startsWith("192.168.") || s.startsWith("10.") || s.startsWith("127.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(s);
+}
+
 // ─── ADD TARGET MODAL ─────────────────────────────────────────────────────────
 function AddTargetModal({ token, onClose, onAdded, toast }) {
   const [host, setHost]           = useState("");
@@ -1039,14 +1240,18 @@ function AddTargetModal({ token, onClose, onAdded, toast }) {
         <div className="modal-title" id="add-modal-title">Add Target</div>
         <p className="modal-sub">
           Enter a domain, IP address, or hostname to monitor.<br />
-          Private IPs (192.168.x.x) are auto-flagged as private.
+          Private IPs (10.x, 172.16–31.x, 192.168.x) auto-switch to Private.
         </p>
 
         {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
 
         <div className="field">
           <label htmlFor="add-host">Host *</label>
-          <input id="add-host" value={host} onChange={(e) => setHost(e.target.value)}
+          <input id="add-host" value={host} onChange={(e) => {
+              const v = e.target.value;
+              setHost(v);
+              if (isRfc1918(v)) setIsPrivate(true);
+            }}
             onKeyDown={(e) => e.key === "Enter" && handleAdd()}
             placeholder="google.com or 192.168.1.10 or my-server" autoFocus />
         </div>
@@ -1300,12 +1505,18 @@ function Dashboard({ token, org, toast, onLogout }) {
   }, [token]);
 
   const triggerScan = async (target) => {
-    if (target.isPrivate) { toast("Private targets are scanned by the on-premise agent", "info"); return; }
+    if (target.isPrivate && !target.agentId) {
+      toast("Assign an agent to this target before scanning", "error");
+      return;
+    }
     setScanning((s) => ({ ...s, [target.id]: true }));
     try {
       await api.scanTarget(target.id, token);
-      toast(`Scan triggered for ${target.host}`, "info");
-      setTimeout(() => { load(); setScanning((s) => ({ ...s, [target.id]: false })); }, 8000);
+      const msg = target.isPrivate
+        ? `Scan job queued for agent "${target.agentName}" — results in ~30s`
+        : `Scan triggered for ${target.host}`;
+      toast(msg, "info");
+      setTimeout(() => { load(); setScanning((s) => ({ ...s, [target.id]: false })); }, 10000);
     } catch (e) {
       toast("Scan failed: " + e.message, "error");
       setScanning((s) => ({ ...s, [target.id]: false }));
@@ -1572,7 +1783,7 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
                       <td><DaysBar days={cert?.daysRemaining} /></td>
                       <td>
                         <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
-                          onClick={() => onScan(t)} disabled={scanning[t.id] || t.isPrivate}>
+                          onClick={() => onScan(t)} disabled={scanning[t.id]}>
                           {scanning[t.id] ? <><Spinner /> Scanning</> : "⟳ Scan"}
                         </button>
                       </td>
@@ -1665,8 +1876,8 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
                       <td>
                         <div className="row-actions">
                           <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
-                            onClick={() => onScan(t)} disabled={scanning[t.id] || t.isPrivate}
-                            title={t.isPrivate ? "Private targets use the on-prem agent" : "Trigger scan"}>
+                            onClick={() => onScan(t)} disabled={scanning[t.id]}
+                            title={t.isPrivate ? "Queue scan job for agent" : "Trigger scan"}>
                             {scanning[t.id] ? <Spinner /> : "⟳"}
                           </button>
                           <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
@@ -1759,42 +1970,421 @@ function CertsView({ certs, loading, onRefresh }) {
   );
 }
 
-// ─── AGENTS VIEW ─────────────────────────────────────────────
-function AgentsView({ agents, loading, token, onRefresh, toast }) {
-  const [showGenToken, setShowGenToken] = useState(false);
-  const [agentName, setAgentName]       = useState("");
-  const [genLoading, setGenLoading]     = useState(false);
-  const [generatedToken, setGeneratedToken] = useState(null);
+// ─── VALIDATION HELPERS ──────────────────────────────────────────────────────
+// Hyphen at end of character class — no escape needed
+const AGENT_NAME_RE = /^[A-Za-z0-9 _.-]{3,64}$/;
+const CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/([0-9]|[1-2]\d|3[0-2])$/;
 
-  const statusColor = (s) => ({
-    ACTIVE: "valid", PENDING: "unknown", REVOKED: "expired", EXPIRED: "expiring"
-  }[s] || "unknown");
+function validateCidrs(raw) {
+  if (!raw.trim()) return "At least one CIDR is required";
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    if (!CIDR_RE.test(p)) return `Invalid CIDR: "${p}" — use format 192.168.1.0/24`;
+    const octets = p.split("/")[0].split(".");
+    if (octets.some((o) => parseInt(o) > 255)) return `Invalid IP in CIDR: "${p}"`;
+  }
+  return null;
+}
 
-  const fmtRelative = (iso) => {
-    if (!iso) return "Never";
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
+// ─── COUNTDOWN HOOK ───────────────────────────────────────────────────────────
+function useCountdown(expiresAt) {
+  const calcRemaining = useCallback(() => {
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    return Math.max(0, Math.floor(ms / 1000));
+  }, [expiresAt]);
+
+  const [secs, setSecs] = useState(calcRemaining);
+
+  useEffect(() => {
+    const id = setInterval(() => setSecs(calcRemaining()), 1000);
+    return () => clearInterval(id);
+  }, [calcRemaining]);
+
+  const mins = Math.floor(secs / 60);
+  const s = secs % 60;
+  return { secs, label: `${mins}:${String(s).padStart(2, "0")} remaining`, urgent: secs < 120 };
+}
+
+// ─── ACCORDION ───────────────────────────────────────────────────────────────
+function Accordion({ title, children }) {
+  const [open, setOpen] = useState(false);
+  const headId = `acc-${title.replace(/\s/g, "-").toLowerCase()}`;
+  const bodyId = `acc-body-${title.replace(/\s/g, "-").toLowerCase()}`;
+  return (
+    <div className="accordion">
+      <button
+        className="accordion-header"
+        id={headId}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {title}
+        <span className={`accordion-chevron ${open ? "open" : ""}`} aria-hidden="true">▼</span>
+      </button>
+      {open && (
+        <div className="accordion-body" id={bodyId} role="region" aria-labelledby={headId}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CLOSE GUARD DIALOG ───────────────────────────────────────────────────────
+function CloseGuardDialog({ onConfirm, onCancel }) {
+  return (
+    <div className="close-guard-overlay" role="alertdialog" aria-modal="true" aria-labelledby="cg-title" aria-describedby="cg-body">
+      <div className="close-guard-dialog">
+        <div className="close-guard-title" id="cg-title">Discard install key?</div>
+        <p className="close-guard-body" id="cg-body">
+          You will not be able to retrieve this install key. To re-deploy the agent,
+          you would need to delete it and create a new one.
+        </p>
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={onCancel} autoFocus>
+            Go back
+          </button>
+          <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={onConfirm}>
+            Discard key
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AGENT INSTALL KEY MODAL ──────────────────────────────────────────────────
+function AgentInstallKeyModal({ result, onClose, toast }) {
+  const { agentId, installKey, bundleDownloadUrl, expiresAt } = result;
+  const [confirmed, setConfirmed] = useState(false);
+  const [showGuard, setShowGuard] = useState(false);
+  const { label: countdownLabel, urgent } = useCountdown(expiresAt);
+
+  // Use a ref so the keydown handler always sees the latest value without
+  // needing to be recreated on each render (avoids react-compiler warning).
+  const confirmedRef = useCallback(() => confirmed, [confirmed]);
+
+  const handleCloseRequest = useCallback(() => {
+    if (!confirmedRef()) { setShowGuard(true); return; }
+    onClose();
+  }, [confirmedRef, onClose]);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") handleCloseRequest(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [handleCloseRequest]);
+
+  const copyKey = () => {
+    navigator.clipboard.writeText(installKey).then(
+      () => toast("Install key copied!", "success"),
+      () => toast("Clipboard unavailable — select and copy manually", "error"),
+    );
   };
 
-  const handleGenToken = async () => {
-    if (!agentName.trim()) return;
-    setGenLoading(true);
+  return (
+    <>
+      <div
+        className="modal-bg"
+        onClick={(e) => { if (e.target === e.currentTarget) handleCloseRequest(); }}
+        aria-hidden={showGuard}
+      >
+        <div className="modal-wide" role="dialog" aria-modal="true" aria-labelledby="ik-title">
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "0.4rem" }}>
+            <div className="modal-title" id="ik-title">Agent created — save your install key</div>
+            <button
+              className="btn-ghost"
+              style={{ padding: "4px 8px", fontSize: "1rem", lineHeight: 1 }}
+              onClick={handleCloseRequest}
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="modal-sub">
+            This key is shown exactly once. Store it securely before downloading the bundle.
+          </p>
+
+          <div className={`countdown-badge ${urgent ? "urgent" : ""}`} aria-live="off">
+            Bundle link expires in: <strong>{countdownLabel}</strong>
+          </div>
+
+          <div style={{ marginBottom: "0.5rem" }}>
+            <div style={{ fontSize: "0.68rem", color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
+              Install Key (shown once)
+            </div>
+            <div className="install-key-field">
+              <input
+                type="text"
+                readOnly
+                value={installKey}
+                aria-label="Install key"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                onClick={copyKey}
+                aria-label="Copy install key to clipboard"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: "1rem" }}>
+            <a
+              href={bundleDownloadUrl || "#"}
+              download
+              className="btn btn-primary"
+              style={{
+                display: "flex",
+                textDecoration: "none",
+                gap: "8px",
+                opacity: bundleDownloadUrl ? 1 : 0.4,
+                pointerEvents: bundleDownloadUrl ? "auto" : "none",
+              }}
+              aria-label={`Download installer bundle for agent ${agentId}`}
+              aria-disabled={!bundleDownloadUrl}
+            >
+              <span aria-hidden="true">&#8681;</span> Download Installer Bundle (.zip)
+            </a>
+          </div>
+
+          <div style={{ marginBottom: "0.75rem" }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+              Platform installation instructions
+            </div>
+            <Accordion title="Linux / macOS">
+              <pre>{`unzip certguard-agent-${agentId}.zip
+cd certguard-agent-${agentId}
+chmod +x run.sh
+./run.sh
+# When prompted, enter the install key above`}</pre>
+            </Accordion>
+            <Accordion title="Windows">
+              <pre>{`1. Unzip certguard-agent-${agentId}.zip
+2. Open a Command Prompt in the extracted folder
+3. Run:  run.bat
+4. When prompted, enter the install key above`}</pre>
+            </Accordion>
+            <Accordion title="Headless / CI">
+              <pre>{`CERTGUARD_INSTALL_KEY=<key> java -jar certguard-agent.jar --bundle bundle.cgb`}</pre>
+            </Accordion>
+          </div>
+
+          <label className="confirm-check" htmlFor="ik-confirm">
+            <input
+              id="ik-confirm"
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />
+            <span>I have securely stored the install key and understand it cannot be retrieved again.</span>
+          </label>
+
+          <div className="modal-actions" style={{ marginTop: "0.5rem" }}>
+            <button
+              className="btn btn-primary"
+              onClick={onClose}
+              disabled={!confirmed}
+              aria-disabled={!confirmed}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {showGuard && (
+        <CloseGuardDialog
+          onConfirm={() => { setShowGuard(false); onClose(); }}
+          onCancel={() => setShowGuard(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── AGENT CREATE WIZARD ──────────────────────────────────────────────────────
+function AgentCreateWizard({ token, locations, onClose, onCreated, toast }) {
+  const [agentName, setAgentName]     = useState("");
+  const [cidrs, setCidrs]             = useState("");
+  const [maxTargets, setMaxTargets]   = useState("50");
+  const [locationId, setLocationId]   = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [errors, setErrors]           = useState({});
+
+  const validate = () => {
+    const e = {};
+    if (!AGENT_NAME_RE.test(agentName.trim())) {
+      e.agentName = "Name must be 3–64 characters and contain only A-Za-z0-9 space _ . -";
+    }
+    const cidrErr = validateCidrs(cidrs);
+    if (cidrErr) e.cidrs = cidrErr;
+    const mt = parseInt(maxTargets);
+    if (!maxTargets || isNaN(mt) || mt < 1) e.maxTargets = "Must be at least 1";
+    return e;
+  };
+
+  const handleSubmit = async () => {
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); return; }
+    setErrors({});
+    setLoading(true);
     try {
-      const resp = await api.genAgentToken(agentName.trim(), token);
-      setGeneratedToken(resp);
-      setAgentName("");
-      toast("Registration token generated — copy it now!", "success");
-    } catch (e) {
-      toast("Failed to generate token: " + e.message, "error");
+      const body = {
+        agentName: agentName.trim(),
+        allowedCidrs: cidrs.split(",").map((s) => s.trim()).filter(Boolean),
+        maxTargets: parseInt(maxTargets),
+        ...(locationId ? { locationId } : {}),
+      };
+      const result = await api.createAgent(body, token);
+      onCreated(result);
+    } catch (err) {
+      // Surface ProblemDetail (title + detail already merged by api.call into err.message)
+      const pd = err.problemDetail || {};
+      const msg = (pd.title && pd.detail)
+        ? `${pd.title} — ${pd.detail}`
+        : err.message;
+      setErrors({ submit: msg });
+      toast("Failed to create agent: " + msg, "error");
     } finally {
-      setGenLoading(false);
+      setLoading(false);
     }
   };
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="acw-title">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem" }}>
+          <div className="modal-title" id="acw-title">Deploy New Agent</div>
+          <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: "1rem", lineHeight: 1 }}
+            onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <p className="modal-sub">
+          Configure the agent. An encrypted installer bundle will be generated and
+          a one-time install key will be shown — download the bundle and store the key securely.
+        </p>
+
+        {errors.submit && (
+          <div className="alert alert-error" role="alert">
+            <span>⚠</span> {errors.submit}
+          </div>
+        )}
+
+        <div className="field">
+          <label htmlFor="acw-name">
+            Agent Name <span style={{ color: "var(--red)" }}>*</span>
+          </label>
+          <input
+            id="acw-name"
+            value={agentName}
+            onChange={(e) => { setAgentName(e.target.value); setErrors((v) => ({ ...v, agentName: undefined })); }}
+            placeholder="e.g. office-agent-01"
+            autoFocus
+            aria-invalid={!!errors.agentName}
+            aria-describedby={errors.agentName ? "acw-name-err" : undefined}
+          />
+          {errors.agentName && (
+            <div id="acw-name-err" style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }} role="alert">
+              {errors.agentName}
+            </div>
+          )}
+        </div>
+
+        <div className="field">
+          <label htmlFor="acw-cidrs">
+            Allowed CIDRs <span style={{ color: "var(--red)" }}>*</span>
+          </label>
+          <input
+            id="acw-cidrs"
+            value={cidrs}
+            onChange={(e) => { setCidrs(e.target.value); setErrors((v) => ({ ...v, cidrs: undefined })); }}
+            placeholder="192.168.1.0/24, 10.0.0.0/8"
+            aria-invalid={!!errors.cidrs}
+            aria-describedby={errors.cidrs ? "acw-cidrs-err" : "acw-cidrs-hint"}
+          />
+          {errors.cidrs ? (
+            <div id="acw-cidrs-err" style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }} role="alert">
+              {errors.cidrs}
+            </div>
+          ) : (
+            <div id="acw-cidrs-hint" style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 4 }}>
+              Comma-separated IPv4 CIDRs the agent is permitted to scan.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+          <div className="field">
+            <label htmlFor="acw-max">
+              Max Targets <span style={{ color: "var(--red)" }}>*</span>
+            </label>
+            <input
+              id="acw-max"
+              type="number"
+              min="1"
+              value={maxTargets}
+              onChange={(e) => { setMaxTargets(e.target.value); setErrors((v) => ({ ...v, maxTargets: undefined })); }}
+              aria-invalid={!!errors.maxTargets}
+              aria-describedby={errors.maxTargets ? "acw-max-err" : undefined}
+            />
+            {errors.maxTargets && (
+              <div id="acw-max-err" style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }} role="alert">
+                {errors.maxTargets}
+              </div>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="acw-loc">Location <span style={{ color: "var(--muted)", fontWeight: 400 }}>(optional)</span></label>
+            <select id="acw-loc" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <option value="">— None —</option>
+              {(locations || []).map((l) => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={loading || !agentName.trim() || !cidrs.trim() || !maxTargets}
+          >
+            {loading ? <><Spinner /> Creating...</> : "Create Agent"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AGENTS VIEW ─────────────────────────────────────────────
+function AgentsView({ agents, loading, token, onRefresh, toast }) {
+  const [showWizard, setShowWizard]     = useState(false);
+  const [installResult, setInstallResult] = useState(null);
+  const [locations, setLocations]       = useState([]);
+
+  // Load locations for the wizard dropdown
+  useEffect(() => {
+    api.listLocations(token).then(setLocations).catch(() => {});
+  }, [token]);
+
+  // Poll every 10 s while any agent is PENDING or OFFLINE
+  useEffect(() => {
+    const needsPoll = agents.some((a) => a.status === "PENDING" || a.status === "OFFLINE");
+    if (!needsPoll) return;
+    const id = setInterval(onRefresh, 10000);
+    return () => clearInterval(id);
+  }, [agents, onRefresh]);
+
+  const agentStatusBadgeType = (s) => ({
+    ACTIVE: "active", PENDING: "pending", OFFLINE: "offline", REVOKED: "revoked", EXPIRED: "revoked"
+  }[s] || "pending");
 
   const handleRevoke = async (id) => {
     try {
@@ -1806,6 +2396,16 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
     }
   };
 
+  const handleCreated = (result) => {
+    setShowWizard(false);
+    setInstallResult(result);
+    onRefresh();
+  };
+
+  const handleInstallDone = () => {
+    setInstallResult(null);
+  };
+
   return (
     <>
       <div className="page-header">
@@ -1815,16 +2415,15 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowGenToken(true)}>+ Add Agent</button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}>+ Deploy New Agent</button>
         </div>
       </div>
       <div className="page-content">
 
-        {/* Architecture info card */}
         <div className="alert alert-info" style={{ marginBottom: "1.5rem" }}>
           <span>ℹ</span>
           <div>
-            Agents run inside your private network and scan hosts that are not reachable from the internet.
+            Agents run inside your private network and scan hosts not reachable from the internet.
             Communication uses TLS 1.3 + AES-256-GCM with HMAC-SHA256 payload signing.
           </div>
         </div>
@@ -1837,10 +2436,10 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
             <div className="empty-title">No agents registered</div>
             <p className="empty-sub">
               Deploy an agent on your private network to start scanning internal hosts.
-              <br />Generate a registration token, then run the agent JAR with the token in its config.
+              Click "+ Deploy New Agent" to create an encrypted installer bundle.
             </p>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowGenToken(true)}
-              style={{ margin: "0 auto" }}>+ Add First Agent</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}
+              style={{ margin: "0 auto" }}>+ Deploy First Agent</button>
           </div>
         ) : (
           <div className="table-wrap" style={{ marginBottom: "2rem" }}>
@@ -1851,7 +2450,6 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
                   <th>Status</th>
                   <th>Targets</th>
                   <th>Allowed CIDRs</th>
-                  <th>Max Targets</th>
                   <th>Last Seen</th>
                   <th>Registered</th>
                   <th></th>
@@ -1860,9 +2458,14 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
               <tbody>
                 {agents.map((a) => (
                   <tr key={a.id}>
-                    <td className="host-cell">{a.name}</td>
-                    <td><Badge type={statusColor(a.status)}>{a.status}</Badge></td>
-                    <td className="mono">{a.currentTargetCount} / {a.maxTargets}</td>
+                    <td className="host-cell">
+                      {a.name}
+                      {a.locationName && (
+                        <div className="mono" style={{ fontSize: "0.7rem", color: "var(--muted)" }}>{a.locationName}</div>
+                      )}
+                    </td>
+                    <td><Badge type={agentStatusBadgeType(a.status)}>{a.status}</Badge></td>
+                    <td className="mono">{a.currentTargetCount ?? 0} / {a.maxTargets}</td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {(a.allowedCidrs || []).map((c) => (
@@ -1870,7 +2473,6 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
                         ))}
                       </div>
                     </td>
-                    <td className="mono">{a.maxTargets}</td>
                     <td className="mono" style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
                       {fmtRelative(a.lastSeenAt)}
                     </td>
@@ -1878,9 +2480,15 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
                       {fmtDate(a.registeredAt)}
                     </td>
                     <td>
-                      {a.status === "ACTIVE" && (
-                        <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
-                          onClick={() => handleRevoke(a.id)}>Revoke</button>
+                      {(a.status === "ACTIVE" || a.status === "PENDING") && (
+                        <button
+                          className="scan-btn"
+                          style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
+                          onClick={() => handleRevoke(a.id)}
+                          aria-label={`Revoke agent ${a.name}`}
+                        >
+                          Revoke
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -1889,99 +2497,24 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
             </table>
           </div>
         )}
-
-        {/* Deploy instructions */}
-        <div className="section-header"><div className="section-title">Deploy Instructions</div></div>
-        <div className="cert-detail">
-          <div style={{ padding: "0.5rem 0" }}>
-            <div style={{ color: "var(--muted)", fontSize: "0.72rem", marginBottom: "0.5rem", letterSpacing: "0.06em" }}>
-              STEP 1 — GENERATE TOKEN IN UI, THEN CONFIGURE AGENT
-            </div>
-            <pre style={{ fontSize: "0.75rem", color: "var(--accent)", overflowX: "auto" }}>{
-`# application.properties on your private host
-certguard.server.url=https://YOUR_SERVER_IP:58244
-certguard.registration.token=CGR-XXXX-...  # from UI
-certguard.registration.org-id=YOUR_ORG_ID
-certguard.agent.name=office-agent
-certguard.agent.allowed-cidrs=192.168.1.0/24,10.0.0.0/8
-certguard.agent.max-targets=50`
-            }</pre>
-          </div>
-          <div style={{ padding: "0.75rem 0 0.5rem", borderTop: "1px solid var(--border)" }}>
-            <div style={{ color: "var(--muted)", fontSize: "0.72rem", marginBottom: "0.5rem", letterSpacing: "0.06em" }}>
-              STEP 2 — RUN THE AGENT (JAR OR DOCKER)
-            </div>
-            <pre style={{ fontSize: "0.75rem", color: "var(--accent)", overflowX: "auto" }}>{
-`# Option A — JAR
-java -jar certguard-agent.jar
-
-# Option B — Docker
-docker run -v ./config:/opt/certguard-agent/config \\
-  certguard/agent:latest`
-            }</pre>
-          </div>
-        </div>
       </div>
 
-      {/* Generate token modal */}
-      {showGenToken && (
-        <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && setShowGenToken(false)}>
-          <div className="modal" role="dialog" aria-modal="true" aria-label="Add Agent">
-            {generatedToken ? (
-              <>
-                <div className="modal-title">Token Generated ✓</div>
-                <p className="modal-sub">
-                  Copy this token immediately — it will not be shown again.
-                  It expires in 1 hour and can only be used once.
-                </p>
-                <div className="alert alert-info" style={{ marginBottom: "1rem" }}>
-                  <span>🔑</span>
-                  <span>Agent: <strong>{generatedToken.agentName}</strong></span>
-                </div>
-                <div style={{
-                  background: "var(--surface2)", border: "1px solid var(--border2)",
-                  borderRadius: "var(--radius)", padding: "12px 16px",
-                  fontFamily: "var(--font-mono)", fontSize: "0.78rem",
-                  color: "var(--green)", wordBreak: "break-all", marginBottom: "1rem"
-                }}>
-                  {generatedToken.token}
-                </div>
-                <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
-                  Expires: {fmtDate(generatedToken.expiresAt)}
-                </div>
-                <button className="btn btn-primary" onClick={() => {
-                  navigator.clipboard?.writeText(generatedToken.token);
-                  toast("Token copied!", "success");
-                }}>Copy Token</button>
-                <button className="btn btn-secondary" style={{ marginTop: "0.5rem" }}
-                  onClick={() => { setGeneratedToken(null); setShowGenToken(false); onRefresh(); }}>
-                  Done
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="modal-title">Add Agent</div>
-                <p className="modal-sub">
-                  Enter a name for the agent. A one-time registration token (valid 1 hour)
-                  will be generated. Paste it into the agent's config file.
-                </p>
-                <div className="field">
-                  <label htmlFor="agent-name">Agent Name</label>
-                  <input id="agent-name" value={agentName} onChange={(e) => setAgentName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleGenToken()}
-                    placeholder="e.g. office-network-agent" autoFocus />
-                </div>
-                <div className="modal-actions">
-                  <button className="btn btn-secondary" onClick={() => setShowGenToken(false)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={handleGenToken}
-                    disabled={genLoading || !agentName.trim()}>
-                    {genLoading ? <><Spinner /> Generating...</> : "Generate Token"}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      {showWizard && (
+        <AgentCreateWizard
+          token={token}
+          locations={locations}
+          onClose={() => setShowWizard(false)}
+          onCreated={handleCreated}
+          toast={toast}
+        />
+      )}
+
+      {installResult && (
+        <AgentInstallKeyModal
+          result={installResult}
+          onClose={handleInstallDone}
+          toast={toast}
+        />
       )}
     </>
   );
@@ -1989,45 +2522,340 @@ docker run -v ./config:/opt/certguard-agent/config \\
 
 // ─── TEAM VIEW ────────────────────────────────────────────────────────────────
 function TeamView({ token, org, toast }) {
+  const [members, setMembers]       = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [showInvite, setShowInvite] = useState(false);
+  const [revokeId, setRevokeId]     = useState(null);
+  const [revoking, setRevoking]     = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.listMembers(token)
+      .then(setMembers)
+      .catch((e) => toast("Failed to load members: " + e.message, "error"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [token]);
+
+  const handleRevoke = async () => {
+    setRevoking(true);
+    try {
+      await api.revokeMember(revokeId, token);
+      toast("Member removed", "success");
+      setRevokeId(null);
+      load();
+    } catch (e) {
+      toast("Failed to remove member: " + e.message, "error");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const inviteStatusBadgeType = (s) => ({ ACCEPTED: "active", PENDING: "pending", REVOKED: "revoked" }[s] || "unknown");
+
   return (
-    <div className="page">
+    <>
       <div className="page-header">
-        <div className="page-title">Team</div>
+        <div>
+          <div className="page-title">Team</div>
+          <div className="page-sub">Manage members and access for {org?.name || "your organisation"}</div>
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={() => setShowInvite(true)}>+ Invite Member</button>
       </div>
-      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
-        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>◎</div>
-        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
-          Team Management
+      <div className="page-content">
+        {loading ? (
+          <div className="loading-center"><Spinner lg /><span>Loading members...</span></div>
+        ) : members.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">◎</div>
+            <div className="empty-title">No team members yet</div>
+            <p className="empty-sub">Invite your colleagues to collaborate on certificate monitoring.</p>
+            <button className="btn btn-primary btn-sm" style={{ margin: "0 auto" }} onClick={() => setShowInvite(true)}>+ Invite Member</button>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Invited By</th>
+                  <th>Joined</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.id}>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{m.name || m.email}</div>
+                      {m.name && <div className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{m.email}</div>}
+                    </td>
+                    <td>
+                      <RoleDropdown member={m} token={token} onChanged={load} toast={toast} />
+                    </td>
+                    <td><Badge type={inviteStatusBadgeType(m.inviteStatus)}>{m.inviteStatus}</Badge></td>
+                    <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{m.invitedByEmail || "—"}</td>
+                    <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{fmtDate(m.createdAt)}</td>
+                    <td>
+                      <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
+                        onClick={() => setRevokeId(m.userId)} title="Remove member">✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showInvite && (
+        <InviteMemberModal token={token} onClose={() => setShowInvite(false)}
+          onInvited={() => { setShowInvite(false); load(); toast("Invitation sent", "success"); }}
+          toast={toast} />
+      )}
+
+      {revokeId && (
+        <div className="modal-bg">
+          <div className="modal" role="alertdialog" aria-modal="true">
+            <div className="modal-title">Remove Member?</div>
+            <p className="modal-sub">This member will lose access to your organisation immediately.</p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setRevokeId(null)} disabled={revoking}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleRevoke} disabled={revoking}>
+                {revoking ? <Spinner /> : "Remove"}
+              </button>
+            </div>
+          </div>
         </div>
-        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
-          Invite members, manage roles, and control access to your organisation.
-        </div>
+      )}
+    </>
+  );
+}
+
+function RoleDropdown({ member, token, onChanged, toast }) {
+  const [role, setRole] = useState(member.role);
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async (e) => {
+    const newRole = e.target.value;
+    setSaving(true);
+    try {
+      await api.changeRole(member.userId, newRole, token);
+      setRole(newRole);
+      onChanged();
+      toast("Role updated", "success");
+    } catch (err) {
+      toast("Failed to update role: " + err.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <select value={role} onChange={handleChange} disabled={saving}
+      style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border2)",
+               borderRadius: 6, padding: "3px 8px", fontSize: "0.78rem", cursor: "pointer" }}>
+      <option value="ADMIN">Admin</option>
+      <option value="ENGINEER">Engineer</option>
+      <option value="VIEWER">Viewer</option>
+    </select>
+  );
+}
+
+function InviteMemberModal({ token, onClose, onInvited }) {
+  const [email, setEmail]   = useState("");
+  const [role, setRole]     = useState("ENGINEER");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) { setError("Email is required"); return; }
+    setError("");
+    setLoading(true);
+    try {
+      await api.inviteMember({ email: email.trim(), role }, token);
+      onInvited();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+        <div className="modal-title" id="invite-title">Invite Team Member</div>
+        <form onSubmit={handleSubmit}>
+          <div className="field">
+            <label>Email address</label>
+            <input type="email" value={email} autoFocus
+              onChange={(e) => setEmail(e.target.value)} placeholder="colleague@example.com" />
+          </div>
+          <div className="field">
+            <label>Role</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="ADMIN">Admin — full access, can manage team</option>
+              <option value="ENGINEER">Engineer — manage targets and scans</option>
+              <option value="VIEWER">Viewer — read-only access</option>
+            </select>
+          </div>
+          {error && <div style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }}>{error}</div>}
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? <Spinner /> : "Send Invite"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
 }
 
 // ─── SETTINGS VIEW ────────────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
 function SettingsView({ token, org, toast }) {
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-title">Settings</div>
-      </div>
-      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
-        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>⚙</div>
-        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
-          Organisation Settings
-        </div>
-        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
-          Configure alert thresholds, notification channels, and organisation profile.
-        </div>
-      </div>
+  const [profile, setProfile] = useState(null);
+  const [form, setForm]       = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [dirty, setDirty]     = useState(false);
+  const [errors, setErrors]   = useState({});
+
+  useEffect(() => {
+    api.getOrgProfile(token)
+      .then((p) => { setProfile(p); setForm(p); })
+      .catch((e) => toast("Failed to load profile: " + e.message, "error"))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const set = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setDirty(true);
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+  };
+
+  const validate = () => {
+    const e = {};
+    if (!form.name?.trim()) e.name = "Organisation name is required";
+    if (form.contactEmail && !/\S+@\S+\.\S+/.test(form.contactEmail)) e.contactEmail = "Invalid email";
+    return e;
+  };
+
+  const handleSave = async (ev) => {
+    ev.preventDefault();
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); return; }
+    setSaving(true);
+    try {
+      const updated = await api.updateOrgProfile({
+        name: form.name?.trim(),
+        addressLine1: form.addressLine1 || null,
+        addressLine2: form.addressLine2 || null,
+        city: form.city || null,
+        stateProvince: form.stateProvince || null,
+        postalCode: form.postalCode || null,
+        country: form.country || null,
+        phone: form.phone || null,
+        contactEmail: form.contactEmail || null,
+      }, token);
+      setProfile(updated);
+      setForm(updated);
+      setDirty(false);
+      toast("Organisation profile saved", "success");
+    } catch (err) {
+      toast("Save failed: " + err.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = () => { setForm(profile); setDirty(false); setErrors({}); };
+
+  const F = ({ label, field, type = "text", placeholder }) => (
+    <div className="field">
+      <label>{label}</label>
+      <input type={type} placeholder={placeholder}
+        value={form[field] || ""} onChange={(e) => set(field, e.target.value)} />
+      {errors[field] && <div style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }}>{errors[field]}</div>}
     </div>
+  );
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <div className="page-title">Settings</div>
+          <div className="page-sub">Organisation profile and configuration</div>
+        </div>
+      </div>
+      <div className="page-content">
+        {loading ? (
+          <div className="loading-center"><Spinner lg /><span>Loading settings...</span></div>
+        ) : (
+          <form onSubmit={handleSave} style={{ maxWidth: 640 }}>
+            <div className="cert-detail" style={{ marginBottom: "1.5rem" }}>
+              <div style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase",
+                            letterSpacing: "0.1em", marginBottom: "1rem" }}>Organisation Profile</div>
+
+              <F label="Organisation Name *" field="name" placeholder="Acme Corp" />
+              <F label="Contact Email" field="contactEmail" type="email" placeholder="admin@acme.com" />
+              <F label="Phone" field="phone" placeholder="+1 555 000 0000" />
+
+              <div style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase",
+                            letterSpacing: "0.1em", margin: "1.25rem 0 0.75rem" }}>Address</div>
+
+              <F label="Address Line 1" field="addressLine1" placeholder="123 Main Street" />
+              <F label="Address Line 2" field="addressLine2" placeholder="Suite 400" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <F label="City" field="city" placeholder="San Francisco" />
+                <F label="State / Province" field="stateProvince" placeholder="CA" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <F label="Postal Code" field="postalCode" placeholder="94105" />
+                <F label="Country" field="country" placeholder="US" />
+              </div>
+            </div>
+
+            <div className="cert-detail" style={{ marginBottom: "1.5rem" }}>
+              <div style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase",
+                            letterSpacing: "0.1em", marginBottom: "0.75rem" }}>Plan & Quota</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", fontSize: "0.82rem" }}>
+                <div>
+                  <div style={{ color: "var(--muted)", marginBottom: 4 }}>Subscription</div>
+                  <Badge type={profile?.status === "ACTIVE" ? "active" : "pending"}>{profile?.status || "—"}</Badge>
+                </div>
+                <div>
+                  <div style={{ color: "var(--muted)", marginBottom: 4 }}>Certificate Quota</div>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>{profile?.maxCertificateQuota ?? "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
+                {saving ? <Spinner /> : "Save Changes"}
+              </button>
+              {dirty && (
+                <button type="button" className="btn btn-secondary" onClick={handleReset} disabled={saving}>
+                  Discard
+                </button>
+              )}
+            </div>
+          </form>
+        )}
+      </div>
+    </>
   );
 }
 
 // ─── MSP ORGS VIEW ────────────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
 function MspOrgsView({ token, toast }) {
   return (
     <div className="page">
@@ -2047,13 +2875,93 @@ function MspOrgsView({ token, toast }) {
   );
 }
 
+// ─── INVITE ACCEPT SCREEN ────────────────────────────────────────────────────
+function InviteAcceptScreen({ inviteToken, onAccepted, toast }) {
+  const [step, setStep]     = useState("validating"); // validating | otp | error
+  const [email, setEmail]   = useState("");
+  const [otp, setOtp]       = useState("");
+  const [errMsg, setErrMsg] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    api.validateInvite(inviteToken)
+      .then((res) => { setEmail(res.email); setStep("otp"); })
+      .catch((e) => { setErrMsg(e.message); setStep("error"); });
+  }, [inviteToken]);
+
+  const handleAccept = async (ev) => {
+    ev.preventDefault();
+    if (!otp.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await api.acceptInvite({ token: inviteToken, email, otp: otp.trim() });
+      onAccepted(res.token);
+    } catch (e) {
+      setErrMsg(e.message);
+      toast("Failed to accept invite: " + e.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="launch">
+      <div style={{ width: "100%", maxWidth: 400, margin: "auto", padding: "2rem" }}>
+        <div className="wordmark" style={{ marginBottom: "2rem", textAlign: "center" }}>
+          <span className="wordmark-cert">Cert</span><span className="wordmark-guard">Guard</span>
+        </div>
+
+        {step === "validating" && (
+          <div className="loading-center">
+            <Spinner lg />
+            <span>Validating invite...</span>
+          </div>
+        )}
+
+        {step === "error" && (
+          <div className="cert-detail" style={{ textAlign: "center" }}>
+            <div style={{ color: "var(--red)", marginBottom: "1rem", fontSize: "1.1rem" }}>Invalid or expired invite</div>
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginBottom: "1.5rem" }}>{errMsg}</div>
+            <button className="btn btn-secondary" onClick={() => window.location.replace("/")}>Go to Login</button>
+          </div>
+        )}
+
+        {step === "otp" && (
+          <div className="cert-detail">
+            <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
+              You&apos;ve been invited
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginBottom: "1.5rem" }}>
+              A one-time code was sent to <strong style={{ color: "var(--text)" }}>{email}</strong>. Enter it below to accept your invitation.
+            </div>
+            <form onSubmit={handleAccept}>
+              <div className="field">
+                <label>One-Time Code</label>
+                <input type="text" value={otp} autoFocus
+                  onChange={(e) => setOtp(e.target.value)} placeholder="123456"
+                  style={{ letterSpacing: "0.2em", fontSize: "1.1rem", textAlign: "center" }} />
+              </div>
+              {errMsg && <div style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }}>{errMsg}</div>}
+              <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: "0.5rem" }}
+                disabled={submitting || !otp.trim()}>
+                {submitting ? <Spinner /> : "Accept Invitation"}
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [token, setToken]     = useState(null);
   const [orgData, setOrgData] = useState(null);
   const [, setTargets] = useState(null);
-  const [phase, setPhase]     = useState("launch"); // launch | org-setup | first-target | app
+  const [phase, setPhase]     = useState("launch"); // launch | org-setup | first-target | app | invite
   const [loading, setLoading] = useState(false);
+  const [inviteToken, setInviteToken] = useState(null);
   const { toasts, add: toast } = useToasts();
 
   const handleToken = async (t) => {
@@ -2090,18 +2998,22 @@ export default function App() {
     }
   };
 
-  // Pick up the JWT that Spring drops in ?token= after the Google OAuth redirect
+  // Pick up the JWT after OAuth redirect (?token=) or start invite flow (?invite=)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
+    const urlInvite = params.get("invite");
+    window.history.replaceState({}, "", window.location.pathname);
     if (urlToken) {
-      window.history.replaceState({}, "", window.location.pathname);
       handleToken(urlToken);
+    } else if (urlInvite) {
+      setInviteToken(urlInvite);
+      setPhase("invite");
     }
   }, []);
 
   const handleLogout = async () => {
-    try { await api.logout(token); } catch (_) {}
+    try { await api.logout(token); } catch { /* ignore logout errors */ }
     setToken(null);
     setOrgData(null);
     setPhase("launch");
@@ -2140,6 +3052,7 @@ export default function App() {
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
       {phase === "app"          && <Dashboard token={token} org={orgData} toast={toast} onLogout={handleLogout} />}
+      {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
       <Toast toasts={toasts} />
     </>
   );
