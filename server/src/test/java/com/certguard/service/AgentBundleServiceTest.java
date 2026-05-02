@@ -9,6 +9,7 @@ import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.AgentInstallKeyRepository;
 import com.certguard.repository.AgentRegistrationTokenRepository;
 import com.certguard.repository.AgentRepository;
+import com.certguard.repository.LocationRepository;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.security.AgentBundleCrypto;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,7 +17,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -47,6 +47,7 @@ class AgentBundleServiceTest {
     @Mock AgentRepository agentRepository;
     @Mock AgentRegistrationTokenRepository tokenRepository;
     @Mock OrganizationRepository orgRepository;
+    @Mock LocationRepository locationRepository;
     @Spy  AgentBundleCrypto bundleCrypto;
     @Spy  BCryptPasswordEncoder passwordEncoder;
     AgentBundleService service;
@@ -59,7 +60,7 @@ class AgentBundleServiceTest {
     void setUp() {
         service = new AgentBundleService(
                 installKeyRepository, agentRepository, tokenRepository,
-                orgRepository, bundleCrypto, passwordEncoder);
+                orgRepository, locationRepository, bundleCrypto, passwordEncoder);
 
         // Inject @Value fields via reflection
         ReflectionTestUtils.setField(service, "downloadUrlTtlSeconds", 3600);

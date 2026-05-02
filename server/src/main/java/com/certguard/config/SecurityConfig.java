@@ -61,7 +61,6 @@ public class SecurityConfig {
                 auth
                     .dispatcherTypeMatchers(DispatcherType.FORWARD, DispatcherType.INCLUDE).permitAll()
                     // Agent
-                    .requestMatchers("/api/v1/agent/ca-cert").permitAll()
                     .requestMatchers("/api/v1/agent/register").permitAll()
                     .requestMatchers("/api/v1/agents/*/bundle").permitAll()
                     .requestMatchers("/agent/download").permitAll()

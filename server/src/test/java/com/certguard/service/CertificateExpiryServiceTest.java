@@ -4,7 +4,6 @@ import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
 import com.certguard.repository.CertificateRecordRepository;
-import com.certguard.repository.OrganizationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -26,7 +25,6 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class CertificateExpiryServiceTest {
 
-    @Mock OrganizationRepository organisationRepository;
     @Mock CertificateRecordRepository certRepository;
     @Mock NotificationService notificationService;
 
@@ -37,7 +35,7 @@ class CertificateExpiryServiceTest {
 
     @BeforeEach
     void setUp() {
-        scheduler = new CertificateExpiryScheduler(organisationRepository, certRepository, notificationService);
+        scheduler = new CertificateExpiryScheduler(certRepository, notificationService);
         ReflectionTestUtils.setField(scheduler, "warningDays", 30);
         ReflectionTestUtils.setField(scheduler, "criticalDays", 7);
         ReflectionTestUtils.setField(scheduler, "dedupHours", 23);
@@ -45,8 +43,6 @@ class CertificateExpiryServiceTest {
         orgId = UUID.randomUUID();
         org = Organization.builder().name("Org").build();
         ReflectionTestUtils.setField(org, "id", orgId);
-
-        when(organisationRepository.findAll()).thenReturn(List.of(org));
     }
 
     private Target enabledTarget() {
@@ -81,9 +77,8 @@ class CertificateExpiryServiceTest {
             Target target = enabledTarget();
             CertificateRecord cert = certExpiring(target, 30);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -97,9 +92,8 @@ class CertificateExpiryServiceTest {
             Target target = enabledTarget();
             CertificateRecord cert = certExpiring(target, 7);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -113,8 +107,7 @@ class CertificateExpiryServiceTest {
             Target target = enabledTarget();
             CertificateRecord cert = certExpiring(target, -5);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of())
+            when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
@@ -133,8 +126,8 @@ class CertificateExpiryServiceTest {
             Target disabled = Target.builder().organization(org).host("x.com").port(443).enabled(false).build();
             CertificateRecord cert = certExpiring(disabled, 5);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
+            // Disabled targets are filtered out at the JPQL query level; simulate empty result
+            when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of());
 
             scheduler.checkExpiringCertificates();
@@ -155,9 +148,8 @@ class CertificateExpiryServiceTest {
                     .build();
             ReflectionTestUtils.setField(cert, "id", UUID.randomUUID());
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -175,9 +167,8 @@ class CertificateExpiryServiceTest {
             Instant recentAlert = Instant.now().minus(1, ChronoUnit.HOURS);
             CertificateRecord cert = certExpiring(target, 5, recentAlert);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -192,9 +183,8 @@ class CertificateExpiryServiceTest {
             Instant oldAlert = Instant.now().minus(25, ChronoUnit.HOURS);
             CertificateRecord cert = certExpiring(target, 5, oldAlert);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -207,9 +197,8 @@ class CertificateExpiryServiceTest {
             Target target = enabledTarget();
             CertificateRecord cert = certExpiring(target, 3, null);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
 
@@ -223,8 +212,7 @@ class CertificateExpiryServiceTest {
             Instant recentAlert = Instant.now().minus(2, ChronoUnit.HOURS);
             CertificateRecord cert = certExpiring(target, -10, recentAlert);
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of())
+            when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
 
             scheduler.checkExpiringCertificates();
@@ -238,9 +226,8 @@ class CertificateExpiryServiceTest {
             CertificateRecord cert = certExpiring(target, 20, null);
             UUID certId = cert.getId();
 
-            when(certRepository.findExpiringByOrgId(eq(orgId), any(), any()))
-                    .thenReturn(List.of(cert))
-                    .thenReturn(List.of());
+            when(certRepository.findExpiringWithTargets(any(), any()))
+                    .thenReturn(List.of(cert));
 
             Instant before = Instant.now().minusSeconds(1);
             scheduler.checkExpiringCertificates();

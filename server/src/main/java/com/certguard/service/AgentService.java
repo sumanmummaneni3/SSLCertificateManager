@@ -11,7 +11,6 @@ import com.certguard.enums.CertStatus;
 import com.certguard.enums.ScanJobStatus;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
-import com.certguard.security.AgentCertificateAuthority;
 import com.certguard.security.AgentHmacService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,7 +37,6 @@ public class AgentService {
     private final TargetRepository targetRepository;
     private final CertificateRecordRepository certRepository;
     private final OrganizationRepository orgRepository;
-    private final AgentCertificateAuthority agentCA;
     private final AgentHmacService hmacService;
     private final BCryptPasswordEncoder passwordEncoder;
 
@@ -112,12 +110,6 @@ public class AgentService {
 
         agent = agentRepository.save(agent);
 
-        String clientCertPem = agentCA.issueClientCertificate(agent.getId(), orgId);
-        String fingerprint   = agentCA.computeFingerprint(clientCertPem);
-        agent.setClientCertPem(clientCertPem);
-        agent.setClientCertFingerprint(fingerprint);
-        agentRepository.save(agent);
-
         matchedToken.setUsed(true);
         tokenRepository.save(matchedToken);
 
@@ -132,7 +124,6 @@ public class AgentService {
                 .currentTargetCount(0)
                 .registeredAt(agent.getRegisteredAt())
                 .agentKey(plainAgentKey)
-                .clientCertPem(clientCertPem)
                 .createdAt(agent.getCreatedAt())
                 .locationId(agent.getLocation() != null ? agent.getLocation().getId() : null)
                 .locationName(agent.getLocation() != null ? agent.getLocation().getName() : null)

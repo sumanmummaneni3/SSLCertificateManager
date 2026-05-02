@@ -209,7 +209,6 @@ public class AgentConfig {
     public String agentId()              { return props.getProperty("certguard.agent.id", ""); }
     public String agentKey()             { return props.getProperty("certguard.agent.key", ""); }
     public String agentName()            { return props.getProperty("certguard.agent.name", "certguard-agent"); }
-    public String agentCertPath()        { return props.getProperty("certguard.agent.cert-path", "./certguard-agent-client.pem"); }
 
     public boolean isRegistered() {
         boolean registered = !agentId().isBlank() && !agentKey().isBlank();

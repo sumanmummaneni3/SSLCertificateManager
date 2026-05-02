@@ -5,7 +5,6 @@ import com.certguard.dto.response.AgentResponse;
 import com.certguard.dto.response.RegistrationTokenResponse;
 import com.certguard.dto.response.ScanJobResponse;
 import com.certguard.entity.Agent;
-import com.certguard.security.AgentCertificateAuthority;
 import com.certguard.security.CertGuardUserPrincipal;
 import com.certguard.security.TenantContext;
 import com.certguard.service.AgentService;
@@ -30,12 +29,9 @@ import java.util.UUID;
 public class AgentController {
 
     private final AgentService agentService;
-    private final AgentCertificateAuthority agentCA;
 
-    public AgentController(AgentService agentService,
-                           AgentCertificateAuthority agentCA) {
+    public AgentController(AgentService agentService) {
         this.agentService = agentService;
-        this.agentCA      = agentCA;
     }
 
     // ── Admin endpoints (JWT auth) ─────────────────────────────
@@ -94,8 +90,7 @@ public class AgentController {
                 certguard.agent.id=
                 certguard.agent.key=
                 certguard.agent.name=%s
-                certguard.agent.cert-path=./certguard-agent-client.pem
-                
+
                 # Network scope — edit to match your private network ranges
                 certguard.agent.allowed-cidrs=192.168.0.0/16,10.0.0.0/8
                 
@@ -125,11 +120,6 @@ public class AgentController {
     }
 
     // ── Public endpoints ───────────────────────────────────────
-
-    @GetMapping("/ca-cert")
-    public ResponseEntity<Map<String, String>> getCaCert() throws Exception {
-        return ResponseEntity.ok(Map.of("caCertPem", agentCA.getCaCertPem()));
-    }
 
     @PostMapping("/register")
     public ResponseEntity<AgentResponse> register(

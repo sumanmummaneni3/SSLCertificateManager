@@ -32,12 +32,6 @@ public class Agent extends BaseEntity {
     @Column(name = "agent_key_hash", nullable = false)
     private String agentKeyHash;
 
-    @Column(name = "client_cert_fingerprint")
-    private String clientCertFingerprint;
-
-    @Column(name = "client_cert_pem", columnDefinition = "TEXT")
-    private String clientCertPem;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "allowed_cidrs", columnDefinition = "jsonb")
     @Builder.Default

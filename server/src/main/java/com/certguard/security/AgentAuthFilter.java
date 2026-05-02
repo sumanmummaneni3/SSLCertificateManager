@@ -27,7 +27,6 @@ public class AgentAuthFilter extends OncePerRequestFilter {
 
     // These paths are handled by JWT auth or are public — skip agent filter
     private static final List<String> SKIP_PATHS = List.of(
-            "/api/v1/agent/ca-cert",
             "/api/v1/agent/register",
             "/api/v1/agent/tokens",
             "/api/v1/agent/list"

@@ -4,28 +4,24 @@ import com.certguard.agent.config.AgentConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.ssl.DefaultHostnameVerifier;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.*;
-import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Base64;
 
 /**
  * Builds an Apache HttpClient 5 with:
  *  - TLS 1.3 only
  *  - Strong cipher suites only
  *  - Server cert fingerprint pinning (or trust-all in dev mode)
- *  - mTLS client certificate (post-registration)
  *
+ * Authentication is provided by bearer agentKey + HMAC, not mTLS.
  * Uses plain JDK SSLContext + X509TrustManager — no HC5 TrustStrategy needed.
  */
 public class SecureHttpClient {
@@ -46,12 +42,26 @@ public class SecureHttpClient {
 
     public CloseableHttpClient build() throws Exception {
         SSLContext sslContext = buildSslContext();
+        String pinned = config.serverCertFingerprint();
+
+        // Use DefaultHostnameVerifier when a fingerprint is configured (production).
+        // The fingerprint pin already authenticates the server cryptographically;
+        // hostname verification adds an additional layer. Only fall back to noop in
+        // dev/trust-all mode where no fingerprint is set.
+        var hostnameVerifier = (!pinned.isBlank())
+                ? new DefaultHostnameVerifier()
+                : org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE;
+
+        if (pinned.isBlank()) {
+            log.warn("No certguard.server.cert-fingerprint configured — hostname verification disabled. " +
+                     "Set the fingerprint for production use.");
+        }
 
         var sslSocketFactory = SSLConnectionSocketFactoryBuilder.create()
                 .setSslContext(sslContext)
                 .setTlsVersions(org.apache.hc.core5.http.ssl.TLS.V_1_3)
                 .setCiphers(CIPHER_SUITES)
-                .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
+                .setHostnameVerifier(hostnameVerifier)
                 .build();
 
         var connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
@@ -65,42 +75,11 @@ public class SecureHttpClient {
     }
 
     private SSLContext buildSslContext() throws Exception {
-        KeyManager[]   keyManagers   = buildKeyManagers();
         TrustManager[] trustManagers = buildTrustManagers();
 
         SSLContext ctx = SSLContext.getInstance("TLSv1.3");
-        ctx.init(keyManagers, trustManagers, new SecureRandom());
+        ctx.init(null, trustManagers, new SecureRandom());
         return ctx;
-    }
-
-    private KeyManager[] buildKeyManagers() {
-        String certPath = config.agentCertPath();
-        if (!Files.exists(Paths.get(certPath))) {
-            return null;
-        }
-        try {
-            String pem = Files.readString(Paths.get(certPath));
-            byte[] der = fromPem(pem, "CERTIFICATE");
-
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            X509Certificate clientCert = (X509Certificate)
-                    cf.generateCertificate(new ByteArrayInputStream(der));
-
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(null, null);
-            ks.setCertificateEntry("agent", clientCert);
-
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance(
-                    KeyManagerFactory.getDefaultAlgorithm());
-            kmf.init(ks, null);
-
-            log.info("mTLS client certificate loaded from {}", certPath);
-            return kmf.getKeyManagers();
-        } catch (Exception e) {
-            log.warn("Could not load client cert from {} — proceeding without mTLS: {}",
-                    certPath, e.getMessage());
-            return null;
-        }
     }
 
     private TrustManager[] buildTrustManagers() {
@@ -159,11 +138,4 @@ public class SecureHttpClient {
         return diff == 0;
     }
 
-    private byte[] fromPem(String pem, String type) {
-        String stripped = pem
-                .replace("-----BEGIN " + type + "-----", "")
-                .replace("-----END " + type + "-----", "")
-                .replaceAll("\\s+", "");
-        return Base64.getDecoder().decode(stripped);
-    }
 }

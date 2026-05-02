@@ -5,17 +5,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
-
 /**
  * Handles the one-time registration flow:
  * 1. POST registration token to server
- * 2. Receive agentId, agentKey, clientCertPem
- * 3. Save client cert PEM to disk
- * 4. Persist agentId + agentKey to application.properties
- * 5. Clear the registration token from config
+ * 2. Receive agentId and agentKey
+ * 3. Persist agentId + agentKey to application.properties
+ * 4. Clear the registration token from config
+ *
+ * mTLS client certificates are no longer issued or stored.
+ * Authentication uses bearer agentKey + HMAC signing.
  */
 public class RegistrationService {
 
@@ -46,27 +44,13 @@ public class RegistrationService {
 
         JsonNode resp = api.register(token, orgId);
 
-        String agentId      = resp.get("id").asText();
-        String agentKey     = resp.get("agentKey").asText();
-        String clientCertPem = resp.get("clientCertPem").asText();
-
-        // Save mTLS client cert — chmod 600
-        Path certPath = Path.of(config.agentCertPath());
-        Files.writeString(certPath, clientCertPem);
-        try {
-            Files.setPosixFilePermissions(certPath,
-                    PosixFilePermissions.fromString("rw-------"));
-        } catch (UnsupportedOperationException e) {
-            // Windows — skip chmod
-        }
-        log.info("Client certificate saved to {}", certPath.toAbsolutePath());
+        String agentId  = resp.get("id").asText();
+        String agentKey = resp.get("agentKey").asText();
 
         // Persist credentials to disk and update in-memory state.
         // config.set() always updates props in-memory first, then writes to disk
         // if configPath is set — so agentId()/agentKey() are immediately correct
-        // without needing a reload().  A reload() would be harmful here because it
-        // wipes in-memory props and re-reads from disk (or the classpath fallback),
-        // which would lose the values when configPath is null.
+        // without needing a reload().
         config.set("certguard.agent.id",           agentId);
         config.set("certguard.agent.key",           agentKey);
         config.set("certguard.registration.token",  "");   // burn the token
@@ -74,7 +58,6 @@ public class RegistrationService {
         log.info("=========================================");
         log.info("  Registration successful!");
         log.info("  Agent ID : {}", agentId);
-        log.info("  Cert     : {}", certPath.toAbsolutePath());
         log.info("  Token    : cleared");
         log.info("=========================================");
     }

@@ -14,11 +14,10 @@ import org.slf4j.LoggerFactory;
  *
  * Startup sequence:
  *   1. Load config from application.properties
- *   2. Build secure HTTP client (TLS 1.3, cert pinning, mTLS)
+ *   2. Build secure HTTP client (TLS 1.3, cert fingerprint pinning)
  *   3. If not yet registered → register with one-time token
- *   4. Rebuild HTTP client with mTLS client cert (now available post-registration)
- *   5. Start poll loop (heartbeat + scan jobs on fixed interval)
- *   6. Block until shutdown signal
+ *   4. Start poll loop (heartbeat + scan jobs on fixed interval)
+ *   5. Block until shutdown signal
  */
 public class AgentMain {
 
@@ -50,22 +49,16 @@ public class AgentMain {
             log.info("Agent not registered — starting registration...");
             RegistrationService registration = new RegistrationService(config, api);
             registration.register();
-
-            // 4. Rebuild HTTP client now that we have the mTLS client cert
-            http.close();
-            http = clientFactory.build();
-            api  = new ServerApiClient(config, http);
-            log.info("HTTP client rebuilt with mTLS client certificate");
         } else {
             log.info("Agent already registered — ID: {}", config.agentId());
         }
 
-        // 5. Start poll loop
+        // 4. Start poll loop
         SslScanner scanner  = new SslScanner();
         PollLoop   pollLoop = new PollLoop(config, api, scanner);
         pollLoop.start();
 
-        // 6. Shutdown hook — clean stop on SIGTERM / Ctrl-C
+        // 5. Shutdown hook — clean stop on SIGTERM / Ctrl-C
         final CloseableHttpClient finalHttp = http;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutdown signal received — stopping agent...");
