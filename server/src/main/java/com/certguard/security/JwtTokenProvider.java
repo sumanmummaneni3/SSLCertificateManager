@@ -19,7 +19,7 @@ public class JwtTokenProvider {
     @Value("${app.jwt.secret}")
     private String jwtSecret;
 
-    @Value("${app.jwt.expiration-ms:86400000}")
+    @Value("${app.jwt.expiration-ms:28800000}")
     private long expirationMs;
 
     private SecretKey getKey() {
@@ -28,6 +28,9 @@ public class JwtTokenProvider {
 
     public String generateToken(User user) {
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
+                .issuer("certguard-cloud")
+                .audience().add("certguard-ui").and()
                 .subject(user.getId().toString())
                 .claim("orgId", user.getOrganization().getId().toString())
                 .claim("email", user.getEmail())
@@ -40,6 +43,9 @@ public class JwtTokenProvider {
 
     public String generateToken(UUID userId, UUID orgId, String email, String role) {
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
+                .issuer("certguard-cloud")
+                .audience().add("certguard-ui").and()
                 .subject(userId.toString())
                 .claim("orgId", orgId.toString())
                 .claim("email", email)
@@ -51,7 +57,11 @@ public class JwtTokenProvider {
     }
 
     public Claims parseToken(String token) {
-        return Jwts.parser().verifyWith(getKey()).build()
+        return Jwts.parser()
+                .verifyWith(getKey())
+                .requireIssuer("certguard-cloud")
+                .requireAudience("certguard-ui")
+                .build()
                 .parseSignedClaims(token).getPayload();
     }
 

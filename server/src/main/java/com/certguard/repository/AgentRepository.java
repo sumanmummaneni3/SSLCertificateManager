@@ -4,6 +4,7 @@ import com.certguard.entity.Agent;
 import com.certguard.enums.AgentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -14,7 +15,8 @@ import java.util.UUID;
 @Repository
 public interface AgentRepository extends JpaRepository<Agent, UUID> {
 
-    List<Agent> findAllByOrganizationId(UUID orgId);
+    @Query("SELECT a FROM Agent a LEFT JOIN FETCH a.location WHERE a.organization.id = :orgId")
+    List<Agent> findAllByOrganizationId(@Param("orgId") UUID orgId);
 
     Optional<Agent> findByIdAndOrganizationId(UUID id, UUID orgId);
 

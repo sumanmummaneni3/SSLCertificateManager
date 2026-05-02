@@ -9,6 +9,7 @@ import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.AgentInstallKeyRepository;
 import com.certguard.repository.AgentRegistrationTokenRepository;
 import com.certguard.repository.AgentRepository;
+import com.certguard.repository.LocationRepository;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.security.AgentBundleCrypto;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,6 +48,7 @@ public class AgentBundleService {
     private final AgentRepository agentRepository;
     private final AgentRegistrationTokenRepository tokenRepository;
     private final OrganizationRepository orgRepository;
+    private final LocationRepository locationRepository;
     private final AgentBundleCrypto bundleCrypto;
     private final BCryptPasswordEncoder passwordEncoder;
 
@@ -69,12 +71,14 @@ public class AgentBundleService {
                                AgentRepository agentRepository,
                                AgentRegistrationTokenRepository tokenRepository,
                                OrganizationRepository orgRepository,
+                               LocationRepository locationRepository,
                                AgentBundleCrypto bundleCrypto,
                                BCryptPasswordEncoder passwordEncoder) {
         this.installKeyRepository = installKeyRepository;
         this.agentRepository      = agentRepository;
         this.tokenRepository      = tokenRepository;
         this.orgRepository        = orgRepository;
+        this.locationRepository   = locationRepository;
         this.bundleCrypto         = bundleCrypto;
         this.passwordEncoder      = passwordEncoder;
     }
@@ -99,6 +103,10 @@ public class AgentBundleService {
                 .maxTargets(req.getMaxTargets())
                 .status(AgentStatus.PENDING)
                 .build();
+        if (req.getLocationId() != null) {
+            locationRepository.findById(req.getLocationId())
+                    .ifPresent(agent::setLocation);
+        }
         agent = agentRepository.save(agent);
 
         // 2. Create registration token (reuses AgentService token format)

@@ -66,6 +66,10 @@ public class Agent extends BaseEntity {
     @Column(name = "last_offline_alert_sent_at")
     private Instant lastOfflineAlertSentAt;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "location_id")
+    private Location location;
+
     @OneToMany(mappedBy = "agent", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
     private List<Target> targets = new ArrayList<>();

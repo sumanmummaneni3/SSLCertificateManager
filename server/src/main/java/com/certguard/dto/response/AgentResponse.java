@@ -18,4 +18,6 @@ public class AgentResponse {
     private Instant createdAt;
     private String agentKey;
     private String clientCertPem;
+    private UUID locationId;
+    private String locationName;
 }

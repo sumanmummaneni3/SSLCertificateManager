@@ -134,6 +134,8 @@ public class AgentService {
                 .agentKey(plainAgentKey)
                 .clientCertPem(clientCertPem)
                 .createdAt(agent.getCreatedAt())
+                .locationId(agent.getLocation() != null ? agent.getLocation().getId() : null)
+                .locationName(agent.getLocation() != null ? agent.getLocation().getName() : null)
                 .build();
     }
 
@@ -280,7 +282,10 @@ public class AgentService {
                         .allowedCidrs(a.getAllowedCidrs()).maxTargets(a.getMaxTargets())
                         .currentTargetCount(a.getCurrentTargetCount())
                         .lastSeenAt(a.getLastSeenAt()).registeredAt(a.getRegisteredAt())
-                        .createdAt(a.getCreatedAt()).build())
+                        .createdAt(a.getCreatedAt())
+                        .locationId(a.getLocation() != null ? a.getLocation().getId() : null)
+                        .locationName(a.getLocation() != null ? a.getLocation().getName() : null)
+                        .build())
                 .collect(Collectors.toList());
     }
 
