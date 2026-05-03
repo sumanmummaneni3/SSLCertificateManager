@@ -3,9 +3,9 @@ package com.certguard.service;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
 import com.certguard.repository.CertificateRecordRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,8 +20,8 @@ import java.util.List;
  * and dispatches alerts via NotificationService.
  *
  * Thresholds (configurable via application.yml):
- *   app.alert.warning-days  (default 30) → severity "WARNING"
- *   app.alert.critical-days (default 7)  → severity "CRITICAL"
+ *   app.alert.warning-days  (default 30) -- severity "WARNING"
+ *   app.alert.critical-days (default 7)  -- severity "CRITICAL"
  *
  * Runs daily at 08:00 server time. Cron configurable via
  *   app.alert.schedule-cron (default "0 0 8 * * *")
@@ -31,17 +31,23 @@ import java.util.List;
  *   app.alert.dedup-hours (default 23) hours.  This prevents alert storms on
  *   long-expired certificates that would otherwise re-fire on every daily run.
  */
-@Slf4j
 @Component
-@RequiredArgsConstructor
 public class CertificateExpiryScheduler {
 
+    private static final Logger log = LoggerFactory.getLogger(CertificateExpiryScheduler.class);
+
     private final CertificateRecordRepository certRepository;
-    private final NotificationService     notificationService;
+    private final NotificationService notificationService;
 
     @Value("${app.alert.warning-days:30}")  private int warningDays;
     @Value("${app.alert.critical-days:7}") private int criticalDays;
     @Value("${app.alert.dedup-hours:23}")  private int dedupHours;
+
+    public CertificateExpiryScheduler(CertificateRecordRepository certRepository,
+                                      NotificationService notificationService) {
+        this.certRepository = certRepository;
+        this.notificationService = notificationService;
+    }
 
     /**
      * Daily sweep across all orgs.
@@ -64,7 +70,7 @@ public class CertificateExpiryScheduler {
         int alertsSent    = 0;
         int alertsSkipped = 0;
 
-        // Single query — fetches certs + targets together, no per-org round-trips.
+        // Single query -- fetches certs + targets together, no per-org round-trips.
         List<CertificateRecord> expiring = certRepository.findExpiringWithTargets(now, warnCutoff);
 
         for (CertificateRecord cert : expiring) {
@@ -76,15 +82,17 @@ public class CertificateExpiryScheduler {
             long daysLeft = ChronoUnit.DAYS.between(now, cert.getExpiryDate());
             String severity = (daysLeft <= criticalDays) ? "CRITICAL" : "WARNING";
 
-            log.debug("Cert expiry alert — target {}:{} daysLeft={} severity={}",
+            log.debug("Cert expiry alert -- target {}:{} daysLeft={} severity={}",
                     target.getHost(), target.getPort(), daysLeft, severity);
 
-            notificationService.dispatchExpiryAlert(target, (int) daysLeft, severity);
-            certRepository.stampAlertSentAt(cert.getId(), now);
-            alertsSent++;
+            boolean dispatched = notificationService.dispatchExpiryAlert(target, (int) daysLeft, severity);
+            if (dispatched) {
+                certRepository.stampAlertSentAt(cert.getId(), now);
+                alertsSent++;
+            }
         }
 
-        log.info("Certificate expiry sweep complete — {} alert(s) dispatched, {} skipped (dedup)",
+        log.info("Certificate expiry sweep complete -- {} alert(s) dispatched, {} skipped (dedup)",
                 alertsSent, alertsSkipped);
     }
 

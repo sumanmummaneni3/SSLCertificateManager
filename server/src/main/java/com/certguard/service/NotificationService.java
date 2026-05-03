@@ -6,15 +6,14 @@ import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
 import com.certguard.repository.OrgNotificationChannelRepository;
 import jakarta.mail.internet.MimeMessage;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.thymeleaf.TemplateEngine;
-import org.thymeleaf.context.Context;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -28,27 +27,28 @@ import java.util.UUID;
  * Dispatches certificate expiry and agent-offline notifications to enabled channels.
  *
  * Per design review comments:
- *   - EMAIL:        LIVE — dispatched via JavaMailSender with Thymeleaf HTML/text bodies
- *   - SMS:          Coming Soon — stored in JSONB, UI shows read-only
- *   - WHATSAPP:     Coming Soon — stored in JSONB, UI shows read-only
- *   - SLACK:        Coming Soon — stored in JSONB, UI shows read-only
- *   - TEAMS:        Coming Soon — stored in JSONB, UI shows read-only
- *   - PSA:          Coming Soon — stored in JSONB, UI shows read-only
- *   - SERVICE_DESK: Coming Soon — stored in JSONB, UI shows read-only
+ *   - EMAIL:        LIVE -- dispatched via JavaMailSender with Thymeleaf HTML/text bodies
+ *   - SMS:          Coming Soon -- stored in JSONB, UI shows read-only
+ *   - WHATSAPP:     Coming Soon -- stored in JSONB, UI shows read-only
+ *   - SLACK:        Coming Soon -- stored in JSONB, UI shows read-only
+ *   - TEAMS:        Coming Soon -- stored in JSONB, UI shows read-only
+ *   - PSA:          Coming Soon -- stored in JSONB, UI shows read-only
+ *   - SERVICE_DESK: Coming Soon -- stored in JSONB, UI shows read-only
  */
-@Slf4j
 @Service
 @Transactional(readOnly = true)
 public class NotificationService {
+
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss 'UTC'").withZone(ZoneId.of("UTC"));
 
     private final JavaMailSender mailSender;
-    private final TemplateEngine templateEngine;
+    private final org.thymeleaf.TemplateEngine templateEngine;
     private final OrgNotificationChannelRepository orgChannelRepository;
 
-    @Value("${spring.mail.from:noreply@certguard.cloud}")
+    @Value("${app.mail.from:noreply@certguard.cloud}")
     private String fromAddress;
 
     @Value("${app.dev-mode:true}")
@@ -58,7 +58,7 @@ public class NotificationService {
     private String baseUrl;
 
     public NotificationService(JavaMailSender mailSender,
-                               TemplateEngine templateEngine,
+                               org.thymeleaf.TemplateEngine templateEngine,
                                OrgNotificationChannelRepository orgChannelRepository) {
         this.mailSender = mailSender;
         this.templateEngine = templateEngine;
@@ -70,17 +70,23 @@ public class NotificationService {
      *
      * @param target     the target whose certificate is expiring
      * @param daysLeft   days until certificate expires (negative = already expired)
-     * @param severity   "WARNING" (≤30 days) or "CRITICAL" (≤7 days)
+     * @param severity   "WARNING" (<=30 days) or "CRITICAL" (<=7 days)
+     * @return true if at least one channel successfully dispatched (email sent or dev-mode logged);
+     *         false if no channels are configured for this target/org
      */
     @Async
-    public void dispatchExpiryAlert(Target target, int daysLeft, String severity) {
+    public boolean dispatchExpiryAlert(Target target, int daysLeft, String severity) {
         Map<String, Object> channels = resolveChannels(target);
-        if (channels == null || channels.isEmpty()) return;
+        if (channels == null || channels.isEmpty()) {
+            log.warn("No notification channels configured for target {} (org {}), skipping alert",
+                    target.getId(), target.getOrganization().getId());
+            return false;
+        }
 
         String templateName = "CRITICAL".equals(severity) ? "expiry-critical" : "expiry-warning";
         String subject = buildExpirySubject(target, daysLeft, severity);
 
-        Context ctx = new Context();
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
         ctx.setVariable("host", target.getHost());
         ctx.setVariable("port", target.getPort());
         ctx.setVariable("daysLeft", daysLeft);
@@ -95,6 +101,7 @@ public class NotificationService {
         logComingSoon("teams",        channels, target.getHost() + ":" + target.getPort());
         logComingSoon("psa",          channels, target.getHost() + ":" + target.getPort());
         logComingSoon("service_desk", channels, target.getHost() + ":" + target.getPort());
+        return true;
     }
 
     /**
@@ -104,7 +111,7 @@ public class NotificationService {
     public void dispatchAgentOfflineAlert(Agent agent, Organization org) {
         String contactEmail = (org != null) ? org.getContactEmail() : null;
         if (contactEmail == null || contactEmail.isBlank()) {
-            log.warn("Agent {} ({}) is offline but org has no contact email — skipping alert",
+            log.warn("Agent {} ({}) is offline but org has no contact email -- skipping alert",
                     agent.getName(), agent.getId());
             return;
         }
@@ -115,7 +122,7 @@ public class NotificationService {
 
         String subject = "[CertGuard] Agent offline: " + agent.getName();
 
-        Context ctx = new Context();
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
         ctx.setVariable("agentName", agent.getName());
         ctx.setVariable("agentId", agent.getId().toString());
         ctx.setVariable("lastSeen", lastSeen);
@@ -124,7 +131,7 @@ public class NotificationService {
         ctx.setVariable("baseUrl", baseUrl);
 
         if (devMode) {
-            log.info("[DEV] Would send offline alert for agent {} to {} — last seen {}",
+            log.info("[DEV] Would send offline alert for agent {} to {} -- last seen {}",
                     agent.getName(), contactEmail, lastSeen);
             return;
         }
@@ -161,7 +168,7 @@ public class NotificationService {
 
     @SuppressWarnings("unchecked")
     private void dispatchEmail(Map<String, Object> channels, String subject,
-                               String templateName, Context ctx, String logTarget) {
+                               String templateName, org.thymeleaf.context.Context ctx, String logTarget) {
         Object emailCfg = channels.get("email");
         if (!(emailCfg instanceof Map)) return;
         Map<String, Object> cfg = (Map<String, Object>) emailCfg;
@@ -180,7 +187,7 @@ public class NotificationService {
         }
 
         if (devMode) {
-            log.info("[DEV] Email alert template={} for {} → {} subject={}",
+            log.info("[DEV] Email alert template={} for {} -> {} subject={}",
                     templateName, logTarget, addresses, subject);
             return;
         }
@@ -191,7 +198,7 @@ public class NotificationService {
     }
 
     private void sendMimeEmail(String to, String subject, String templateName,
-                               Context ctx, String logTarget) {
+                               org.thymeleaf.context.Context ctx, String logTarget) {
         try {
             String htmlBody = templateEngine.process("email/" + templateName, ctx);
             String textBody = templateEngine.process("email/" + templateName + ".txt", ctx);
@@ -216,7 +223,7 @@ public class NotificationService {
         if (!(cfg instanceof Map)) return;
         Boolean enabled = (Boolean) ((Map<String, Object>) cfg).get("enabled");
         if (Boolean.TRUE.equals(enabled)) {
-            log.info("[COMING SOON] {} notification skipped for {} — not yet implemented",
+            log.info("[COMING SOON] {} notification skipped for {} -- not yet implemented",
                     channel, logTarget);
         }
     }

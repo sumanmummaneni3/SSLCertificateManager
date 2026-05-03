@@ -185,6 +185,8 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
+            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+                    .thenReturn(true);
 
             scheduler.checkExpiringCertificates();
 
@@ -199,6 +201,8 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
+            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+                    .thenReturn(true);
 
             scheduler.checkExpiringCertificates();
 
@@ -228,6 +232,8 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
+            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+                    .thenReturn(true);
 
             Instant before = Instant.now().minusSeconds(1);
             scheduler.checkExpiringCertificates();

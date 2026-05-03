@@ -12,9 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.thymeleaf.TemplateEngine;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -35,8 +33,7 @@ class InvitationServiceTest {
     @Mock OrganizationRepository orgRepository;
     @Mock SubscriptionRepository subscriptionRepository;
     @Mock JwtTokenProvider jwtTokenProvider;
-    @Mock JavaMailSender mailSender;
-    @Mock TemplateEngine templateEngine;
+    @Mock EmailDispatchService emailDispatchService;
 
     InvitationService invitationService;
 
@@ -50,10 +47,7 @@ class InvitationServiceTest {
         invitationService = new InvitationService(
                 invitationRepository, memberRepository, userRepository,
                 orgRepository, subscriptionRepository, jwtTokenProvider,
-                mailSender, templateEngine);
-        ReflectionTestUtils.setField(invitationService, "baseUrl", "http://localhost");
-        ReflectionTestUtils.setField(invitationService, "fromAddress", "noreply@certguard.cloud");
-        ReflectionTestUtils.setField(invitationService, "devMode", true);
+                emailDispatchService);
 
         tokenHash = TeamService.sha256(rawToken);
 
@@ -109,6 +103,15 @@ class InvitationServiceTest {
             assertThatThrownBy(() -> invitationService.validateInviteAndSendOtp(rawToken))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("expired");
+        }
+
+        @Test
+        void otpEmailDelegatedToEmailDispatchService() {
+            when(invitationRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(invitation));
+
+            invitationService.validateInviteAndSendOtp(rawToken);
+
+            verify(emailDispatchService).sendOtpEmail(eq("invited@example.com"), anyString(), eq("TestOrg"));
         }
     }
 
@@ -171,9 +174,7 @@ class InvitationServiceTest {
             InvitationService freshService = new InvitationService(
                     invitationRepository, memberRepository, userRepository,
                     orgRepository, subscriptionRepository, jwtTokenProvider,
-                    mailSender, templateEngine);
-            ReflectionTestUtils.setField(freshService, "devMode", true);
-            ReflectionTestUtils.setField(freshService, "fromAddress", "noreply@certguard.cloud");
+                    emailDispatchService);
 
             when(invitationRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(invitation));
 

@@ -49,7 +49,7 @@ import static org.mockito.Mockito.when;
         "spring.mail.properties.mail.smtp.auth=true",
         "spring.mail.properties.mail.smtp.starttls.enable=false",
         "spring.mail.properties.mail.smtp.starttls.required=false",
-        "spring.mail.from=noreply@certguard.cloud"
+        "app.mail.from=noreply@certguard.cloud"
     }
 )
 @ImportAutoConfiguration({MailSenderAutoConfiguration.class, ThymeleafAutoConfiguration.class})

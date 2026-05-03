@@ -9,15 +9,8 @@ import com.certguard.enums.UserRole;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.JwtTokenProvider;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import jakarta.mail.internet.MimeMessage;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
-import org.thymeleaf.TemplateEngine;
-import org.thymeleaf.context.Context;
-import org.springframework.scheduling.annotation.Async;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,10 +21,11 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class InvitationService {
+
+    private static final Logger log = LoggerFactory.getLogger(InvitationService.class);
 
     private final InvitationRepository invitationRepository;
     private final OrgMemberRepository memberRepository;
@@ -39,20 +33,10 @@ public class InvitationService {
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final JwtTokenProvider jwtTokenProvider;
-    private final JavaMailSender mailSender;
-    private final TemplateEngine templateEngine;
-
-    @Value("${app.base-url:http://localhost:8080}")
-    private String baseUrl;
-
-    @Value("${spring.mail.from:noreply@certguard.cloud}")
-    private String fromAddress;
-
-    @Value("${app.dev-mode:true}")
-    private boolean devMode;
+    private final EmailDispatchService emailDispatchService;
 
     /**
-     * In-memory OTP store: tokenHash → {otp, expiresAt}
+     * In-memory OTP store: tokenHash -> {otp, expiresAt}
      * In production this should be Redis. For now a ConcurrentHashMap is
      * sufficient since the OTP window is 10 minutes.
      */
@@ -60,7 +44,23 @@ public class InvitationService {
 
     private record OtpEntry(String otp, Instant expiresAt) {}
 
-    // ── Step 1: validate invite token and send OTP ─────────────────────────
+    public InvitationService(InvitationRepository invitationRepository,
+                             OrgMemberRepository memberRepository,
+                             UserRepository userRepository,
+                             OrganizationRepository orgRepository,
+                             SubscriptionRepository subscriptionRepository,
+                             JwtTokenProvider jwtTokenProvider,
+                             EmailDispatchService emailDispatchService) {
+        this.invitationRepository = invitationRepository;
+        this.memberRepository = memberRepository;
+        this.userRepository = userRepository;
+        this.orgRepository = orgRepository;
+        this.subscriptionRepository = subscriptionRepository;
+        this.jwtTokenProvider = jwtTokenProvider;
+        this.emailDispatchService = emailDispatchService;
+    }
+
+    // -- Step 1: validate invite token and send OTP ----------------------------
 
     /**
      * Called when the invited user lands on /invite?token=<raw>.
@@ -84,13 +84,14 @@ public class InvitationService {
         String otp = generateOtp();
         otpStore.put(hash, new OtpEntry(otp, Instant.now().plus(10, ChronoUnit.MINUTES)));
 
-        sendOtpEmail(inv.getEmail(), otp, inv.getOrganization().getName());
+        // Dispatch via the injected bean so Spring AOP @Async proxy is honoured
+        emailDispatchService.sendOtpEmail(inv.getEmail(), otp, inv.getOrganization().getName());
 
         log.info("OTP sent for invite {} to {}", inv.getId(), inv.getEmail());
         return inv.getEmail();
     }
 
-    // ── Step 2: verify OTP, create user + membership, issue JWT ─────────────
+    // -- Step 2: verify OTP, create user + membership, issue JWT ---------------
 
     @Transactional
     public Map<String, String> acceptInvite(String rawToken, String submittedEmail, String submittedOtp) {
@@ -160,51 +161,15 @@ public class InvitationService {
         );
     }
 
-    // ── Email sending ─────────────────────────────────────────────────────
+    // -- Email sending (delegated to EmailDispatchService) ---------------------
 
-    @Async
+    /**
+     * Delegates to EmailDispatchService so @Async proxy interception is honoured.
+     * Called by TeamService when a new invitation is created.
+     */
     public void sendInviteEmail(String toEmail, String orgName, String inviterName,
                                 String inviteLink, OrgMemberRole role) {
-        if (devMode) {
-            log.info("[DEV] Invite email to {} — link: {}", toEmail, inviteLink);
-            return;
-        }
-        Context ctx = new Context();
-        ctx.setVariable("orgName", orgName);
-        ctx.setVariable("inviterName", inviterName);
-        ctx.setVariable("inviteLink", inviteLink);
-        ctx.setVariable("role", role.name());
-        sendMimeEmail(toEmail,
-                "You've been invited to " + orgName + " on CertGuard Cloud",
-                "invite", ctx);
-    }
-
-    @Async
-    void sendOtpEmail(String toEmail, String otp, String orgName) {
-        if (devMode) {
-            log.info("[DEV] OTP for {} joining {}: {}", toEmail, orgName, otp);
-            return;
-        }
-        Context ctx = new Context();
-        ctx.setVariable("otp", otp);
-        ctx.setVariable("orgName", orgName);
-        sendMimeEmail(toEmail, "Your CertGuard sign-in code: " + otp, "otp", ctx);
-    }
-
-    private void sendMimeEmail(String to, String subject, String templateName, Context ctx) {
-        try {
-            String htmlBody = templateEngine.process("email/" + templateName, ctx);
-            String textBody = templateEngine.process("email/" + templateName + ".txt", ctx);
-            MimeMessage msg = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
-            helper.setFrom(fromAddress);
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(textBody, htmlBody);
-            mailSender.send(msg);
-        } catch (Exception e) {
-            log.error("Failed to send email template={} to {}: {}", templateName, to, e.getMessage());
-        }
+        emailDispatchService.sendInviteEmail(toEmail, orgName, inviterName, inviteLink, role);
     }
 
     private String generateOtp() {

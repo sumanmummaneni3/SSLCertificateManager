@@ -30,6 +30,8 @@ spring:
 
 app:
   dev-mode: true
+  mail:
+    from: noreply@certguard.cloud
   jwt:
     secret: test-secret-key-for-unit-tests-must-be-at-least-64-characters-long-padding!!
     expiration-ms: 3600000
