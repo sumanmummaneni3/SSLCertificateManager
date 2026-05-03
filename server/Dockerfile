@@ -6,10 +6,17 @@ FROM eclipse-temurin:17-jdk-alpine AS builder
 WORKDIR /build
 
 ARG MAVEN_VERSION=3.9.8
-RUN apk add --no-cache curl && \
-    curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
-    | tar -xz -C /opt && \
-    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven
+ARG MAVEN_SHA512=7d171def9b85846bf757a2cec94b7529371068a0670df14682447224e57983528e97a6d1b850327e4ca02b139abaab7fcb93c4315119e6f0ffb3f0cbc0d0b9a2
+RUN set -eux; \
+    apk add --no-cache curl; \
+    curl -fsSL --retry 3 --retry-delay 2 \
+        -o /tmp/maven.tar.gz \
+        https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz; \
+    echo "${MAVEN_SHA512}  /tmp/maven.tar.gz" | sha512sum -c -; \
+    tar -xzf /tmp/maven.tar.gz -C /opt; \
+    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven; \
+    rm /tmp/maven.tar.gz; \
+    apk del curl
 
 ENV PATH="/opt/maven/bin:${PATH}" \
     MAVEN_HOME="/opt/maven"
