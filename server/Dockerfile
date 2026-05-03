@@ -5,10 +5,18 @@ FROM eclipse-temurin:17-jdk-alpine AS builder
 
 WORKDIR /build
 
+ARG MAVEN_VERSION=3.9.8
+RUN apk add --no-cache curl && \
+    curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
+    | tar -xz -C /opt && \
+    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven
+
+ENV PATH="/opt/maven/bin:${PATH}" \
+    MAVEN_HOME="/opt/maven"
+
 # Cache Maven dependencies separately from source
 COPY pom.xml .
-RUN apk add --no-cache maven && \
-    mvn dependency:go-offline -q
+RUN mvn dependency:go-offline -q
 
 COPY src ./src
 RUN mvn clean package -DskipTests -q

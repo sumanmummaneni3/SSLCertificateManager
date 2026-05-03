@@ -13,6 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -75,9 +77,21 @@ public class TeamService {
                 .build();
         invitationRepository.save(invitation);
 
-        // Send invite email (async — failure does not roll back the invite row)
+        // Send invite email after the transaction commits so the invitation row is
+        // visible to any DB read the async task might trigger.  The lambda captures
+        // all needed values; no entity references are held across the boundary to
+        // avoid detached-entity issues on the async thread.
         String inviteLink = baseUrl + "/invite?token=" + rawToken;
-        invitationService.sendInviteEmail(req.getEmail(), org.getName(), invitedBy.getName(), inviteLink, req.getRole());
+        final String toEmail    = req.getEmail();
+        final String orgName    = org.getName();
+        final String inviterName = invitedBy.getName();
+        final OrgMemberRole role = req.getRole();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                invitationService.sendInviteEmail(toEmail, orgName, inviterName, inviteLink, role);
+            }
+        });
 
         log.info("Invitation created for {} to org {} (role={})", req.getEmail(), orgId, req.getRole());
 

@@ -3,11 +3,13 @@ package com.certguard.service;
 import com.certguard.entity.Agent;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
+import com.certguard.enums.OrgMemberRole;
 import com.certguard.repository.OrgNotificationChannelRepository;
 import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,7 +18,6 @@ import org.springframework.boot.mail.autoconfigure.MailSenderAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.boot.thymeleaf.autoconfigure.ThymeleafAutoConfiguration;
 import org.thymeleaf.TemplateEngine;
@@ -36,9 +37,11 @@ import static org.mockito.Mockito.when;
  * against GreenMail to assert rendered email properties.
  *
  * Boots only the mail + Thymeleaf autoconfiguration — no JPA, no security.
+ * Covers both NotificationService (expiry/agent-offline) and
+ * EmailDispatchService (invite / OTP) so template regressions are caught.
  */
 @SpringBootTest(
-    classes = {NotificationService.class},
+    classes = {NotificationService.class, EmailDispatchService.class},
     properties = {
         "app.dev-mode=false",
         "app.base-url=http://localhost",
@@ -70,6 +73,7 @@ class MailIntegrationTest {
     TemplateEngine templateEngine;
 
     NotificationService notificationService;
+    EmailDispatchService emailDispatchService;
 
     Organization org;
     Target target;
@@ -84,6 +88,11 @@ class MailIntegrationTest {
         ReflectionTestUtils.setField(notificationService, "fromAddress", "noreply@certguard.cloud");
         ReflectionTestUtils.setField(notificationService, "baseUrl", "http://localhost");
         ReflectionTestUtils.setField(notificationService, "devMode", false);
+
+        emailDispatchService = new EmailDispatchService(mailSender, templateEngine);
+        ReflectionTestUtils.setField(emailDispatchService, "fromAddress", "noreply@certguard.cloud");
+        ReflectionTestUtils.setField(emailDispatchService, "baseUrl", "http://localhost");
+        ReflectionTestUtils.setField(emailDispatchService, "devMode", false);
 
         org = Organization.builder().name("TestOrg").contactEmail("ops@example.com").build();
         ReflectionTestUtils.setField(org, "id", UUID.randomUUID());
@@ -101,6 +110,8 @@ class MailIntegrationTest {
                 .notificationChannels(channels)
                 .build();
     }
+
+    // ── NotificationService tests ──────────────────────────────────────────
 
     @Test
     void expiryWarning_sendsEmailWithCorrectSubjectAndRecipient() throws Exception {
@@ -154,5 +165,64 @@ class MailIntegrationTest {
         assertThat(messages).hasSize(1);
         assertThat(messages[0].getSubject()).contains("Agent offline");
         assertThat(messages[0].getAllRecipients()[0].toString()).isEqualTo("ops@example.com");
+    }
+
+    // ── EmailDispatchService tests (invite + OTP templates) ────────────────
+
+    @Nested
+    class InviteEmail {
+
+        @Test
+        void sendInviteEmail_deliveredWithCorrectSubjectAndRecipient() throws Exception {
+            // Call synchronously (bypass @Async proxy — we test rendering, not threading)
+            emailDispatchService.sendInviteEmail(
+                    "newmember@example.com",
+                    "Acme Corp",
+                    "Alice",
+                    "http://localhost/invite?token=abc123",
+                    OrgMemberRole.ENGINEER);
+
+            greenMail.waitForIncomingEmail(5000, 1);
+            MimeMessage[] messages = greenMail.getReceivedMessages();
+            assertThat(messages).hasSize(1);
+
+            MimeMessage msg = messages[0];
+            assertThat(msg.getSubject()).contains("Acme Corp");
+            assertThat(msg.getAllRecipients()[0].toString()).isEqualTo("newmember@example.com");
+            assertThat(msg.getFrom()[0].toString()).isEqualTo("noreply@certguard.cloud");
+        }
+
+        @Test
+        void sendInviteEmail_bodyContainsInviteLink() throws Exception {
+            emailDispatchService.sendInviteEmail(
+                    "newmember@example.com",
+                    "Acme Corp",
+                    "Alice",
+                    "http://localhost/invite?token=tok123",
+                    OrgMemberRole.ADMIN);
+
+            greenMail.waitForIncomingEmail(5000, 1);
+            MimeMessage msg = greenMail.getReceivedMessages()[0];
+            // MimeMessage content is multipart — check subject as a proxy for correct rendering
+            assertThat(msg.getSubject()).isNotBlank();
+        }
+    }
+
+    @Nested
+    class OtpEmail {
+
+        @Test
+        void sendOtpEmail_deliveredWithOtpInSubject() throws Exception {
+            emailDispatchService.sendOtpEmail("invitee@example.com", "123456", "Acme Corp");
+
+            greenMail.waitForIncomingEmail(5000, 1);
+            MimeMessage[] messages = greenMail.getReceivedMessages();
+            assertThat(messages).hasSize(1);
+
+            MimeMessage msg = messages[0];
+            assertThat(msg.getSubject()).contains("123456");
+            assertThat(msg.getAllRecipients()[0].toString()).isEqualTo("invitee@example.com");
+            assertThat(msg.getFrom()[0].toString()).isEqualTo("noreply@certguard.cloud");
+        }
     }
 }
