@@ -975,7 +975,7 @@ function LaunchScreen({ onToken }) {
     <div className="launch">
       <div className="launch-logo">
         <div className="logo-icon">🔐</div>
-        <div className="logo-text">CertGuard</div>
+        <div className="logo-text">OOPSSSL</div>
       </div>
 
       <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
@@ -1051,7 +1051,7 @@ function OrgSetup({ token, onDone, toast }) {
     <div className="launch">
       <div className="launch-logo">
         <div className="logo-icon">🏢</div>
-        <div className="logo-text">CertGuard</div>
+        <div className="logo-text">OOPSSSL</div>
       </div>
 
       <div className="launch-card">
@@ -1352,7 +1352,7 @@ function FirstTarget({ token, onDone, toast }) {
       <div className="launch">
         <div className="launch-logo">
           <div className="logo-icon">🎯</div>
-          <div className="logo-text">CertGuard</div>
+          <div className="logo-text">OOPSSSL</div>
         </div>
         <div className="launch-card">
           <div className="steps">
@@ -1385,7 +1385,7 @@ function FirstTarget({ token, onDone, toast }) {
     <div className="launch">
       <div className="launch-logo">
         <div className="logo-icon">🎯</div>
-        <div className="logo-text">CertGuard</div>
+        <div className="logo-text">OOPSSSL</div>
       </div>
       <div className="launch-card">
         <div className="steps">
@@ -1655,7 +1655,7 @@ function Sidebar({ view, onView, org, theme = "dark", onTheme, onLogout }) {
     <nav className="sidebar" style={themeVars} aria-label="Main navigation">
       <div className="sidebar-logo">
         <div className="logo-icon" aria-hidden="true">🔐</div>
-        <div className="logo-text">CertGuard</div>
+        <div className="logo-text">OOPSSSL</div>
       </div>
       {groups.map((group) => (
         <div key={group.label}>
