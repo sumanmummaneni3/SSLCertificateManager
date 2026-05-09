@@ -2998,13 +2998,18 @@ export default function App() {
     }
   };
 
-  // Pick up the JWT after OAuth redirect (?token=) or start invite flow (?invite=)
+  // Pick up the JWT after OAuth redirect (?token= on non-invite paths) or start invite
+  // flow (?invite= anywhere, or ?token= when the path is /invite).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
     const urlInvite = params.get("invite");
-    window.history.replaceState({}, "", window.location.pathname);
-    if (urlToken) {
+    const isInvitePath = window.location.pathname === "/invite";
+    window.history.replaceState({}, "", "/");
+    if (isInvitePath && urlToken) {
+      setInviteToken(urlToken);
+      setPhase("invite");
+    } else if (urlToken) {
       handleToken(urlToken);
     } else if (urlInvite) {
       setInviteToken(urlInvite);
