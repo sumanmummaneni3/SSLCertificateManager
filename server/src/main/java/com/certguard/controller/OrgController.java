@@ -26,23 +26,27 @@ public class OrgController {
     // ── Org-user endpoints ─────────────────────────────────────────────────
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> getOrg() {
         return ResponseEntity.ok(orgService.getOrg(TenantContext.getOrgId()));
     }
 
     /** Full profile endpoint — returns all fields including address, phone, email */
     @GetMapping("/profile")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> getProfile() {
         return ResponseEntity.ok(orgService.getOrg(TenantContext.getOrgId()));
     }
 
     @PutMapping("/profile")
+    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> updateProfile(@Valid @RequestBody UpdateOrgProfileRequest req) {
         return ResponseEntity.ok(orgService.updateProfile(TenantContext.getOrgId(), req));
     }
 
     /** Legacy endpoint — kept for backward compat */
     @PutMapping("/name")
+    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> updateName(@RequestParam String name) {
         return ResponseEntity.ok(orgService.updateName(TenantContext.getOrgId(), name));
     }

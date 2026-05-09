@@ -26,6 +26,7 @@ public class TeamController {
     private final TeamService teamService;
 
     @GetMapping("/members")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<List<OrgMemberResponse>> listMembers() {
         return ResponseEntity.ok(teamService.listMembers(TenantContext.getOrgId()));
     }

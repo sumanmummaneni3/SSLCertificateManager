@@ -1,6 +1,5 @@
 package com.certguard.security;
 
-import com.certguard.entity.User;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
@@ -35,34 +34,33 @@ public class JwtTokenProvider {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(User user) {
-        return Jwts.builder()
-                .id(UUID.randomUUID().toString())
-                .issuer("certguard-cloud")
-                .audience().add("certguard-ui").and()
-                .subject(user.getId().toString())
-                .claim("orgId", user.getOrganization().getId().toString())
-                .claim("email", user.getEmail())
-                .claim("role",  user.getRole().name())
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(getKey())
-                .compact();
-    }
-
-    public String generateToken(UUID userId, UUID orgId, String email, String role) {
-        return Jwts.builder()
+    /**
+     * Primary token generator. Callers must resolve the orgRole from OrgMember before calling.
+     * platformAdmin=true implies orgRole should be null (platform admins are not org members).
+     */
+    public String generateToken(UUID userId, UUID orgId, String email,
+                                 boolean platformAdmin, String orgRole) {
+        var builder = Jwts.builder()
                 .id(UUID.randomUUID().toString())
                 .issuer("certguard-cloud")
                 .audience().add("certguard-ui").and()
                 .subject(userId.toString())
                 .claim("orgId", orgId.toString())
                 .claim("email", email)
-                .claim("role",  role)
+                .claim("platformAdmin", platformAdmin)
+                .claim("orgRole", orgRole)
+                // legacy role claim — kept for backward compat during token expiry window
+                .claim("role", platformAdmin ? "PLATFORM_ADMIN" : (orgRole != null ? orgRole : "VIEWER"))
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expirationMs))
-                .signWith(getKey())
-                .compact();
+                .expiration(new Date(System.currentTimeMillis() + expirationMs));
+        return builder.signWith(getKey()).compact();
+    }
+
+    /** Legacy overload used only during the transition period. Remove after V20 migration. */
+    public String generateToken(UUID userId, UUID orgId, String email, String role) {
+        boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
+        String orgRole = isPlatformAdmin ? null : role;
+        return generateToken(userId, orgId, email, isPlatformAdmin, orgRole);
     }
 
     public Claims parseToken(String token) {

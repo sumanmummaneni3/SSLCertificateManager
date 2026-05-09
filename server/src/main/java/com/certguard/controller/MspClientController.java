@@ -24,13 +24,13 @@ public class MspClientController {
     private final MspClientService mspClientService;
 
     @GetMapping("/clients")
-    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<List<OrgResponse>> listClients() {
         return ResponseEntity.ok(mspClientService.listClients(TenantContext.getOrgId()));
     }
 
     @GetMapping("/clients/{clientOrgId}")
-    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> getClient(@PathVariable UUID clientOrgId) {
         return ResponseEntity.ok(mspClientService.getClient(TenantContext.getOrgId(), clientOrgId));
     }

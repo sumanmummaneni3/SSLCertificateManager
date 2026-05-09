@@ -46,7 +46,7 @@ public class AgentController {
      * agentName validated to prevent content injection (BACKEND_REVIEW P2-6).
      */
     @PostMapping("/tokens")
-    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<RegistrationTokenResponse> generateToken(
             @RequestParam @jakarta.validation.constraints.Pattern(
                 regexp = "^[A-Za-z0-9 _.-]{3,64}$",
@@ -64,6 +64,7 @@ public class AgentController {
      * Requires the registration token to be passed so it can be embedded.
      */
     @GetMapping("/config")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<String> downloadConfig(
             @RequestParam String agentName,
             @RequestParam String token,
@@ -109,11 +110,13 @@ public class AgentController {
     }
 
     @GetMapping("/list")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
     public ResponseEntity<List<AgentResponse>> listAgents() {
         return ResponseEntity.ok(agentService.listAgents(TenantContext.getOrgId()));
     }
 
     @PostMapping("/{agentId}/revoke")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<Void> revokeAgent(@PathVariable UUID agentId) {
         agentService.revokeAgent(agentId, TenantContext.getOrgId());
         return ResponseEntity.noContent().build();

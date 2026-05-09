@@ -1,11 +1,15 @@
 package com.certguard.service;
 
 import com.certguard.entity.Organization;
+import com.certguard.entity.OrgMember;
 import com.certguard.entity.Subscription;
 import com.certguard.entity.User;
+import com.certguard.enums.InviteStatus;
+import com.certguard.enums.OrgMemberRole;
 import com.certguard.enums.SubscriptionStatus;
 import com.certguard.enums.UserRole;
 import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.UserRepository;
 import com.certguard.security.CertGuardUserPrincipal;
@@ -29,8 +33,8 @@ public class OAuth2UserService extends OidcUserService {
     private final UserRepository userRepository;
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final OrgMemberRepository orgMemberRepository;
 
-    /** Comma-separated list of Google emails that receive PLATFORM_ADMIN role. */
     @Value("${app.platform-admin.emails:}")
     private List<String> platformAdminEmails;
 
@@ -64,23 +68,38 @@ public class OAuth2UserService extends OidcUserService {
             subscriptionRepository.save(Subscription.builder()
                     .organization(org).maxCertificateQuota(10)
                     .status(SubscriptionStatus.TRIAL).build());
-            return userRepository.save(User.builder()
+            User newUser = userRepository.save(User.builder()
                     .organization(org).email(email).name(name)
                     .role(UserRole.ADMIN).googleSub(sub).build());
+            orgMemberRepository.save(OrgMember.builder()
+                    .organization(org).user(newUser)
+                    .role(OrgMemberRole.ADMIN)
+                    .inviteStatus(InviteStatus.ACCEPTED)
+                    .build());
+            return newUser;
         });
 
-        // Sync role with allowlist so a simple env-var change takes effect on next login.
         UserRole expectedRole = isPlatformAdmin ? UserRole.PLATFORM_ADMIN : user.getRole();
         if (user.getRole() != expectedRole) {
             user.setRole(expectedRole);
             log.info("Role synced to {} for {}", expectedRole, email);
         }
-
         user.setGoogleSub(sub);
         if (name != null) user.setName(name);
         userRepository.save(user);
 
-        return CertGuardUserPrincipal.create(user, oidcUser.getAttributes(),
-                oidcUser.getIdToken(), oidcUser.getUserInfo());
+        // Resolve org-scoped role
+        String orgRole = null;
+        if (!isPlatformAdmin) {
+            orgRole = orgMemberRepository
+                    .findByOrganizationIdAndUserId(user.getOrganization().getId(), user.getId())
+                    .map(m -> m.getRole().name())
+                    .orElse("ADMIN");
+        }
+
+        return new CertGuardUserPrincipal(
+                user.getId(), user.getOrganization().getId(), user.getEmail(),
+                isPlatformAdmin, orgRole,
+                oidcUser.getAttributes(), oidcUser.getIdToken(), oidcUser.getUserInfo());
     }
 }

@@ -3,12 +3,16 @@ package com.certguard.service;
 import com.certguard.dto.request.UpdateOrgProfileRequest;
 import com.certguard.dto.response.OrgResponse;
 import com.certguard.entity.Organization;
+import com.certguard.entity.OrgMember;
 import com.certguard.entity.Subscription;
 import com.certguard.entity.User;
+import com.certguard.enums.InviteStatus;
+import com.certguard.enums.OrgMemberRole;
 import com.certguard.enums.OrgType;
 import com.certguard.enums.SubscriptionStatus;
 import com.certguard.enums.UserRole;
 import com.certguard.exception.ResourceNotFoundException;
+import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.UserRepository;
@@ -27,6 +31,7 @@ public class OrgService {
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final UserRepository userRepository;
+    private final OrgMemberRepository orgMemberRepository;
 
     /**
      * Dev-only: find-or-create a user+org+subscription for the given email and role.
@@ -45,12 +50,26 @@ public class OrgService {
                     .maxCertificateQuota(quota)
                     .status(SubscriptionStatus.ACTIVE)
                     .build());
-            return userRepository.save(User.builder()
+            User user = userRepository.save(User.builder()
                     .organization(org)
                     .email(email)
                     .name("Dev User")
                     .role(userRole)
                     .build());
+            if (userRole != UserRole.PLATFORM_ADMIN) {
+                OrgMemberRole memberRole = switch (userRole) {
+                    case VIEWER -> OrgMemberRole.VIEWER;
+                    case MEMBER -> OrgMemberRole.ENGINEER;
+                    default     -> OrgMemberRole.ADMIN;
+                };
+                orgMemberRepository.save(OrgMember.builder()
+                        .organization(org)
+                        .user(user)
+                        .role(memberRole)
+                        .inviteStatus(InviteStatus.ACCEPTED)
+                        .build());
+            }
+            return user;
         });
     }
 

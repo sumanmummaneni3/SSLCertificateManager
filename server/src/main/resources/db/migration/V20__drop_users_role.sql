@@ -1,0 +1,6 @@
+-- V20: Drop legacy users.role column and user_role enum.
+-- Run this >= 8 hours after V19 + code deploy, after all pre-V19 JWTs have expired.
+-- Uncomment and run when ready.
+--
+-- ALTER TABLE users DROP COLUMN role;
+-- DROP TYPE user_role;

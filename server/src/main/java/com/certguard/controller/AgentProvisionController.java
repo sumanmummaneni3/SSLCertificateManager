@@ -46,7 +46,7 @@ public class AgentProvisionController {
      * Requires ADMIN or PLATFORM_ADMIN role.
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<IssueBundleResponse> createAgentWithBundle(
             @Valid @RequestBody CreateAgentRequest request,
             @AuthenticationPrincipal CertGuardUserPrincipal principal) throws Exception {

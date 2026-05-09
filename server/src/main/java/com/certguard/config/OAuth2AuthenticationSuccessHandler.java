@@ -1,11 +1,15 @@
 package com.certguard.config;
 
 import com.certguard.entity.Organization;
+import com.certguard.entity.OrgMember;
 import com.certguard.entity.Subscription;
 import com.certguard.entity.User;
+import com.certguard.enums.InviteStatus;
+import com.certguard.enums.OrgMemberRole;
 import com.certguard.enums.SubscriptionStatus;
 import com.certguard.enums.UserRole;
 import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.UserRepository;
 import com.certguard.security.JwtTokenProvider;
@@ -35,6 +39,7 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
     private final UserRepository userRepository;
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final OrgMemberRepository orgMemberRepository;
 
     @Value("${app.base-url:http://localhost:3000}")
     private String baseUrl;
@@ -78,14 +83,12 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
         final String finalName  = name != null ? name : email;
         final String finalSub   = sub;
 
-        // Track whether this is a brand-new user so the UI can show the onboarding screen
         AtomicBoolean isNewUser = new AtomicBoolean(false);
 
         User user = userRepository.findByEmail(finalEmail).orElseGet(() -> {
             isNewUser.set(true);
 
             if (isPlatformAdmin) {
-                // Check if platform admin org already exists (idempotent)
                 Organization adminOrg = orgRepository.findBySlug("__platform_admin__")
                         .orElseGet(() -> {
                             Organization o = Organization.builder()
@@ -105,25 +108,31 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
                         .role(UserRole.PLATFORM_ADMIN).googleSub(finalSub).build());
             }
 
-            // Regular MSP org user — auto-provision org + subscription
             String orgSlug = finalEmail.split("@")[0].toLowerCase()
                     .replaceAll("[^a-z0-9]", "-") + "-" + UUID.randomUUID().toString().substring(0, 8);
             Organization org = Organization.builder()
                     .name(finalEmail.split("@")[0] + "'s Org")
                     .slug(orgSlug)
-                    .contactEmail(finalEmail)   // ← populate from Google
+                    .contactEmail(finalEmail)
                     .build();
             orgRepository.save(org);
             subscriptionRepository.save(Subscription.builder()
                     .organization(org).maxCertificateQuota(10)
                     .status(SubscriptionStatus.TRIAL).build());
             log.info("Auto-provisioned new org '{}' for {}", org.getName(), finalEmail);
-            return userRepository.save(User.builder()
+            User newUser = userRepository.save(User.builder()
                     .organization(org).email(finalEmail).name(finalName)
                     .role(UserRole.ADMIN).googleSub(finalSub).build());
+            // Create OrgMember row so the JWT carries the org-scoped role
+            orgMemberRepository.save(OrgMember.builder()
+                    .organization(org).user(newUser)
+                    .role(OrgMemberRole.ADMIN)
+                    .inviteStatus(InviteStatus.ACCEPTED)
+                    .build());
+            return newUser;
         });
 
-        // Keep role in sync with the allowlist
+        // Keep platform-admin flag in sync with the allowlist
         UserRole expectedRole = isPlatformAdmin ? UserRole.PLATFORM_ADMIN : user.getRole();
         if (user.getRole() != expectedRole) {
             user.setRole(expectedRole);
@@ -131,8 +140,19 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
             log.info("Role updated to {} for {}", expectedRole, email);
         }
 
-        String token = jwtTokenProvider.generateToken(user);
-        // Pass newUser=true so the UI shows the onboarding modal on first login
+        // Resolve org-scoped role from OrgMember (null for platform admins)
+        String orgRole = null;
+        if (!isPlatformAdmin) {
+            orgRole = orgMemberRepository
+                    .findByOrganizationIdAndUserId(user.getOrganization().getId(), user.getId())
+                    .map(m -> m.getRole().name())
+                    .orElse("ADMIN");
+        }
+
+        String token = jwtTokenProvider.generateToken(
+                user.getId(), user.getOrganization().getId(), user.getEmail(),
+                isPlatformAdmin, orgRole);
+
         String redirect = baseUrl + "/?token=" + token + (isNewUser.get() ? "&newUser=true" : "");
         getRedirectStrategy().sendRedirect(request, response, redirect);
     }
