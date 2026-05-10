@@ -1559,7 +1559,7 @@ function Dashboard({ token, org, me, toast, onLogout }) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, toast]);
 
   const loadCerts = useCallback(async () => {
     setCertsLoading(true);
@@ -1571,26 +1571,26 @@ function Dashboard({ token, org, me, toast, onLogout }) {
     } finally {
       setCertsLoading(false);
     }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (view === "certs")     loadCerts();     }, [view, loadCerts]);
-  useEffect(() => { if (view === "agents")   loadAgents();    }, [view]);
-  useEffect(() => { if (view === "locations") loadLocations(); }, [view]);
+  }, [token, toast]);
 
   const loadAgents = useCallback(async () => {
     setAgentsLoading(true);
     try { setAgents(await api.listAgents(token)); }
     catch (e) { toast("Failed to load agents: " + e.message, "error"); }
     finally { setAgentsLoading(false); }
-  }, [token]);
+  }, [token, toast]);
 
   const loadLocations = useCallback(async () => {
     setLocationsLoading(true);
     try { setLocations(await api.listLocations(token)); }
     catch (e) { toast("Failed to load locations: " + e.message, "error"); }
     finally { setLocationsLoading(false); }
-  }, [token]);
+  }, [token, toast]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (view === "certs")     loadCerts();     }, [view, loadCerts]);
+  useEffect(() => { if (view === "agents")    loadAgents();    }, [view, loadAgents]);
+  useEffect(() => { if (view === "locations") loadLocations(); }, [view, loadLocations]);
 
   const triggerScan = async (target) => {
     if (target.isPrivate && !target.agentId) {
@@ -2700,6 +2700,7 @@ function TeamView({ token, org, toast, me }) {
       .finally(() => setLoading(false));
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load is a stable inline fn; toast is stable
   useEffect(load, [token]);
 
   const handleRevoke = async () => {
@@ -2928,7 +2929,7 @@ function SettingsView({ token, org, toast }) {
       .then((p) => { setProfile(p); setForm(p); })
       .catch((e) => toast("Failed to load profile: " + e.message, "error"))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, toast]);
 
   const set = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -3207,6 +3208,7 @@ export default function App() {
       setInviteToken(urlInvite);
       setPhase("invite");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount-only effect to process OAuth redirect URL params
   }, []);
 
   const handleLogout = async () => {
@@ -3450,35 +3452,37 @@ function PlatformOrgDetailView({ token, toast, actingAsOrgId, actingAsOrgName, o
   const [locationsLoading, setLocationsLoading] = useState(false);
   const [scanning, setScanning]   = useState({});
 
-  const opts = { actingAsOrgId, reason: "Platform admin inspection" };
-
   const loadTargets = useCallback(async () => {
+    const opts = { actingAsOrgId, reason: "Platform admin inspection" };
     setTargetsLoading(true);
     try { const r = await api.getTargets(token, opts); setTargets(r?.content || []); }
     catch (e) { toast("Failed to load targets: " + e.message, "error"); }
     finally { setTargetsLoading(false); }
-  }, [token, actingAsOrgId]);
+  }, [token, actingAsOrgId, toast]);
 
   const loadAgents = useCallback(async () => {
+    const opts = { actingAsOrgId, reason: "Platform admin inspection" };
     setAgentsLoading(true);
     try { setAgents(await api.listAgents(token, opts)); }
     catch (e) { toast("Failed to load agents: " + e.message, "error"); }
     finally { setAgentsLoading(false); }
-  }, [token, actingAsOrgId]);
+  }, [token, actingAsOrgId, toast]);
 
   const loadMembers = useCallback(async () => {
+    const opts = { actingAsOrgId, reason: "Platform admin inspection" };
     setMembersLoading(true);
     try { setMembers(await api.listMembers(token, opts)); }
     catch (e) { toast("Failed to load members: " + e.message, "error"); }
     finally { setMembersLoading(false); }
-  }, [token, actingAsOrgId]);
+  }, [token, actingAsOrgId, toast]);
 
   const loadLocations = useCallback(async () => {
+    const opts = { actingAsOrgId, reason: "Platform admin inspection" };
     setLocationsLoading(true);
     try { setLocations(await api.listLocations(token, opts)); }
     catch (e) { toast("Failed to load locations: " + e.message, "error"); }
     finally { setLocationsLoading(false); }
-  }, [token, actingAsOrgId]);
+  }, [token, actingAsOrgId, toast]);
 
   useEffect(() => { if (detailTab === "targets")   loadTargets();   }, [detailTab, loadTargets]);
   useEffect(() => { if (detailTab === "agents")    loadAgents();    }, [detailTab, loadAgents]);
@@ -3486,6 +3490,7 @@ function PlatformOrgDetailView({ token, toast, actingAsOrgId, actingAsOrgName, o
   useEffect(() => { if (detailTab === "locations") loadLocations(); }, [detailTab, loadLocations]);
 
   const triggerScan = async (target) => {
+    const opts = { actingAsOrgId, reason: "Platform admin inspection" };
     setScanning((s) => ({ ...s, [target.id]: true }));
     try {
       await api.scanTarget(target.id, token, opts);
