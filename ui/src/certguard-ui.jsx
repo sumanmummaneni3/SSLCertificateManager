@@ -2718,6 +2718,28 @@ function InviteMemberModal({ token, onClose, onInvited }) {
 }
 
 // ─── SETTINGS VIEW ────────────────────────────────────────────────────────────
+// Hoisted outside SettingsView so React sees a stable component type across
+// renders. Defining it inside the parent caused a new type on every keystroke,
+// forcing unmount/remount and losing input focus.
+function SettingsField({ label, field, type = "text", placeholder, form, errors, set }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <input
+        type={type}
+        placeholder={placeholder}
+        value={form[field] || ""}
+        onChange={(e) => set(field, e.target.value)}
+      />
+      {errors[field] && (
+        <div style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }}>
+          {errors[field]}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // eslint-disable-next-line no-unused-vars
 function SettingsView({ token, org, toast }) {
   const [profile, setProfile] = useState(null);
@@ -2777,15 +2799,6 @@ function SettingsView({ token, org, toast }) {
 
   const handleReset = () => { setForm(profile); setDirty(false); setErrors({}); };
 
-  const F = ({ label, field, type = "text", placeholder }) => (
-    <div className="field">
-      <label>{label}</label>
-      <input type={type} placeholder={placeholder}
-        value={form[field] || ""} onChange={(e) => set(field, e.target.value)} />
-      {errors[field] && <div style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }}>{errors[field]}</div>}
-    </div>
-  );
-
   return (
     <>
       <div className="page-header">
@@ -2803,22 +2816,22 @@ function SettingsView({ token, org, toast }) {
               <div style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase",
                             letterSpacing: "0.1em", marginBottom: "1rem" }}>Organisation Profile</div>
 
-              <F label="Organisation Name *" field="name" placeholder="Acme Corp" />
-              <F label="Contact Email" field="contactEmail" type="email" placeholder="admin@acme.com" />
-              <F label="Phone" field="phone" placeholder="+1 555 000 0000" />
+              <SettingsField label="Organisation Name *" field="name" placeholder="Acme Corp" form={form} errors={errors} set={set} />
+              <SettingsField label="Contact Email" field="contactEmail" type="email" placeholder="admin@acme.com" form={form} errors={errors} set={set} />
+              <SettingsField label="Phone" field="phone" placeholder="+1 555 000 0000" form={form} errors={errors} set={set} />
 
               <div style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase",
                             letterSpacing: "0.1em", margin: "1.25rem 0 0.75rem" }}>Address</div>
 
-              <F label="Address Line 1" field="addressLine1" placeholder="123 Main Street" />
-              <F label="Address Line 2" field="addressLine2" placeholder="Suite 400" />
+              <SettingsField label="Address Line 1" field="addressLine1" placeholder="123 Main Street" form={form} errors={errors} set={set} />
+              <SettingsField label="Address Line 2" field="addressLine2" placeholder="Suite 400" form={form} errors={errors} set={set} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                <F label="City" field="city" placeholder="San Francisco" />
-                <F label="State / Province" field="stateProvince" placeholder="CA" />
+                <SettingsField label="City" field="city" placeholder="San Francisco" form={form} errors={errors} set={set} />
+                <SettingsField label="State / Province" field="stateProvince" placeholder="CA" form={form} errors={errors} set={set} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                <F label="Postal Code" field="postalCode" placeholder="94105" />
-                <F label="Country" field="country" placeholder="US" />
+                <SettingsField label="Postal Code" field="postalCode" placeholder="94105" form={form} errors={errors} set={set} />
+                <SettingsField label="Country" field="country" placeholder="US" form={form} errors={errors} set={set} />
               </div>
             </div>
 
