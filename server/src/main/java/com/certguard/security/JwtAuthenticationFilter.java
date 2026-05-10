@@ -17,7 +17,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.util.Set;
@@ -145,17 +144,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        // Wrap response to capture the final status code for the audit row.
-        ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
-
         try {
-            chain.doFilter(request, wrappedResponse);
+            chain.doFilter(request, response);
         } finally {
-            // Flush wrapper so the real response body is sent.
-            wrappedResponse.copyBodyToResponse();
-
             if (needsAudit) {
-                int status = wrappedResponse.getStatus();
+                int status = response.getStatus();
                 platformAdminAuditService.recordAsync(
                         auditActingUserId, auditActingUserEmail,
                         auditTargetOrgId, auditTargetOrgName,
