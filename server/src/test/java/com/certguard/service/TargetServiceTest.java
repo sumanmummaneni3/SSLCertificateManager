@@ -16,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -66,8 +67,10 @@ class TargetServiceTest {
             req.setHost("example.com");
             req.setPort(443);
 
+            when(organizationRepository.findBillingOwner(orgId)).thenReturn(orgId);
+            when(organizationRepository.findActiveChildIds(orgId)).thenReturn(List.of());
             when(subscriptionRepository.findByOrganizationId(orgId)).thenReturn(Optional.of(sub));
-            when(targetRepository.countByOrganizationId(orgId)).thenReturn(0L);
+            when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(0L);
             when(targetRepository.existsByOrganizationIdAndHostAndPort(orgId, "example.com", 443)).thenReturn(false);
             when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org));
 
@@ -90,8 +93,10 @@ class TargetServiceTest {
             req.setHost("dup.example.com");
             req.setPort(443);
 
+            when(organizationRepository.findBillingOwner(orgId)).thenReturn(orgId);
+            when(organizationRepository.findActiveChildIds(orgId)).thenReturn(List.of());
             when(subscriptionRepository.findByOrganizationId(orgId)).thenReturn(Optional.of(sub));
-            when(targetRepository.countByOrganizationId(orgId)).thenReturn(2L);
+            when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(2L);
             when(targetRepository.existsByOrganizationIdAndHostAndPort(orgId, "dup.example.com", 443)).thenReturn(true);
 
             assertThatThrownBy(() -> targetService.createTarget(orgId, req))
@@ -108,8 +113,10 @@ class TargetServiceTest {
             Subscription tightSub = Subscription.builder()
                     .organization(org).maxCertificateQuota(2).status(SubscriptionStatus.ACTIVE).build();
 
+            when(organizationRepository.findBillingOwner(orgId)).thenReturn(orgId);
+            when(organizationRepository.findActiveChildIds(orgId)).thenReturn(List.of());
             when(subscriptionRepository.findByOrganizationId(orgId)).thenReturn(Optional.of(tightSub));
-            when(targetRepository.countByOrganizationId(orgId)).thenReturn(2L);
+            when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(2L);
 
             assertThatThrownBy(() -> targetService.createTarget(orgId, req))
                     .isInstanceOf(QuotaExceededException.class)
@@ -122,8 +129,10 @@ class TargetServiceTest {
             req.setHost("ghost.example.com");
             req.setPort(443);
 
+            when(organizationRepository.findBillingOwner(orgId)).thenReturn(orgId);
+            when(organizationRepository.findActiveChildIds(orgId)).thenReturn(List.of());
             when(subscriptionRepository.findByOrganizationId(orgId)).thenReturn(Optional.of(sub));
-            when(targetRepository.countByOrganizationId(orgId)).thenReturn(0L);
+            when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(0L);
             when(targetRepository.existsByOrganizationIdAndHostAndPort(any(), any(), anyInt())).thenReturn(false);
             when(organizationRepository.findById(orgId)).thenReturn(Optional.empty());
 

@@ -30,7 +30,8 @@ public class MspClientController {
     }
 
     @GetMapping("/clients/{clientOrgId}")
-    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN') " +
+                  "and @mspAccessGuard.canAccessOrg(#clientOrgId)")
     public ResponseEntity<OrgResponse> getClient(@PathVariable UUID clientOrgId) {
         return ResponseEntity.ok(mspClientService.getClient(TenantContext.getOrgId(), clientOrgId));
     }
@@ -45,7 +46,8 @@ public class MspClientController {
     }
 
     @PutMapping("/clients/{clientOrgId}")
-    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN') " +
+                  "and @mspAccessGuard.canAccessOrg(#clientOrgId)")
     public ResponseEntity<OrgResponse> updateClient(
             @PathVariable UUID clientOrgId,
             @Valid @RequestBody CreateClientOrgRequest req) {

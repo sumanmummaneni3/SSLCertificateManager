@@ -9,12 +9,16 @@ import com.certguard.entity.PlatformAdminAudit;
 import com.certguard.entity.Subscription;
 import com.certguard.enums.OrgType;
 import com.certguard.exception.ResourceNotFoundException;
+import com.certguard.entity.User;
 import com.certguard.repository.AgentRepository;
 import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.repository.PlatformAdminAuditRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.TargetRepository;
+import com.certguard.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -32,6 +36,8 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class AdminService {
 
+    private static final Logger log = LoggerFactory.getLogger(AdminService.class);
+
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final OrgMemberRepository orgMemberRepository;
@@ -39,6 +45,7 @@ public class AdminService {
     private final AgentRepository agentRepository;
     private final PlatformAdminAuditRepository auditRepository;
     private final OrgService orgService;
+    private final UserRepository userRepository;
 
     public AdminService(OrganizationRepository orgRepository,
                         SubscriptionRepository subscriptionRepository,
@@ -46,7 +53,8 @@ public class AdminService {
                         TargetRepository targetRepository,
                         AgentRepository agentRepository,
                         PlatformAdminAuditRepository auditRepository,
-                        OrgService orgService) {
+                        OrgService orgService,
+                        UserRepository userRepository) {
         this.orgRepository        = orgRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.orgMemberRepository  = orgMemberRepository;
@@ -54,6 +62,7 @@ public class AdminService {
         this.agentRepository      = agentRepository;
         this.auditRepository      = auditRepository;
         this.orgService           = orgService;
+        this.userRepository       = userRepository;
     }
 
     /**
@@ -192,5 +201,83 @@ public class AdminService {
                 dto.createdAt(),
                 clients
         );
+    }
+
+    // ── MSP promotion / demotion ──────────────────────────────────────────────
+
+    @Transactional
+    public OrgResponse promoteToMsp(UUID orgId, String reason) {
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found: " + orgId));
+        if (org.getOrgType() == OrgType.MSP) {
+            return orgService.toResponse(org, subscriptionRepository.findByOrganizationId(orgId).orElse(null));
+        }
+        org.setOrgType(OrgType.MSP);
+        orgRepository.save(org);
+        log.info("Org {} promoted to MSP by platform admin (reason='{}')", orgId, reason);
+        return orgService.toResponse(org, subscriptionRepository.findByOrganizationId(orgId).orElse(null));
+    }
+
+    @Transactional
+    public OrgResponse demoteFromMsp(UUID orgId) {
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found: " + orgId));
+        long childCount = orgRepository.countByParentOrgIdAndArchivedAtIsNull(orgId);
+        if (childCount > 0) {
+            throw new IllegalStateException(
+                    "Cannot demote MSP with " + childCount + " active child orgs. Archive children first.");
+        }
+        org.setOrgType(OrgType.SINGLE);
+        orgRepository.save(org);
+        return orgService.toResponse(org, subscriptionRepository.findByOrganizationId(orgId).orElse(null));
+    }
+
+    // ── Soft-delete / archive ─────────────────────────────────────────────────
+
+    @Transactional
+    public void archiveOrg(UUID orgId, UUID actingUserId, String reason) {
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Org not found: " + orgId));
+        if (org.getArchivedAt() != null) return;
+
+        Instant now = Instant.now();
+        User actor = userRepository.findById(actingUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Acting user not found: " + actingUserId));
+        archiveCascade(org, actor, reason, now);
+    }
+
+    private void archiveCascade(Organization org, User actor, String reason, Instant now) {
+        org.setArchivedAt(now);
+        org.setArchivedBy(actor);
+        org.setArchiveReason(reason);
+        orgRepository.save(org);
+
+        targetRepository.disableAllForOrg(org.getId());
+        agentRepository.revokeAllForOrg(org.getId());
+
+        auditRepository.save(PlatformAdminAudit.of(
+                actor.getId(), actor.getEmail(),
+                org.getId(), org.getName(),
+                "DELETE", "/api/v1/admin/orgs/" + org.getId(),
+                "Archive: " + (reason != null ? reason : ""),
+                200));
+
+        if (org.getOrgType() == OrgType.MSP) {
+            for (Organization child : orgRepository.findAllByParentOrgIdAndArchivedAtIsNull(org.getId())) {
+                archiveCascade(child, actor, "parent-msp-archived: " + reason, now);
+            }
+        }
+    }
+
+    @Transactional
+    public OrgResponse restoreOrg(UUID orgId) {
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Org not found"));
+        org.setArchivedAt(null);
+        org.setArchivedBy(null);
+        org.setArchiveReason(null);
+        orgRepository.save(org);
+        targetRepository.enableAllForOrg(orgId);
+        return orgService.getOrg(orgId);
     }
 }

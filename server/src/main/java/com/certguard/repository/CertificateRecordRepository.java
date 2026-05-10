@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,4 +61,8 @@ public interface CertificateRecordRepository extends JpaRepository<CertificateRe
     @Modifying
     @Query("UPDATE CertificateRecord c SET c.lastAlertSentAt = :sentAt WHERE c.id = :id")
     void stampAlertSentAt(UUID id, Instant sentAt);
+
+    // ── V22: MSP aggregated views ─────────────────────────────────────────
+
+    long countByOrgIdInAndStatus(Collection<UUID> orgIds, CertStatus status);
 }

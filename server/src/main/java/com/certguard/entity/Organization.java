@@ -6,6 +6,8 @@ import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.Instant;
+
 @Entity @Table(name = "organizations")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class Organization extends BaseEntity {
@@ -51,4 +53,15 @@ public class Organization extends BaseEntity {
 
     @Column(name = "contact_email", length = 255)
     private String contactEmail;
+
+    // ── V22: Soft-delete ──────────────────────────────────────────────────
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "archived_by")
+    private User archivedBy;
+
+    @Column(name = "archive_reason", length = 500)
+    private String archiveReason;
 }

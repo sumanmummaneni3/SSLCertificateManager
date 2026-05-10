@@ -3,11 +3,13 @@ package com.certguard.repository;
 import com.certguard.entity.Agent;
 import com.certguard.enums.AgentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,4 +28,13 @@ public interface AgentRepository extends JpaRepository<Agent, UUID> {
      */
     @Query("SELECT a FROM Agent a WHERE a.status = :status AND a.lastSeenAt < :threshold")
     List<Agent> findOfflineAgents(AgentStatus status, Instant threshold);
+
+    // ── V22: Soft-delete + MSP aggregated views ───────────────────────────
+
+    @Modifying
+    @Query("UPDATE Agent a SET a.status = com.certguard.enums.AgentStatus.REVOKED " +
+           "WHERE a.organization.id = :orgId")
+    void revokeAllForOrg(@Param("orgId") UUID orgId);
+
+    long countByOrganizationIdIn(Collection<UUID> orgIds);
 }

@@ -300,9 +300,13 @@ public class TargetService {
     }
 
     private void enforceTargetQuota(UUID orgId) {
-        Subscription sub = subscriptionRepository.findByOrganizationId(orgId)
+        UUID quotaOrgId = organizationRepository.findBillingOwner(orgId);
+        Subscription sub = subscriptionRepository.findByOrganizationId(quotaOrgId)
                 .orElseThrow(() -> new ResourceNotFoundException("No subscription found"));
-        long current = targetRepository.countByOrganizationId(orgId);
+        List<UUID> scope = new java.util.ArrayList<>(
+                organizationRepository.findActiveChildIds(quotaOrgId));
+        scope.add(quotaOrgId);
+        long current = targetRepository.countByOrganizationIdIn(scope);
         if (current >= sub.getMaxCertificateQuota())
             throw new QuotaExceededException("Certificate quota of " + sub.getMaxCertificateQuota() + " reached. Contact your platform administrator to increase the limit.");
     }

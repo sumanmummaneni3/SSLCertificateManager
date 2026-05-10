@@ -881,6 +881,62 @@ const styles = `
     display: flex; flex-direction: column; align-items: center;
     padding: 4rem 2rem; text-align: center; color: var(--muted);
   }
+
+  /* ── ORG TYPE CARDS (onboarding step 1) ── */
+  .org-type-cards {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .org-type-card {
+    border: 2px solid var(--border2);
+    border-radius: 10px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--surface2);
+    text-align: left;
+    outline: none;
+  }
+
+  .org-type-card:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--color-primary) 4%, var(--surface2));
+  }
+
+  .org-type-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .org-type-card.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--color-primary) 6%, var(--surface2));
+  }
+
+  .org-type-card-icon {
+    font-size: 1.5rem; margin-bottom: 0.5rem;
+  }
+
+  .org-type-card-title {
+    font-family: var(--font-head);
+    font-size: 0.88rem; font-weight: 600;
+    margin-bottom: 0.3rem; color: var(--text);
+  }
+
+  .org-type-card-desc {
+    font-size: 0.72rem; color: var(--muted); line-height: 1.5;
+  }
+
+  /* ── PAGINATION ── */
+  .pagination {
+    display: flex; align-items: center; justify-content: center;
+    gap: 0.75rem; margin-top: 1.25rem;
+  }
+
+  .pagination-info {
+    font-size: 0.78rem; color: var(--muted); font-family: var(--font-mono);
+  }
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
@@ -915,6 +971,15 @@ const api = {
   getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
   updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
+  completeOnboarding: (data, token) => api.call("POST", "/api/v1/onboarding", data, token),
+  // MSP endpoints
+  msp: {
+    getDashboard: (token) => api.call("GET", "/api/v1/msp/dashboard", null, token),
+    getTargets:   (token, page = 0, size = 20) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}`, null, token),
+    listClients:  (token) => api.call("GET", "/api/v1/msp/clients", null, token),
+    createClient: (data, token) => api.call("POST", "/api/v1/msp/clients", data, token),
+    updateClient: (id, data, token) => api.call("PUT", `/api/v1/msp/clients/${id}`, data, token),
+  },
   getTargets:    (token, opts) => api.call("GET",  "/api/v1/targets?size=100", null, token, opts),
   createTarget:  (data, token, opts) => api.call("POST", "/api/v1/targets",    data, token, opts),
   updateTarget:  (id, data, token, opts) => api.call("PUT", `/api/v1/targets/${id}`, data, token, opts),
@@ -1114,6 +1179,8 @@ function LaunchScreen({ onToken }) {
 
 // ─── ORG SETUP ───────────────────────────────────────────────────────────────
 function OrgSetup({ token, onDone, toast }) {
+  const [step, setStep]       = useState(1); // 1 = org type, 2 = org name
+  const [orgType, setOrgType] = useState("SINGLE");
   const [name, setName]       = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
@@ -1122,7 +1189,7 @@ function OrgSetup({ token, onDone, toast }) {
     if (!name.trim()) { setError("Organization name is required"); return; }
     setError(""); setLoading(true);
     try {
-      await api.updateOrgName(name.trim(), token);
+      await api.completeOnboarding({ orgName: name.trim(), orgType }, token);
       toast("Organization created!", "success");
       onDone();
     } catch (e) {
@@ -1142,30 +1209,85 @@ function OrgSetup({ token, onDone, toast }) {
       <div className="launch-card">
         <div className="steps">
           <div className="step-item done"><span className="step-num">✓</span>Signed In</div>
-          <div className="step-item active"><span className="step-num">2</span>Your Org</div>
-          <div className="step-item"><span className="step-num">3</span>Add Targets</div>
+          <div className={`step-item ${step === 2 ? "done" : "active"}`}>
+            <span className="step-num">{step === 2 ? "✓" : "2"}</span>Org Type
+          </div>
+          <div className={`step-item ${step === 2 ? "active" : ""}`}>
+            <span className="step-num">3</span>Your Org
+          </div>
+          <div className="step-item"><span className="step-num">4</span>Add Targets</div>
         </div>
 
-        <div className="launch-title">Name your organization</div>
-        <p className="launch-sub">This will appear on your dashboard and in reports. You can change it later.</p>
+        {step === 1 && (
+          <>
+            <div className="launch-title">Choose your account type</div>
+            <p className="launch-sub">Select how you plan to use CertGuard.</p>
 
-        {error && <div className="alert alert-error">⚠ {error}</div>}
+            <div className="org-type-cards" role="radiogroup" aria-label="Account type">
+              <button
+                className={`org-type-card ${orgType === "SINGLE" ? "selected" : ""}`}
+                role="radio"
+                aria-checked={orgType === "SINGLE"}
+                onClick={() => setOrgType("SINGLE")}
+              >
+                <div className="org-type-card-icon" aria-hidden="true">◈</div>
+                <div className="org-type-card-title">Standard Organization</div>
+                <div className="org-type-card-desc">Manage certificates for your own infrastructure</div>
+              </button>
+              <button
+                className={`org-type-card ${orgType === "MSP" ? "selected" : ""}`}
+                role="radio"
+                aria-checked={orgType === "MSP"}
+                onClick={() => setOrgType("MSP")}
+              >
+                <div className="org-type-card-icon" aria-hidden="true">⬡</div>
+                <div className="org-type-card-title">MSP</div>
+                <div className="org-type-card-desc">Manage certificates across multiple client organizations</div>
+              </button>
+            </div>
 
-        <div className="field">
-          <label htmlFor="org-name">Organization Name</label>
-          <input
-            id="org-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSave()}
-            placeholder="e.g. Acme Corporation"
-            autoFocus
-          />
-        </div>
+            {orgType === "MSP" && (
+              <div className="alert alert-info" style={{ marginBottom: "1rem" }}>
+                <span aria-hidden="true">ℹ</span>
+                <span>MSP accounts require sales activation. Our team will reach out within one business day to activate MSP features.</span>
+              </div>
+            )}
 
-        <button className="btn btn-primary" onClick={handleSave} disabled={loading || !name.trim()}>
-          {loading ? <><Spinner /> Saving...</> : "→ Continue"}
-        </button>
+            <button className="btn btn-primary" onClick={() => setStep(2)}>
+              → Continue
+            </button>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <div className="launch-title">Name your organization</div>
+            <p className="launch-sub">This will appear on your dashboard and in reports. You can change it later.</p>
+
+            {error && <div className="alert alert-error">⚠ {error}</div>}
+
+            <div className="field">
+              <label htmlFor="org-name">Organization Name</label>
+              <input
+                id="org-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                placeholder="e.g. Acme Corporation"
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button className="btn btn-secondary" onClick={() => setStep(1)} disabled={loading}>
+                Back
+              </button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={loading || !name.trim()}>
+                {loading ? <><Spinner /> Saving...</> : "→ Continue"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1680,7 +1802,9 @@ function Dashboard({ token, org, me, toast, onLogout }) {
         )}
         {view === "team"     && <TeamView     token={token} org={org} toast={toast} me={me} />}
         {view === "settings" && <SettingsView token={token} org={org} toast={toast} />}
-        {view === "msp-orgs" && <MspOrgsView  token={token} toast={toast} />}
+        {view === "msp-dashboard" && <MspDashboardView token={token} me={me} />}
+        {view === "msp-orgs"      && <MspOrgsView     token={token} me={me} toast={toast} />}
+        {view === "msp-targets"   && <MspTargetsView   token={token} me={me} />}
         {view === "platform-admin-orgs" && (
           <PlatformOrgsView
             token={token}
@@ -1759,7 +1883,9 @@ const NAV_GROUPS = [
 const MSP_GROUP = {
   label: "MSP",
   items: [
-    { id: "msp-orgs", icon: "⬡", label: "MSP Orgs" },
+    { id: "msp-dashboard", icon: "◇", label: "MSP Dashboard" },
+    { id: "msp-orgs",      icon: "⬡", label: "Client Orgs"   },
+    { id: "msp-targets",   icon: "⊕", label: "All Targets"   },
   ],
 };
 
@@ -3043,23 +3169,436 @@ function SettingsView({ token, org, toast }) {
 }
 
 // ─── MSP ORGS VIEW ────────────────────────────────────────────────────────────
-// eslint-disable-next-line no-unused-vars
-function MspOrgsView({ token, toast }) {
+function MspOrgsView({ token, me, toast }) {
+  const [clients, setClients]     = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showAdd, setShowAdd]     = useState(false);
+  const [editClient, setEditClient] = useState(null);
+  const [archiveId, setArchiveId] = useState(null);
+  const [archiveName, setArchiveName] = useState("");
+
+  const canManage = me == null || me?.permissions?.canManageMspClients ||
+    me?.user?.role === "ADMIN";
+
+  const load = () => {
+    setLoading(true);
+    api.msp.listClients(token)
+      .then((data) => setClients(Array.isArray(data) ? data : (data?.content || [])))
+      .catch((e) => toast("Failed to load client orgs: " + e.message, "error"))
+      .finally(() => setLoading(false));
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [token]);
+
+  const handleArchiveRequest = (client) => {
+    setArchiveId(client.id);
+    setArchiveName(client.name);
+  };
+
+  const confirmArchiveRequest = () => {
+    toast("Archive request submitted. Our team will process it shortly.", "info");
+    setArchiveId(null);
+    setArchiveName("");
+  };
+
   return (
-    <div className="page">
+    <>
       <div className="page-header">
-        <div className="page-title">MSP Orgs</div>
-      </div>
-      <div className="cert-detail" style={{ textAlign: "center", padding: "3rem 2rem" }}>
-        <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>⬡</div>
-        <div style={{ fontFamily: "var(--font-head)", fontSize: "1.1rem", marginBottom: "0.5rem" }}>
-          Managed Client Organisations
+        <div>
+          <div className="page-title">Client Orgs</div>
+          <div className="page-sub">Manage your client organisations</div>
         </div>
-        <div style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
-          Provision and manage certificate monitoring for your client organisations.
+        {canManage && (
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
+            + Add Client Org
+          </button>
+        )}
+      </div>
+      <div className="page-content">
+        {loading ? (
+          <div className="loading-center"><Spinner lg /><span>Loading client orgs...</span></div>
+        ) : clients.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon" aria-hidden="true">⬡</div>
+            <div className="empty-title">No client organizations yet</div>
+            <p className="empty-sub">Add your first client to get started.</p>
+            {canManage && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)} style={{ margin: "0 auto" }}>
+                + Add Client Org
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Org Name</th>
+                  <th>Contact Email</th>
+                  <th>Status</th>
+                  <th>Targets</th>
+                  {canManage && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {clients.map((c) => (
+                  <tr key={c.id}>
+                    <td className="host-cell">{c.name}</td>
+                    <td className="mono" style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                      {c.contactEmail || "—"}
+                    </td>
+                    <td>
+                      <Badge type={c.archivedAt ? "revoked" : "active"}>
+                        {c.archivedAt ? "archived" : "active"}
+                      </Badge>
+                    </td>
+                    <td className="mono">{c.targetCount ?? 0}</td>
+                    {canManage && (
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            className="scan-btn"
+                            style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
+                            onClick={() => setEditClient(c)}
+                            aria-label={`Edit ${c.name}`}
+                          >
+                            ✎
+                          </button>
+                          {!c.archivedAt && (
+                            <button
+                              className="scan-btn"
+                              style={{ color: "var(--orange)", borderColor: "rgba(255,145,0,0.3)" }}
+                              onClick={() => handleArchiveRequest(c)}
+                              aria-label={`Request archive for ${c.name}`}
+                            >
+                              Archive
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showAdd && (
+        <MspClientModal
+          token={token}
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); load(); toast("Client org created", "success"); }}
+        />
+      )}
+
+      {editClient && (
+        <MspClientModal
+          token={token}
+          client={editClient}
+          onClose={() => setEditClient(null)}
+          onSaved={() => { setEditClient(null); load(); toast("Client org updated", "success"); }}
+        />
+      )}
+
+      {archiveId && (
+        <div className="modal-bg">
+          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="archive-modal-title">
+            <div className="modal-title" id="archive-modal-title">Request Archive</div>
+            <p className="modal-sub">
+              Archive requests for <strong>{archiveName}</strong> are processed by our support team. Continue?
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => { setArchiveId(null); setArchiveName(""); }}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={confirmArchiveRequest}>
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MspClientModal({ token, client, onClose, onSaved }) {
+  const isEdit = !!client;
+  const [name, setName]     = useState(client?.name || "");
+  const [email, setEmail]   = useState(client?.contactEmail || "");
+  const [country, setCountry] = useState(client?.country || "");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState("");
+
+  const handleSubmit = async () => {
+    if (!name.trim()) { setError("Organization name is required"); return; }
+    setError(""); setLoading(true);
+    try {
+      const data = { orgName: name.trim(), contactEmail: email.trim() || null, country: country.trim() || null };
+      if (isEdit) {
+        await api.msp.updateClient(client.id, data, token);
+      } else {
+        await api.msp.createClient(data, token);
+      }
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="msp-client-modal-title">
+        <div className="modal-title" id="msp-client-modal-title">
+          {isEdit ? "Edit Client Org" : "Add Client Org"}
+        </div>
+        <p className="modal-sub">
+          {isEdit ? "Update the client organisation details." : "Create a new client organisation under your MSP account."}
+        </p>
+
+        {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
+
+        <div className="field">
+          <label htmlFor="msp-client-name">Organization Name <span style={{ color: "var(--red)" }}>*</span></label>
+          <input
+            id="msp-client-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            placeholder="e.g. Acme Corporation"
+            autoFocus
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="msp-client-email">Contact Email</label>
+          <input
+            id="msp-client-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="contact@client.com"
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="msp-client-country">Country</label>
+          <input
+            id="msp-client-country"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            placeholder="US"
+          />
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !name.trim()}>
+            {loading ? <><Spinner /> Saving...</> : (isEdit ? "Save Changes" : "Create")}
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── MSP DASHBOARD VIEW ───────────────────────────────────────────────────────
+function MspDashboardView({ token }) {
+  const [dash, setDash]     = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.msp.getDashboard(token)
+      .then(setDash)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const stats = dash ? [
+    { label: "Child Orgs",     value: dash.childOrgCount,  cls: "total"       },
+    { label: "Total Targets",  value: dash.totalTargets,   cls: "total"       },
+    { label: "Valid",          value: dash.valid,           cls: "valid"       },
+    { label: "Expiring Soon",  value: dash.expiring,        cls: "expiring"    },
+    { label: "Expired",        value: dash.expired,         cls: "expired"     },
+    { label: "Active Agents",  value: dash.totalAgents,     cls: "unreachable" },
+  ] : [];
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <div className="page-title">MSP Dashboard</div>
+          <div className="page-sub">Aggregated view across all client organisations</div>
+        </div>
+      </div>
+      <div className="page-content">
+        {loading ? (
+          <div className="loading-center"><Spinner lg /><span>Loading MSP dashboard...</span></div>
+        ) : !dash ? (
+          <div className="empty">
+            <div className="empty-icon" aria-hidden="true">◇</div>
+            <div className="empty-title">MSP dashboard unavailable</div>
+            <p className="empty-sub">Could not load dashboard data. MSP features may not be active on your account.</p>
+          </div>
+        ) : (
+          <>
+            <div className="stats-grid">
+              {stats.map((s) => (
+                <div key={s.label} className={`stat-card ${s.cls}`}>
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value">{s.value ?? "—"}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="section-header">
+              <div className="section-title">Client Organisations</div>
+              <span className="text-muted text-sm">{(dash.perOrg || []).length} clients</span>
+            </div>
+
+            {(dash.perOrg || []).length === 0 ? (
+              <div className="empty">
+                <div className="empty-icon" aria-hidden="true">⬡</div>
+                <div className="empty-title">No client organisations</div>
+                <p className="empty-sub">Add client orgs from the Client Orgs section.</p>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Org Name</th>
+                      <th>Targets</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dash.perOrg || []).map((o) => (
+                      <tr key={o.orgId}>
+                        <td className="host-cell">{o.orgName}</td>
+                        <td className="mono">{o.targetCount ?? 0}</td>
+                        <td>
+                          <button
+                            className="scan-btn"
+                            style={{ color: "var(--accent)", borderColor: "rgba(0,212,255,0.3)" }}
+                            onClick={() => {}}
+                            aria-label={`View targets for ${o.orgName}`}
+                          >
+                            View Targets
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── MSP TARGETS VIEW ────────────────────────────────────────────────────────
+function MspTargetsView({ token }) {
+  const [targets, setTargets]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [page, setPage]         = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  const load = useCallback(async (p) => {
+    setLoading(true);
+    try {
+      const data = await api.msp.getTargets(token, p, 20);
+      setTargets(data?.content || []);
+      setTotalPages(data?.totalPages ?? 0);
+    } catch { /* silently ignore — no toast prop */ }
+    finally { setLoading(false); }
+  }, [token]);
+
+  useEffect(() => { load(page); }, [load, page]);
+
+  const handlePrev = () => { if (page > 0) setPage((p) => p - 1); };
+  const handleNext = () => { if (page < totalPages - 1) setPage((p) => p + 1); };
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <div className="page-title">All Targets</div>
+          <div className="page-sub">Cross-organisation target view — read only</div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={() => load(page)}>↻ Refresh</button>
+      </div>
+      <div className="page-content">
+        {loading ? (
+          <div className="loading-center"><Spinner lg /><span>Loading targets...</span></div>
+        ) : targets.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon" aria-hidden="true">⊕</div>
+            <div className="empty-title">No targets found</div>
+            <p className="empty-sub">Targets added to client organisations will appear here.</p>
+          </div>
+        ) : (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Org</th>
+                    <th>Host</th>
+                    <th>Port</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Last Scanned</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {targets.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <span className="badge badge-domain" style={{ fontSize: "0.72rem" }}>{t.orgName || "—"}</span>
+                      </td>
+                      <td className="host-cell">{t.host}</td>
+                      <td className="mono">{t.port}</td>
+                      <td>
+                        <Badge type={t.isPrivate ? "private" : "public"}>
+                          {t.isPrivate ? "Private" : "Public"}
+                        </Badge>
+                      </td>
+                      <td>
+                        <Badge type={t.enabled ? "active" : "unknown"}>
+                          {t.enabled ? "enabled" : "disabled"}
+                        </Badge>
+                      </td>
+                      <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+                        {t.lastScannedAt ? fmtDate(t.lastScannedAt) : "Never"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="pagination">
+                <button className="btn btn-secondary btn-sm" onClick={handlePrev} disabled={page === 0}>
+                  ← Prev
+                </button>
+                <span className="pagination-info">Page {page + 1} of {totalPages}</span>
+                <button className="btn btn-secondary btn-sm" onClick={handleNext} disabled={page >= totalPages - 1}>
+                  Next →
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -3165,9 +3704,8 @@ export default function App() {
       setOrgData(org);
       setMeData(me);
 
-      const orgNamed = org.name && org.name !== "Dev Organization";
-
-      if (!orgNamed) {
+      const onboardingDone = me?.user?.onboardingCompleted === true;
+      if (!onboardingDone) {
         setPhase("org-setup");
         return;
       }

@@ -17,6 +17,8 @@ import com.certguard.repository.OrganizationRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -93,7 +95,15 @@ public class OrgService {
         if (req.getCountry() != null)       org.setCountry(req.getCountry());
         if (req.getPhone() != null)         org.setPhone(req.getPhone());
         if (req.getContactEmail() != null)  org.setContactEmail(req.getContactEmail());
-        if (req.getIsMsp() != null)             org.setOrgType(req.getIsMsp() ? OrgType.MSP : OrgType.SINGLE);
+        if (req.getIsMsp() != null) {
+            boolean isPlatformAdmin = SecurityContextHolder.getContext().getAuthentication()
+                    .getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_PLATFORM_ADMIN".equals(a.getAuthority()));
+            if (!isPlatformAdmin) {
+                throw new AccessDeniedException("MSP promotion is sales-assisted. Contact support.");
+            }
+            org.setOrgType(req.getIsMsp() ? OrgType.MSP : OrgType.SINGLE);
+        }
         orgRepository.save(org);
         Subscription sub = subscriptionRepository.findByOrganizationId(orgId).orElse(null);
         return toResponse(org, sub);

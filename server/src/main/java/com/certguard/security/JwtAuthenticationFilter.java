@@ -18,7 +18,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.certguard.enums.OrgType;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -134,6 +137,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 TenantContext.setOrgId(effectiveOrgId);
                 TenantContext.setUserId(userId);
+
+                final UUID resolvedOrgId = effectiveOrgId;
+                List<UUID> accessibleOrgIds = new ArrayList<>();
+                accessibleOrgIds.add(resolvedOrgId);
+                organizationRepository.findById(resolvedOrgId).ifPresent(org -> {
+                    if (org.getOrgType() == OrgType.MSP) {
+                        accessibleOrgIds.addAll(
+                                organizationRepository.findActiveChildIds(resolvedOrgId));
+                    }
+                });
+                TenantContext.setAccessibleOrgIds(accessibleOrgIds);
+
                 MDC.put("userId", userId.toString());
 
                 var auth = new UsernamePasswordAuthenticationToken(

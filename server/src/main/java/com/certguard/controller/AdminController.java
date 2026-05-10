@@ -12,8 +12,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
+import com.certguard.security.CertGuardUserPrincipal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -78,6 +80,32 @@ public class AdminController {
             @PathVariable UUID orgId,
             @Min(1) @RequestParam int value) {
         return ResponseEntity.ok(adminService.updateQuota(orgId, value));
+    }
+
+    @PatchMapping("/orgs/{orgId}/promote-msp")
+    public ResponseEntity<OrgResponse> promoteToMsp(
+            @PathVariable UUID orgId,
+            @RequestParam(required = false) String reason) {
+        return ResponseEntity.ok(adminService.promoteToMsp(orgId, reason));
+    }
+
+    @PatchMapping("/orgs/{orgId}/demote-msp")
+    public ResponseEntity<OrgResponse> demoteFromMsp(@PathVariable UUID orgId) {
+        return ResponseEntity.ok(adminService.demoteFromMsp(orgId));
+    }
+
+    @DeleteMapping("/orgs/{orgId}")
+    public ResponseEntity<Void> archiveOrg(
+            @PathVariable UUID orgId,
+            @RequestParam(required = false) String reason,
+            @AuthenticationPrincipal CertGuardUserPrincipal principal) {
+        adminService.archiveOrg(orgId, principal.getUserId(), reason);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/orgs/{orgId}/restore")
+    public ResponseEntity<OrgResponse> restoreOrg(@PathVariable UUID orgId) {
+        return ResponseEntity.ok(adminService.restoreOrg(orgId));
     }
 
     /**

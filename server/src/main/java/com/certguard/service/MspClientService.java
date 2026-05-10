@@ -31,7 +31,7 @@ public class MspClientService {
     private final UserRepository userRepository;
 
     public List<OrgResponse> listClients(UUID mspOrgId) {
-        return orgRepository.findAllByParentOrgId(mspOrgId)
+        return orgRepository.findAllByParentOrgIdAndArchivedAtIsNull(mspOrgId)
                 .stream().map(o -> {
                     Subscription sub = subscriptionRepository.findByOrganizationId(o.getId()).orElse(null);
                     return toResponse(o, sub);

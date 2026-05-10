@@ -131,6 +131,7 @@ public class InvitationService {
                     .email(inv.getEmail())
                     .name(inv.getEmail().split("@")[0])
                     .role(UserRole.MEMBER)
+                    .onboardingCompletedAt(Instant.now())
                     .build());
         });
 
@@ -143,6 +144,11 @@ public class InvitationService {
         member.setRole(inv.getRole());
         member.setInviteStatus(InviteStatus.ACCEPTED);
         memberRepository.save(member);
+
+        if (user.getOnboardingCompletedAt() == null) {
+            user.setOnboardingCompletedAt(Instant.now());
+            userRepository.save(user);
+        }
 
         // Mark invite as used
         inv.setUsedAt(Instant.now());

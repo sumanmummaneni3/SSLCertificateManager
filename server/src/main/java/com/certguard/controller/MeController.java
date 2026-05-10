@@ -1,7 +1,9 @@
 package com.certguard.controller;
 
+import com.certguard.enums.OrgType;
 import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.UserRepository;
 import com.certguard.security.CertGuardUserPrincipal;
 import com.certguard.security.TenantContext;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,7 @@ public class MeController {
 
     private final OrgMemberRepository orgMemberRepository;
     private final OrganizationRepository organizationRepository;
+    private final UserRepository userRepository;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> me(@AuthenticationPrincipal CertGuardUserPrincipal principal) {
@@ -64,6 +67,12 @@ public class MeController {
         boolean isEngineer = isAdmin || "ENGINEER".equals(orgRole);
         boolean canRead    = isEngineer || "VIEWER".equals(orgRole);
 
+        // Onboarding state
+        var dbUser = userRepository.findById(principal.getUserId()).orElse(null);
+        boolean onboardingCompleted = dbUser != null && dbUser.getOnboardingCompletedAt() != null;
+
+        boolean isMspMember = currentOrg != null && OrgType.MSP.equals(currentOrg.get("orgType"));
+
         Map<String, Object> permissions = new LinkedHashMap<>();
         permissions.put("canManageTeam",      isAdmin);
         permissions.put("canWriteTargets",    isEngineer);
@@ -73,10 +82,14 @@ public class MeController {
         permissions.put("canEditOrgProfile",  isAdmin);
         permissions.put("canViewAllOrgs",     isPlatformAdmin);
         permissions.put("canActAsOrg",        isPlatformAdmin);
+        permissions.put("isMspMember",        isMspMember);
+        permissions.put("canAccessBilling",   isAdmin);
 
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("id", principal.getUserId());
         user.put("email", principal.getEmail());
+        user.put("onboardingCompleted",   onboardingCompleted);
+        user.put("onboardingCompletedAt", dbUser != null ? dbUser.getOnboardingCompletedAt() : null);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("user", user);

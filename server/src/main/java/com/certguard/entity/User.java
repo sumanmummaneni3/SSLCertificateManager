@@ -6,6 +6,7 @@ import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity @Table(name = "users")
@@ -29,4 +30,8 @@ public class User extends BaseEntity {
 
     @Column(name = "google_sub", unique = true)
     private String googleSub;
+
+    // ── V22: Onboarding tracking ──────────────────────────────────────────
+    @Column(name = "onboarding_completed_at")
+    private Instant onboardingCompletedAt;
 }
