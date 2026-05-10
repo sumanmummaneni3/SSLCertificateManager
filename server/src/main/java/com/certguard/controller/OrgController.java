@@ -53,12 +53,16 @@ public class OrgController {
 
     // ── Platform Admin endpoints ───────────────────────────────────────────
 
+    // Deprecated: use /api/v1/admin/orgs instead
+    @Deprecated
     @GetMapping("/admin/orgs")
     @PreAuthorize("hasRole('PLATFORM_ADMIN')")
     public ResponseEntity<List<OrgResponse>> listAllOrgs() {
         return ResponseEntity.ok(orgService.listAllOrgs());
     }
 
+    // Deprecated: use /api/v1/admin/orgs/{orgId}/quota instead
+    @Deprecated
     @PutMapping("/admin/orgs/{orgId}/quota")
     @PreAuthorize("hasRole('PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> updateQuota(@PathVariable UUID orgId, @Min(1) @RequestParam int value) {

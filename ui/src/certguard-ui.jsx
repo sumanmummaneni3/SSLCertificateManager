@@ -811,13 +811,87 @@ const styles = `
   .badge-active   { background: rgba(0,230,118,0.12);  color: var(--green);   border: 1px solid rgba(0,230,118,0.25); }
   .badge-offline  { background: rgba(255,145,0,0.12);  color: var(--orange);  border: 1px solid rgba(255,145,0,0.25); }
   .badge-revoked  { background: rgba(255,82,82,0.12);  color: var(--red);     border: 1px solid rgba(255,82,82,0.25); }
+
+  /* ── IMPERSONATION BANNER ── */
+  .impersonation-banner {
+    background: var(--yellow, #fef3c7);
+    border-bottom: 1px solid rgba(180, 130, 0, 0.3);
+    padding: 8px 2rem;
+    display: flex; align-items: center; gap: 12px;
+    font-size: 0.78rem;
+    color: #78350f;
+    position: sticky; top: 0; z-index: 50;
+  }
+
+  .impersonation-banner-text {
+    flex: 1;
+    font-family: var(--font-mono);
+  }
+
+  .impersonation-banner-warn {
+    font-size: 0.72rem;
+    opacity: 0.75;
+    margin-left: 8px;
+  }
+
+  /* ── PLATFORM ADMIN ── */
+  .admin-tabs {
+    display: flex; gap: 0; margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .admin-tab {
+    padding: 8px 18px;
+    font-size: 0.8rem; font-family: var(--font-mono);
+    border: none; background: transparent;
+    color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .admin-tab:hover { color: var(--text); }
+  .admin-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .admin-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .search-bar {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    min-width: 220px;
+  }
+
+  .search-bar input {
+    background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 0.82rem; width: 100%;
+    font-family: var(--font-head);
+  }
+
+  .search-bar input::placeholder { color: var(--muted); }
+
+  .org-tree-indent {
+    padding-left: 1.5rem;
+    border-left: 2px solid var(--border2);
+    margin-left: 8px;
+  }
+
+  .admin-api-unavailable {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 4rem 2rem; text-align: center; color: var(--muted);
+  }
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
 const api = {
-  async call(method, path, body, token) {
+  async call(method, path, body, token, { actingAsOrgId, reason } = {}) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (actingAsOrgId) {
+      headers["X-Acting-As-Org"] = actingAsOrgId;
+      if (reason) headers["X-Acting-As-Reason"] = reason;
+    }
     const res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
@@ -828,6 +902,7 @@ const api = {
       // ProblemDetail (RFC 9457) uses title + detail; fall back to message for older endpoints
       const msg = err.detail || err.title || err.message || `HTTP ${res.status}: ${res.statusText}`;
       const error = new Error(msg);
+      error.status = res.status;
       error.problemDetail = err; // preserve full object for callers that want it
       throw error;
     }
@@ -837,38 +912,48 @@ const api = {
   getDevToken: (email) =>
     api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}`),
   logout: (token) => api.call("POST", "/api/v1/auth/logout", null, token),
+  getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
   updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
-  getTargets:    (token) => api.call("GET",  "/api/v1/targets?size=100", null, token),
-  createTarget:  (data, token) => api.call("POST", "/api/v1/targets",    data, token),
-  updateTarget:  (id, data, token) => api.call("PUT", `/api/v1/targets/${id}`, data, token),
-  deleteTarget:  (id, token) => api.call("DELETE", `/api/v1/targets/${id}`, null, token),
-  scanTarget:    (id, token) => api.call("POST", `/api/v1/targets/${id}/scan`, null, token),
+  getTargets:    (token, opts) => api.call("GET",  "/api/v1/targets?size=100", null, token, opts),
+  createTarget:  (data, token, opts) => api.call("POST", "/api/v1/targets",    data, token, opts),
+  updateTarget:  (id, data, token, opts) => api.call("PUT", `/api/v1/targets/${id}`, data, token, opts),
+  deleteTarget:  (id, token, opts) => api.call("DELETE", `/api/v1/targets/${id}`, null, token, opts),
+  scanTarget:    (id, token, opts) => api.call("POST", `/api/v1/targets/${id}/scan`, null, token, opts),
   getDashboard:  (token) => api.call("GET",  "/api/v1/dashboard",        null, token),
   getCerts:      (token) => api.call("GET",  "/api/v1/certificates?size=100", null, token),
   getExpiring:   (days, token) => api.call("GET", `/api/v1/certificates/expiring?days=${days}`, null, token),
   // Agent endpoints
-  listAgents:    (token) => api.call("GET",  "/api/v1/agent/list",                    null,   token),
+  listAgents:    (token, opts) => api.call("GET",  "/api/v1/agent/list",                    null,   token, opts),
   genAgentToken: (name, token) => api.call("POST", `/api/v1/agent/tokens?agentName=${encodeURIComponent(name)}`, null, token),
-  revokeAgent:   (id, token) => api.call("POST", `/api/v1/agent/${id}/revoke`,        null,   token),
-  createAgent:   (data, token) => api.call("POST", "/api/v1/agents",                  data,   token),
+  revokeAgent:   (id, token, opts) => api.call("POST", `/api/v1/agent/${id}/revoke`,        null,   token, opts),
+  createAgent:   (data, token, opts) => api.call("POST", "/api/v1/agents",                  data,   token, opts),
   queueScan:     (targetId, token) => api.call("POST", `/api/v1/targets/${targetId}/scan`, null, token),
   // Location endpoints
-  listLocations:   (token) => api.call("GET",  "/api/v1/locations",        null, token),
-  createLocation:  (data, token) => api.call("POST", "/api/v1/locations",  data, token),
-  updateLocation:  (id, data, token) => api.call("PUT", `/api/v1/locations/${id}`, data, token),
-  deleteLocation:  (id, token) => api.call("DELETE", `/api/v1/locations/${id}`, null, token),
+  listLocations:   (token, opts) => api.call("GET",  "/api/v1/locations",        null, token, opts),
+  createLocation:  (data, token, opts) => api.call("POST", "/api/v1/locations",  data, token, opts),
+  updateLocation:  (id, data, token, opts) => api.call("PUT", `/api/v1/locations/${id}`, data, token, opts),
+  deleteLocation:  (id, token, opts) => api.call("DELETE", `/api/v1/locations/${id}`, null, token, opts),
   // Team endpoints
-  listMembers:   (token) => api.call("GET",  "/api/v1/org/members",                    null, token),
-  inviteMember:  (data, token) => api.call("POST", "/api/v1/org/invitations",           data, token),
-  changeRole:    (userId, role, token) => api.call("PUT", `/api/v1/org/members/${userId}/role?role=${role}`, null, token),
-  revokeMember:  (userId, token) => api.call("DELETE", `/api/v1/org/members/${userId}`, null, token),
+  listMembers:   (token, opts) => api.call("GET",  "/api/v1/org/members",                    null, token, opts),
+  inviteMember:  (data, token, opts) => api.call("POST", "/api/v1/org/invitations",           data, token, opts),
+  changeRole:    (userId, role, token, opts) => api.call("PUT", `/api/v1/org/members/${userId}/role?role=${role}`, null, token, opts),
+  revokeMember:  (userId, token, opts) => api.call("DELETE", `/api/v1/org/members/${userId}`, null, token, opts),
   // Org profile endpoints
   getOrgProfile:    (token) => api.call("GET", "/api/v1/org/profile",       null, token),
   updateOrgProfile: (data, token) => api.call("PUT", "/api/v1/org/profile", data, token),
   // Invite acceptance endpoints
   validateInvite: (token) => api.call("POST", `/api/v1/auth/invite/validate?token=${encodeURIComponent(token)}`),
   acceptInvite:   (data) => api.call("POST", "/api/v1/auth/invite/accept", data),
+  // Platform admin endpoints
+  admin: {
+    listOrgs:    (token) => api.call("GET", "/api/v1/admin/orgs", null, token),
+    getOrgTree:  (token) => api.call("GET", "/api/v1/admin/orgs/tree", null, token),
+    getMsps:     (token) => api.call("GET", "/api/v1/admin/msps", null, token),
+    getOrgDetail:(token, orgId) => api.call("GET", `/api/v1/admin/orgs/${orgId}`, null, token),
+    updateQuota: (token, orgId, body) => api.call("PUT", `/api/v1/admin/orgs/${orgId}/quota`, body, token),
+    getAuditLog: (token, params) => api.call("GET", `/api/v1/admin/audit?${new URLSearchParams(params)}`, null, token),
+  },
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -1433,7 +1518,7 @@ function FirstTarget({ token, onDone, toast }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
-function Dashboard({ token, org, toast, onLogout }) {
+function Dashboard({ token, org, me, toast, onLogout }) {
   const [dash, setDash]           = useState(null);
   const [targets, setTargets]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -1448,6 +1533,9 @@ function Dashboard({ token, org, toast, onLogout }) {
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [locations, setLocations]         = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(false);
+  // Platform admin impersonation state
+  const [actingAsOrgId, setActingAsOrgId]   = useState(null);
+  const [actingAsOrgName, setActingAsOrgName] = useState(null);
   const [theme, setThemeState]    = useState(() =>
     localStorage.getItem("cg-sidebar-theme") || "dark"
   );
@@ -1534,10 +1622,16 @@ function Dashboard({ token, org, toast, onLogout }) {
     }
   };
 
+  const exitImpersonation = () => {
+    setActingAsOrgId(null);
+    setActingAsOrgName(null);
+    setView("platform-admin-orgs");
+  };
+
   if (loading) {
     return (
       <div className="app">
-        <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+        <Sidebar view={view} onView={setView} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
         <div className="main"><div className="loading-center"><Spinner lg /><span>Loading dashboard...</span></div></div>
       </div>
     );
@@ -1545,31 +1639,69 @@ function Dashboard({ token, org, toast, onLogout }) {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} org={org} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+      <Sidebar view={view} onView={setView} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
       <div className="main">
+        {actingAsOrgId && (
+          <div className="impersonation-banner" role="alert">
+            <span aria-hidden="true" style={{ fontSize: "1rem" }}>!</span>
+            <span className="impersonation-banner-text">
+              Acting as: <strong>{actingAsOrgName || actingAsOrgId}</strong>
+              <span className="impersonation-banner-warn">— All changes are logged</span>
+            </span>
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ flexShrink: 0 }}
+              onClick={exitImpersonation}
+              aria-label="Exit impersonation mode"
+            >
+              Exit
+            </button>
+          </div>
+        )}
         {view === "dashboard" && (
           <DashboardView dash={dash} targets={targets} onScan={triggerScan}
-            scanning={scanning} onAddTarget={() => setShowAdd(true)} />
+            scanning={scanning} onAddTarget={() => setShowAdd(true)} me={me} />
         )}
         {view === "targets" && (
           <TargetsView targets={targets} onScan={triggerScan} scanning={scanning}
             onAdd={() => setShowAdd(true)} onDelete={setDeleteId}
-            onEdit={setEditTarget} onRefresh={load} />
+            onEdit={setEditTarget} onRefresh={load} me={me} />
         )}
         {view === "certs" && (
           <CertsView certs={certs} loading={certsLoading} onRefresh={loadCerts} />
         )}
         {view === "agents" && (
           <AgentsView agents={agents} loading={agentsLoading} token={token}
-            onRefresh={loadAgents} toast={toast} />
+            onRefresh={loadAgents} toast={toast} me={me} />
         )}
         {view === "locations" && (
           <LocationsView locations={locations} loading={locationsLoading} token={token}
-            onRefresh={loadLocations} toast={toast} />
+            onRefresh={loadLocations} toast={toast} me={me} />
         )}
-        {view === "team"     && <TeamView     token={token} org={org} toast={toast} />}
+        {view === "team"     && <TeamView     token={token} org={org} toast={toast} me={me} />}
         {view === "settings" && <SettingsView token={token} org={org} toast={toast} />}
         {view === "msp-orgs" && <MspOrgsView  token={token} toast={toast} />}
+        {view === "platform-admin-orgs" && (
+          <PlatformOrgsView
+            token={token}
+            toast={toast}
+            onManageOrg={(id, name) => {
+              setActingAsOrgId(id);
+              setActingAsOrgName(name);
+              setView("platform-admin-org-detail");
+            }}
+          />
+        )}
+        {view === "platform-admin-org-detail" && actingAsOrgId && (
+          <PlatformOrgDetailView
+            token={token}
+            toast={toast}
+            actingAsOrgId={actingAsOrgId}
+            actingAsOrgName={actingAsOrgName}
+            onExit={exitImpersonation}
+            me={me}
+          />
+        )}
       </div>
 
       {showAdd && (
@@ -1625,9 +1757,16 @@ const NAV_GROUPS = [
 ];
 
 const MSP_GROUP = {
-  label: "Platform",
+  label: "MSP",
   items: [
     { id: "msp-orgs", icon: "⬡", label: "MSP Orgs" },
+  ],
+};
+
+const ADMIN_GROUP = {
+  label: "Admin",
+  items: [
+    { id: "platform-admin-orgs", icon: "◫", label: "All Orgs" },
   ],
 };
 
@@ -1646,11 +1785,14 @@ function NavItem({ item, active, onView }) {
   );
 }
 
-function Sidebar({ view, onView, org, theme = "dark", onTheme, onLogout }) {
+function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout }) {
   const { mode, toggle } = useTheme();
   const themeVars = SIDEBAR_THEMES[theme]?.vars || SIDEBAR_THEMES.dark.vars;
   const isMsp = org?.orgType === "MSP";
-  const groups = isMsp ? [...NAV_GROUPS, MSP_GROUP] : NAV_GROUPS;
+  const isPlatformAdmin = me?.platformAdmin === true;
+  let groups = [...NAV_GROUPS];
+  if (isMsp) groups = [...groups, MSP_GROUP];
+  if (isPlatformAdmin) groups = [...groups, ADMIN_GROUP];
   return (
     <nav className="sidebar" style={themeVars} aria-label="Main navigation">
       <div className="sidebar-logo">
@@ -1709,7 +1851,7 @@ function Sidebar({ view, onView, org, theme = "dark", onTheme, onLogout }) {
   );
 }
 
-function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
+function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me }) {
   const stats = dash ? [
     { label: "Total Targets",  value: dash.totalTargets, cls: "total"      },
     { label: "Valid",          value: dash.valid,        cls: "valid"      },
@@ -1725,7 +1867,9 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
           <div className="page-title">Dashboard</div>
           <div className="page-sub">Certificate monitoring overview</div>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={onAddTarget}>+ Add Target</button>
+        {(me == null || me?.permissions?.canWriteTargets) && (
+          <button className="btn btn-primary btn-sm" onClick={onAddTarget}>+ Add Target</button>
+        )}
       </div>
       <div className="page-content">
         <div className="stats-grid">
@@ -1747,9 +1891,11 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
             <div className="empty-icon">🎯</div>
             <div className="empty-title">No targets yet</div>
             <p className="empty-sub">Add a domain or IP address to start monitoring certificates.</p>
-            <button className="btn btn-primary btn-sm" onClick={onAddTarget} style={{ margin: "0 auto" }}>
-              + Add First Target
-            </button>
+            {(me == null || me?.permissions?.canWriteTargets) && (
+              <button className="btn btn-primary btn-sm" onClick={onAddTarget} style={{ margin: "0 auto" }}>
+                + Add First Target
+              </button>
+            )}
           </div>
         ) : (
           <div className="table-wrap">
@@ -1782,10 +1928,12 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
                       <td className="mono">{cert ? fmtDate(cert.expiryDate) : "—"}</td>
                       <td><DaysBar days={cert?.daysRemaining} /></td>
                       <td>
-                        <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
-                          onClick={() => onScan(t)} disabled={scanning[t.id]}>
-                          {scanning[t.id] ? <><Spinner /> Scanning</> : "⟳ Scan"}
-                        </button>
+                        {(me == null || me?.permissions?.canWriteTargets) && (
+                          <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
+                            onClick={() => onScan(t)} disabled={scanning[t.id]}>
+                            {scanning[t.id] ? <><Spinner /> Scanning</> : "⟳ Scan"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1799,7 +1947,8 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget }) {
   );
 }
 
-function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh }) {
+function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me }) {
+  const canWrite = me == null || me?.permissions?.canWriteTargets;
   return (
     <>
       <div className="page-header">
@@ -1809,7 +1958,9 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
-          <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Target</button>
+          {canWrite && (
+            <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Target</button>
+          )}
         </div>
       </div>
       <div className="page-content">
@@ -1818,7 +1969,9 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
             <div className="empty-icon">🎯</div>
             <div className="empty-title">No targets</div>
             <p className="empty-sub">Add your first endpoint to start monitoring.</p>
-            <button className="btn btn-primary btn-sm" onClick={onAdd} style={{ margin: "0 auto" }}>+ Add Target</button>
+            {canWrite && (
+              <button className="btn btn-primary btn-sm" onClick={onAdd} style={{ margin: "0 auto" }}>+ Add Target</button>
+            )}
           </div>
         ) : (
           <div className="table-wrap">
@@ -1875,15 +2028,21 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
                       </td>
                       <td>
                         <div className="row-actions">
-                          <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
-                            onClick={() => onScan(t)} disabled={scanning[t.id]}
-                            title={t.isPrivate ? "Queue scan job for agent" : "Trigger scan"}>
-                            {scanning[t.id] ? <Spinner /> : "⟳"}
-                          </button>
-                          <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
-                            onClick={() => onEdit(t)} title="Edit target">✎</button>
-                          <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
-                            onClick={() => onDelete(t.id)} title="Delete target">✕</button>
+                          {canWrite && (
+                            <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
+                              onClick={() => onScan(t)} disabled={scanning[t.id]}
+                              title={t.isPrivate ? "Queue scan job for agent" : "Trigger scan"}>
+                              {scanning[t.id] ? <Spinner /> : "⟳"}
+                            </button>
+                          )}
+                          {canWrite && (
+                            <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
+                              onClick={() => onEdit(t)} title="Edit target">✎</button>
+                          )}
+                          {canWrite && (
+                            <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
+                              onClick={() => onDelete(t.id)} title="Delete target">✕</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2364,7 +2523,7 @@ function AgentCreateWizard({ token, locations, onClose, onCreated, toast }) {
 }
 
 // ─── AGENTS VIEW ─────────────────────────────────────────────
-function AgentsView({ agents, loading, token, onRefresh, toast }) {
+function AgentsView({ agents, loading, token, onRefresh, toast, me }) {
   const [showWizard, setShowWizard]     = useState(false);
   const [installResult, setInstallResult] = useState(null);
   const [locations, setLocations]       = useState([]);
@@ -2406,6 +2565,7 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
     setInstallResult(null);
   };
 
+  const canWrite = me == null || me?.permissions?.canWriteAgents;
   return (
     <>
       <div className="page-header">
@@ -2415,7 +2575,9 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}>+ Deploy New Agent</button>
+          {canWrite && (
+            <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}>+ Deploy New Agent</button>
+          )}
         </div>
       </div>
       <div className="page-content">
@@ -2438,8 +2600,10 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
               Deploy an agent on your private network to start scanning internal hosts.
               Click "+ Deploy New Agent" to create an encrypted installer bundle.
             </p>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}
-              style={{ margin: "0 auto" }}>+ Deploy First Agent</button>
+            {canWrite && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}
+                style={{ margin: "0 auto" }}>+ Deploy First Agent</button>
+            )}
           </div>
         ) : (
           <div className="table-wrap" style={{ marginBottom: "2rem" }}>
@@ -2480,7 +2644,7 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
                       {fmtDate(a.registeredAt)}
                     </td>
                     <td>
-                      {(a.status === "ACTIVE" || a.status === "PENDING") && (
+                      {canWrite && (a.status === "ACTIVE" || a.status === "PENDING") && (
                         <button
                           className="scan-btn"
                           style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
@@ -2521,7 +2685,7 @@ function AgentsView({ agents, loading, token, onRefresh, toast }) {
 }
 
 // ─── TEAM VIEW ────────────────────────────────────────────────────────────────
-function TeamView({ token, org, toast }) {
+function TeamView({ token, org, toast, me }) {
   const [members, setMembers]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [showInvite, setShowInvite] = useState(false);
@@ -2554,6 +2718,7 @@ function TeamView({ token, org, toast }) {
 
   const inviteStatusBadgeType = (s) => ({ ACCEPTED: "active", PENDING: "pending", REVOKED: "revoked" }[s] || "unknown");
 
+  const canManage = me == null || me?.permissions?.canManageTeam;
   return (
     <>
       <div className="page-header">
@@ -2561,7 +2726,9 @@ function TeamView({ token, org, toast }) {
           <div className="page-title">Team</div>
           <div className="page-sub">Manage members and access for {org?.name || "your organisation"}</div>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowInvite(true)}>+ Invite Member</button>
+        {canManage && (
+          <button className="btn btn-primary btn-sm" onClick={() => setShowInvite(true)}>+ Invite Member</button>
+        )}
       </div>
       <div className="page-content">
         {loading ? (
@@ -2571,7 +2738,9 @@ function TeamView({ token, org, toast }) {
             <div className="empty-icon">◎</div>
             <div className="empty-title">No team members yet</div>
             <p className="empty-sub">Invite your colleagues to collaborate on certificate monitoring.</p>
-            <button className="btn btn-primary btn-sm" style={{ margin: "0 auto" }} onClick={() => setShowInvite(true)}>+ Invite Member</button>
+            {canManage && (
+              <button className="btn btn-primary btn-sm" style={{ margin: "0 auto" }} onClick={() => setShowInvite(true)}>+ Invite Member</button>
+            )}
           </div>
         ) : (
           <div className="table-wrap">
@@ -2583,7 +2752,7 @@ function TeamView({ token, org, toast }) {
                   <th>Status</th>
                   <th>Invited By</th>
                   <th>Joined</th>
-                  <th></th>
+                  {canManage && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -2594,15 +2763,20 @@ function TeamView({ token, org, toast }) {
                       {m.name && <div className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{m.email}</div>}
                     </td>
                     <td>
-                      <RoleDropdown member={m} token={token} onChanged={load} toast={toast} />
+                      {canManage
+                        ? <RoleDropdown member={m} token={token} onChanged={load} toast={toast} />
+                        : <Badge type={m.role === "ADMIN" ? "active" : "pending"}>{m.role}</Badge>
+                      }
                     </td>
                     <td><Badge type={inviteStatusBadgeType(m.inviteStatus)}>{m.inviteStatus}</Badge></td>
                     <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{m.invitedByEmail || "—"}</td>
                     <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{fmtDate(m.createdAt)}</td>
-                    <td>
-                      <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
-                        onClick={() => setRevokeId(m.userId)} title="Remove member">✕</button>
-                    </td>
+                    {canManage && (
+                      <td>
+                        <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
+                          onClick={() => setRevokeId(m.userId)} title="Remove member">✕</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -2971,6 +3145,7 @@ function InviteAcceptScreen({ inviteToken, onAccepted, toast }) {
 export default function App() {
   const [token, setToken]     = useState(null);
   const [orgData, setOrgData] = useState(null);
+  const [meData, setMeData]   = useState(null);
   const [, setTargets] = useState(null);
   const [phase, setPhase]     = useState("launch"); // launch | org-setup | first-target | app | invite
   const [loading, setLoading] = useState(false);
@@ -2981,9 +3156,13 @@ export default function App() {
     setToken(t);
     setLoading(true);
     try {
-      // Fetch org data
-      const org = await api.getOrg(t);
+      // Fetch org data and /me in parallel
+      const [org, me] = await Promise.all([
+        api.getOrg(t),
+        api.getMe(t).catch(() => null), // non-fatal — degrade gracefully
+      ]);
       setOrgData(org);
+      setMeData(me);
 
       const orgNamed = org.name && org.name !== "Dev Organization";
 
@@ -3034,6 +3213,7 @@ export default function App() {
     try { await api.logout(token); } catch { /* ignore logout errors */ }
     setToken(null);
     setOrgData(null);
+    setMeData(null);
     setPhase("launch");
   };
 
@@ -3069,9 +3249,474 @@ export default function App() {
       {phase === "launch"       && <LaunchScreen onToken={handleToken} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
-      {phase === "app"          && <Dashboard token={token} org={orgData} toast={toast} onLogout={handleLogout} />}
+      {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
       <Toast toasts={toasts} />
+    </>
+  );
+}
+
+// ─── PLATFORM ADMIN — ALL ORGS VIEW ─────────────────────────────────────────
+function PlatformOrgsView({ token, toast, onManageOrg }) {
+  const [orgs, setOrgs]         = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [apiUnavailable, setApiUnavailable] = useState(false);
+  const [tab, setTab]           = useState("all"); // all | msps | single
+  const [search, setSearch]     = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOrgs = async () => {
+      // setLoading already true from initial state
+      try {
+        const data = await api.admin.getOrgTree(token);
+        if (!cancelled) {
+          setOrgs(Array.isArray(data) ? data : (data?.content || []));
+        }
+      } catch (e) {
+        if (!cancelled) {
+          if (e.status === 404 || e.message?.includes("404")) {
+            setApiUnavailable(true);
+          } else {
+            toast("Failed to load organisations: " + e.message, "error");
+          }
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    fetchOrgs();
+    return () => { cancelled = true; };
+  }, [token, toast]);
+
+  if (loading) {
+    return (
+      <div className="loading-center" style={{ minHeight: "60vh" }}>
+        <Spinner lg /><span>Loading organisations...</span>
+      </div>
+    );
+  }
+
+  if (apiUnavailable) {
+    return (
+      <>
+        <div className="page-header">
+          <div>
+            <div className="page-title">All Organisations</div>
+            <div className="page-sub">Platform-wide organisation management</div>
+          </div>
+        </div>
+        <div className="page-content">
+          <div className="admin-api-unavailable">
+            <div style={{ fontSize: "2rem", marginBottom: "1rem", opacity: 0.4 }}>◫</div>
+            <div style={{ fontFamily: "var(--font-head)", fontSize: "1rem", color: "var(--text)", marginBottom: "0.5rem" }}>
+              Admin API not yet available
+            </div>
+            <div style={{ fontSize: "0.82rem" }}>
+              The admin endpoints are not deployed in this environment. They will appear automatically once deployed.
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Flatten tree for display — each org may have children[] array for MSP clients
+  const flatAll = [];
+  const flattenOrg = (o, depth = 0) => {
+    flatAll.push({ ...o, _depth: depth });
+    if (Array.isArray(o.children)) o.children.forEach((c) => flattenOrg(c, depth + 1));
+  };
+  orgs.forEach((o) => flattenOrg(o));
+
+  const q = search.trim().toLowerCase();
+  const filtered = flatAll.filter((o) => {
+    if (q && !o.name?.toLowerCase().includes(q)) return false;
+    if (tab === "msps")   return o.orgType === "MSP";
+    if (tab === "single") return o.orgType !== "MSP";
+    return true;
+  });
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <div className="page-title">All Organisations</div>
+          <div className="page-sub">Platform-wide organisation management ({flatAll.length} total)</div>
+        </div>
+        <div className="search-bar" style={{ minWidth: 200 }}>
+          <span aria-hidden="true" style={{ color: "var(--muted)", fontSize: "0.8rem" }}>&#128269;</span>
+          <input
+            type="search"
+            placeholder="Search orgs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search organisations"
+          />
+        </div>
+      </div>
+      <div className="page-content">
+        <div className="admin-tabs" role="tablist" aria-label="Organisation filter">
+          {[
+            { id: "all",    label: "All" },
+            { id: "msps",   label: "MSPs" },
+            { id: "single", label: "Single" },
+          ].map(({ id, label }) => (
+            <button
+              key={id}
+              className={`admin-tab ${tab === id ? "active" : ""}`}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">◫</div>
+            <div className="empty-title">No organisations found</div>
+            <p className="empty-sub">
+              {q ? `No results for "${search}".` : "No organisations match the current filter."}
+            </p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Parent</th>
+                  <th>Targets</th>
+                  <th>Agents</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((o) => (
+                  <tr key={o.id}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: o._depth * 16 }}>
+                        {o._depth > 0 && (
+                          <span aria-hidden="true" style={{ color: "var(--border2)", fontSize: "0.8rem" }}>&#x2514;</span>
+                        )}
+                        <span className="host-cell">{o.name}</span>
+                      </div>
+                      {o.domain && <div className="mono" style={{ fontSize: "0.7rem", color: "var(--muted)", paddingLeft: o._depth * 16 + (o._depth > 0 ? 18 : 0) }}>{o.domain}</div>}
+                    </td>
+                    <td>
+                      <Badge type={o.orgType === "MSP" ? "active" : "pending"}>{o.orgType || "SINGLE"}</Badge>
+                    </td>
+                    <td className="mono" style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                      {o.parentName || "—"}
+                    </td>
+                    <td className="mono">{o.targetCount ?? 0}</td>
+                    <td className="mono">{o.agentCount ?? 0}</td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => onManageOrg(o.id, o.name)}
+                        aria-label={`Manage organisation ${o.name}`}
+                      >
+                        Manage
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── PLATFORM ADMIN — ORG DETAIL VIEW ───────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+function PlatformOrgDetailView({ token, toast, actingAsOrgId, actingAsOrgName, onExit, me }) {
+  const [detailTab, setDetailTab] = useState("targets");
+  // Per-tab data
+  const [targets, setTargets]     = useState([]);
+  const [targetsLoading, setTargetsLoading] = useState(false);
+  const [agents, setAgents]       = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [members, setMembers]     = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [locations, setLocations] = useState([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [scanning, setScanning]   = useState({});
+
+  const opts = { actingAsOrgId, reason: "Platform admin inspection" };
+
+  const loadTargets = useCallback(async () => {
+    setTargetsLoading(true);
+    try { const r = await api.getTargets(token, opts); setTargets(r?.content || []); }
+    catch (e) { toast("Failed to load targets: " + e.message, "error"); }
+    finally { setTargetsLoading(false); }
+  }, [token, actingAsOrgId]);
+
+  const loadAgents = useCallback(async () => {
+    setAgentsLoading(true);
+    try { setAgents(await api.listAgents(token, opts)); }
+    catch (e) { toast("Failed to load agents: " + e.message, "error"); }
+    finally { setAgentsLoading(false); }
+  }, [token, actingAsOrgId]);
+
+  const loadMembers = useCallback(async () => {
+    setMembersLoading(true);
+    try { setMembers(await api.listMembers(token, opts)); }
+    catch (e) { toast("Failed to load members: " + e.message, "error"); }
+    finally { setMembersLoading(false); }
+  }, [token, actingAsOrgId]);
+
+  const loadLocations = useCallback(async () => {
+    setLocationsLoading(true);
+    try { setLocations(await api.listLocations(token, opts)); }
+    catch (e) { toast("Failed to load locations: " + e.message, "error"); }
+    finally { setLocationsLoading(false); }
+  }, [token, actingAsOrgId]);
+
+  useEffect(() => { if (detailTab === "targets")   loadTargets();   }, [detailTab, loadTargets]);
+  useEffect(() => { if (detailTab === "agents")    loadAgents();    }, [detailTab, loadAgents]);
+  useEffect(() => { if (detailTab === "members")   loadMembers();   }, [detailTab, loadMembers]);
+  useEffect(() => { if (detailTab === "locations") loadLocations(); }, [detailTab, loadLocations]);
+
+  const triggerScan = async (target) => {
+    setScanning((s) => ({ ...s, [target.id]: true }));
+    try {
+      await api.scanTarget(target.id, token, opts);
+      toast(`Scan triggered for ${target.host}`, "info");
+      setTimeout(() => { loadTargets(); setScanning((s) => ({ ...s, [target.id]: false })); }, 8000);
+    } catch (e) {
+      toast("Scan failed: " + e.message, "error");
+      setScanning((s) => ({ ...s, [target.id]: false }));
+    }
+  };
+
+  const agentStatusBadgeType = (s) =>
+    ({ ACTIVE: "active", PENDING: "pending", OFFLINE: "offline", REVOKED: "revoked" }[s] || "pending");
+
+  const inviteStatusBadgeType = (s) =>
+    ({ ACCEPTED: "active", PENDING: "pending", REVOKED: "revoked" }[s] || "unknown");
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <button
+            className="btn-ghost"
+            style={{ padding: 0, fontSize: "0.78rem", marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}
+            onClick={onExit}
+            aria-label="Back to All Orgs"
+          >
+            &#8592; Back to All Orgs
+          </button>
+          <div className="page-title">{actingAsOrgName || actingAsOrgId}</div>
+          <div className="page-sub">Inspecting organisation — all actions are logged</div>
+        </div>
+      </div>
+      <div className="page-content">
+        <div className="admin-tabs" role="tablist" aria-label="Organisation detail tabs">
+          {[
+            { id: "targets",   label: "Targets"   },
+            { id: "agents",    label: "Agents"    },
+            { id: "members",   label: "Members"   },
+            { id: "locations", label: "Locations" },
+          ].map(({ id, label }) => (
+            <button
+              key={id}
+              className={`admin-tab ${detailTab === id ? "active" : ""}`}
+              role="tab"
+              aria-selected={detailTab === id}
+              onClick={() => setDetailTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {detailTab === "targets" && (
+          targetsLoading ? (
+            <div className="loading-center"><Spinner lg /><span>Loading targets...</span></div>
+          ) : targets.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">🎯</div>
+              <div className="empty-title">No targets</div>
+              <p className="empty-sub">This organisation has no monitored targets.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Host</th>
+                    <th>Type</th>
+                    <th>Visibility</th>
+                    <th>Cert Status</th>
+                    <th>Expires</th>
+                    <th>Last Scan</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {targets.map((t) => {
+                    const cert = t.latestCertificate;
+                    return (
+                      <tr key={t.id}>
+                        <td>
+                          <div className="host-cell">{t.host}</div>
+                          {t.description && <div className="mono">{t.description}</div>}
+                        </td>
+                        <td><Badge type={hostTypeColor(t.hostType)}>{t.hostType || "—"}</Badge></td>
+                        <td>
+                          <Badge type={t.isPrivate ? "private" : "public"}>
+                            {t.isPrivate ? "Private" : "Public"}
+                          </Badge>
+                        </td>
+                        <td>
+                          {cert
+                            ? <Badge type={statusColor(cert.status)}>{cert.status}</Badge>
+                            : <Badge type="unknown">No scan</Badge>}
+                        </td>
+                        <td className="mono">{cert ? fmtDate(cert.expiryDate) : "—"}</td>
+                        <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+                          {t.lastScannedAt ? fmtDate(t.lastScannedAt) : "Never"}
+                        </td>
+                        <td>
+                          <button
+                            className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
+                            onClick={() => triggerScan(t)}
+                            disabled={scanning[t.id]}
+                            title="Trigger scan"
+                          >
+                            {scanning[t.id] ? <Spinner /> : "⟳"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {detailTab === "agents" && (
+          agentsLoading ? (
+            <div className="loading-center"><Spinner lg /><span>Loading agents...</span></div>
+          ) : agents.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">⬡</div>
+              <div className="empty-title">No agents</div>
+              <p className="empty-sub">This organisation has no registered agents.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Targets</th>
+                    <th>Last Seen</th>
+                    <th>Registered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agents.map((a) => (
+                    <tr key={a.id}>
+                      <td className="host-cell">{a.name}</td>
+                      <td><Badge type={agentStatusBadgeType(a.status)}>{a.status}</Badge></td>
+                      <td className="mono">{a.currentTargetCount ?? 0} / {a.maxTargets}</td>
+                      <td className="mono" style={{ color: "var(--muted)", fontSize: "0.75rem" }}>{fmtRelative(a.lastSeenAt)}</td>
+                      <td className="mono" style={{ color: "var(--muted)", fontSize: "0.75rem" }}>{fmtDate(a.registeredAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {detailTab === "members" && (
+          membersLoading ? (
+            <div className="loading-center"><Spinner lg /><span>Loading members...</span></div>
+          ) : members.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">◎</div>
+              <div className="empty-title">No members</div>
+              <p className="empty-sub">This organisation has no team members.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((m) => (
+                    <tr key={m.id}>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{m.name || m.email}</div>
+                        {m.name && <div className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{m.email}</div>}
+                      </td>
+                      <td><Badge type={m.role === "ADMIN" ? "active" : "pending"}>{m.role}</Badge></td>
+                      <td><Badge type={inviteStatusBadgeType(m.inviteStatus)}>{m.inviteStatus}</Badge></td>
+                      <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{fmtDate(m.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+
+        {detailTab === "locations" && (
+          locationsLoading ? (
+            <div className="loading-center"><Spinner lg /><span>Loading locations...</span></div>
+          ) : locations.length === 0 ? (
+            <div className="empty">
+              <div className="empty-icon">📍</div>
+              <div className="empty-title">No locations</div>
+              <p className="empty-sub">This organisation has no configured locations.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Provider</th>
+                    <th>Geo Region</th>
+                    <th>Cloud Region</th>
+                    <th>Targets</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {locations.map((loc) => (
+                    <tr key={loc.id}>
+                      <td className="host-cell">{loc.name}</td>
+                      <td><Badge type={providerColor(loc.provider)}>{providerLabel(loc.provider)}</Badge></td>
+                      <td className="mono">{loc.geoRegion || "—"}</td>
+                      <td className="mono">{loc.cloudRegion || "—"}</td>
+                      <td className="mono">{loc.targetCount ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
     </>
   );
 }
@@ -3081,11 +3726,12 @@ const PROVIDERS = ["AWS", "AZURE", "GCP", "COLOCATION", "ON_PREM"];
 const providerLabel = (p) => ({ AWS: "AWS", AZURE: "Azure", GCP: "GCP", COLOCATION: "Colocation", ON_PREM: "On-Prem" }[p] || p);
 const providerColor = (p) => ({ AWS: "yellow", AZURE: "blue", GCP: "green", COLOCATION: "purple", ON_PREM: "orange" }[p] || "unknown");
 
-function LocationsView({ locations, loading, token, onRefresh, toast }) {
+function LocationsView({ locations, loading, token, onRefresh, toast, me }) {
   const [showAdd, setShowAdd]       = useState(false);
   const [editLoc, setEditLoc]       = useState(null);
   const [deleteId, setDeleteId]     = useState(null);
   const [deleting, setDeleting]     = useState(false);
+  const canWrite = me == null || me?.permissions?.canWriteLocations;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -3110,7 +3756,9 @@ function LocationsView({ locations, loading, token, onRefresh, toast }) {
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>+ Add Location</button>
+          {canWrite && (
+            <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>+ Add Location</button>
+          )}
         </div>
       </div>
       <div className="page-content">
@@ -3121,7 +3769,9 @@ function LocationsView({ locations, loading, token, onRefresh, toast }) {
             <div className="empty-icon">📍</div>
             <div className="empty-title">No locations yet</div>
             <p className="empty-sub">Create a location to group targets by site or cloud region.</p>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)} style={{ margin: "0 auto" }}>+ Add Location</button>
+            {canWrite && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)} style={{ margin: "0 auto" }}>+ Add Location</button>
+            )}
           </div>
         ) : (
           <div className="table-wrap">
@@ -3133,7 +3783,7 @@ function LocationsView({ locations, loading, token, onRefresh, toast }) {
                   <th>Geo Region</th>
                   <th>Cloud Region</th>
                   <th>Targets</th>
-                  <th></th>
+                  {canWrite && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -3147,14 +3797,16 @@ function LocationsView({ locations, loading, token, onRefresh, toast }) {
                     <td className="mono">{loc.geoRegion || "—"}</td>
                     <td className="mono">{loc.cloudRegion || "—"}</td>
                     <td className="mono">{loc.targetCount ?? 0}</td>
-                    <td>
-                      <div className="row-actions">
-                        <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
-                          onClick={() => setEditLoc(loc)} title="Edit location">✎</button>
-                        <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
-                          onClick={() => setDeleteId(loc.id)} title="Delete location">✕</button>
-                      </div>
-                    </td>
+                    {canWrite && (
+                      <td>
+                        <div className="row-actions">
+                          <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
+                            onClick={() => setEditLoc(loc)} title="Edit location">✎</button>
+                          <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
+                            onClick={() => setDeleteId(loc.id)} title="Delete location">✕</button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

@@ -1,13 +1,14 @@
 package com.certguard.security;
 
 import com.certguard.repository.OrganizationRepository;
+import com.certguard.service.PlatformAdminAuditService;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
@@ -16,17 +17,31 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
+import java.util.Set;
 import java.util.UUID;
 
-@Slf4j
 @Component
-@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+
+    /** HTTP methods that mutate state and require a reason when acting cross-org. */
+    private static final Set<String> WRITE_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
 
     private final JwtTokenProvider jwtTokenProvider;
     private final OrganizationRepository organizationRepository;
+    private final PlatformAdminAuditService platformAdminAuditService;
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
+                                    OrganizationRepository organizationRepository,
+                                    PlatformAdminAuditService platformAdminAuditService) {
+        this.jwtTokenProvider         = jwtTokenProvider;
+        this.organizationRepository   = organizationRepository;
+        this.platformAdminAuditService = platformAdminAuditService;
+    }
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -35,6 +50,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String token = extractToken(request);
+
+        // Acting-as context captured for the audit row, populated when X-Acting-As-Org is used.
+        UUID   auditActingUserId    = null;
+        String auditActingUserEmail = null;
+        UUID   auditTargetOrgId     = null;
+        String auditTargetOrgName   = null;
+        String auditReason          = null;
+        boolean needsAudit          = false;
 
         if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
             try {
@@ -70,8 +93,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         response.getWriter().write("{\"status\":403,\"title\":\"Forbidden\",\"detail\":\"X-Acting-As-Org is restricted to PLATFORM_ADMIN\"}");
                         return;
                     }
+
+                    // For write operations, X-Acting-As-Reason is mandatory.
+                    String reasonHeader = request.getHeader("X-Acting-As-Reason");
+                    if (WRITE_METHODS.contains(request.getMethod().toUpperCase())
+                            && !StringUtils.hasText(reasonHeader)) {
+                        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                        response.getWriter().write(
+                                "{\"status\":400,\"title\":\"Missing reason\"," +
+                                "\"detail\":\"X-Acting-As-Reason header is required for write operations\"}");
+                        return;
+                    }
+
                     UUID targetOrgId = UUID.fromString(actingAsHeader);
-                    if (!organizationRepository.existsById(targetOrgId)) {
+                    var targetOrg = organizationRepository.findById(targetOrgId).orElse(null);
+                    if (targetOrg == null) {
                         response.setStatus(HttpServletResponse.SC_NOT_FOUND);
                         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                         response.getWriter().write("{\"status\":404,\"title\":\"Not Found\",\"detail\":\"Target organisation not found\"}");
@@ -83,6 +120,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     TenantContext.setHomeOrgId(orgId);
                     MDC.put("actingAsOrgId", targetOrgId.toString());
                     MDC.put("homeOrgId", orgId.toString());
+
+                    // Capture context for async audit write after chain completes.
+                    auditActingUserId    = userId;
+                    auditActingUserEmail = email;
+                    auditTargetOrgId     = targetOrgId;
+                    auditTargetOrgName   = targetOrg.getName();
+                    auditReason          = reasonHeader;
+                    needsAudit           = true;
                 }
 
                 CertGuardUserPrincipal principal =
@@ -100,9 +145,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
+        // Wrap response to capture the final status code for the audit row.
+        ContentCachingResponseWrapper wrappedResponse = new ContentCachingResponseWrapper(response);
+
         try {
-            chain.doFilter(request, response);
+            chain.doFilter(request, wrappedResponse);
         } finally {
+            // Flush wrapper so the real response body is sent.
+            wrappedResponse.copyBodyToResponse();
+
+            if (needsAudit) {
+                int status = wrappedResponse.getStatus();
+                platformAdminAuditService.recordAsync(
+                        auditActingUserId, auditActingUserEmail,
+                        auditTargetOrgId, auditTargetOrgName,
+                        request.getMethod(), request.getRequestURI(),
+                        auditReason, status);
+            }
+
             TenantContext.clear();
             MDC.remove("userId");
             MDC.remove("actingAsOrgId");
