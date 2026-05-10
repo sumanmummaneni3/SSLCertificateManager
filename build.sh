@@ -11,45 +11,43 @@ if [ ! -d "$JAVA17_HOME" ]; then
   exit 1
 fi
 
-echo "=== [1/4] Building UI ==="
+echo "=== [1/2] Building UI ==="
 cd "$ROOT/ui"
 npm install --silent
 npm run build
 echo "UI build complete: $(ls dist/assets | wc -l) assets generated"
 
-echo ""
-echo "=== [2/4] Staging UI into server static resources ==="
-STATIC_DIR="$ROOT/server/src/main/resources/static"
-rm -rf "$STATIC_DIR"
-mkdir -p "$STATIC_DIR"
-cp -r dist/. "$STATIC_DIR/"
-echo "Copied UI dist → server/src/main/resources/static/"
+# NOTE: UI staging into server/src/main/resources/static/ is no longer done
+# here. server/Dockerfile now has a multi-stage build (ui-builder stage) that
+# compiles the UI and copies dist/ into the server classpath before mvn package.
+# The npm build above is kept so developers can iterate on the UI locally.
 
 echo ""
-echo "=== [3/4] Building agent ==="
+echo "=== [2/2] Building agent ==="
 cd "$ROOT/agent"
 JAVA_HOME="$JAVA17_HOME" mvn clean package -q
-AGENT_JAR="$(ls "$ROOT/agent/target/certguard-agent.jar")"
+AGENT_JAR="$ROOT/agent/target/certguard-agent.jar"
 echo "Agent build complete: $AGENT_JAR"
 
-echo ""
-echo "=== [4/4] Staging agent JAR into server resources ==="
-AGENT_RESOURCE_DIR="$ROOT/server/src/main/resources/agent"
-mkdir -p "$AGENT_RESOURCE_DIR"
-cp "$AGENT_JAR" "$AGENT_RESOURCE_DIR/certguard-agent.jar"
-echo "Copied agent JAR → server/src/main/resources/agent/certguard-agent.jar"
-
-echo ""
-echo "=== [5/4] Building server ==="
-cd "$ROOT/server"
-JAVA_HOME="$JAVA17_HOME" mvn clean package -DskipTests -q
-SERVER_JAR="$(ls "$ROOT/server/target/certguard-cloud-"*.jar | grep -v sources | head -1)"
-echo "Server build complete: $SERVER_JAR"
+# NOTE: Agent JAR staging into server/src/main/resources/agent/ is also handled
+# by server/Dockerfile (agent-builder stage). Local staging is only needed if
+# running `mvn spring-boot:run` from server/ directly without Docker; uncomment
+# the block below in that case.
+#
+#   AGENT_RESOURCE_DIR="$ROOT/server/src/main/resources/agent"
+#   mkdir -p "$AGENT_RESOURCE_DIR"
+#   cp "$AGENT_JAR" "$AGENT_RESOURCE_DIR/certguard-agent.jar"
+#   echo "Copied agent JAR → server/src/main/resources/agent/certguard-agent.jar"
 
 echo ""
 echo "=============================="
-echo " Production build successful"
+echo " Local artifacts built"
 echo "=============================="
-echo " Server JAR : $SERVER_JAR"
-echo " Run with   : java -jar $SERVER_JAR"
-echo " Or         : cd server && docker-compose up -d"
+echo " UI dist    : $ROOT/ui/dist"
+echo " Agent JAR  : $AGENT_JAR"
+echo ""
+echo " To build the Docker image (from repo root):"
+echo "   docker build -f server/Dockerfile -t certguard:local ."
+echo ""
+echo " To run the server JAR directly (requires manual staging — see comments above):"
+echo "   cd server && JAVA_HOME=\"$JAVA17_HOME\" mvn clean package -DskipTests && mvn spring-boot:run"

@@ -1,0 +1,46 @@
+# Build context is the repo root (server/Dockerfile + GHA workflow use context: .)
+# Keep the tarball sent to the Docker daemon small and reproducible.
+
+# VCS / IDE / OS
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+
+# Docs and snapshots
+docs
+*.md
+*.zip
+
+# Local secrets
+.env
+**/.env
+**/.env.local
+!**/.env.example
+
+# Maven build output
+**/target
+
+# Node build output and dependencies — Docker runs `npm ci` fresh inside ui-builder
+**/node_modules
+ui/dist
+
+# Server-local generated artifacts — Dockerfile re-generates these inside the image
+server/src/main/resources/static
+server/src/main/resources/agent
+server/certs/*.pem
+server/certs/*.key
+server/certs/*.crt
+server/postgres/data
+server/monitoring/grafana/data
+server/logs
+**/*.log
+
+# Claude Code session state
+.claude
