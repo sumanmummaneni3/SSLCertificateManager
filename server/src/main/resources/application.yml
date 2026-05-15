@@ -1,6 +1,9 @@
 spring:
   application:
     name: certguard-cloud
+  threads:
+    virtual:
+      enabled: true
   web:
     resources:
       add-mappings: true
@@ -60,6 +63,12 @@ spring:
 
 app:
   dev-mode: ${APP_DEV_MODE:false}
+  sales:
+    webhook:
+      url: ${SALES_WEBHOOK_URL:}
+      secret: ${SALES_WEBHOOK_SECRET:}
+      timeout-ms: ${SALES_WEBHOOK_TIMEOUT_MS:5000}
+      max-retries: ${SALES_WEBHOOK_MAX_RETRIES:3}
   mail:
     from: ${MAIL_FROM:noreply@certguard.cloud}
   jwt:

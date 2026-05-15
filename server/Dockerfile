@@ -9,13 +9,14 @@ COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 
 COPY ui/ ./
-RUN npm run build
+# Explicitly override VITE_DEV_MODE so a stale ui/.env never leaks into the production bundle
+RUN VITE_DEV_MODE=false npm run build
 
 # ─────────────────────────────────────────
 # Stage 2: Build the agent JAR with JDK 17
 # (server bundles the agent JAR for download)
 # ─────────────────────────────────────────
-FROM eclipse-temurin:17-jdk-alpine AS agent-builder
+FROM eclipse-temurin:25-jdk-alpine AS agent-builder
 
 WORKDIR /agent
 
@@ -44,7 +45,7 @@ RUN mvn clean package -DskipTests -q
 # ─────────────────────────────────────────
 # Stage 3: Build the server JAR with JDK 17
 # ─────────────────────────────────────────
-FROM eclipse-temurin:17-jdk-alpine AS builder
+FROM eclipse-temurin:25-jdk-alpine AS builder
 
 WORKDIR /build
 
@@ -78,7 +79,7 @@ RUN mvn clean package -DskipTests -q
 # ─────────────────────────────────────────
 # Stage 4: Runtime with JRE 17
 # ─────────────────────────────────────────
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 
 WORKDIR /app
 
