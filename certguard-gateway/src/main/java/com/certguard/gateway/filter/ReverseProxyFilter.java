@@ -1,20 +1,25 @@
 package com.certguard.gateway.filter;
 
 import com.certguard.gateway.config.ProxyProperties;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.BodyInserters;
-import org.springframework.web.reactive.function.client.WebClient; // constructed directly; no Boot auto-config in Boot 4.0
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
+import javax.net.ssl.SSLException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -41,9 +46,34 @@ public class ReverseProxyFilter implements WebFilter, Ordered {
 
     public ReverseProxyFilter(ProxyProperties props) {
         this.props = props;
-        this.webClient = WebClient.builder()
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
-                .build();
+        this.webClient = buildWebClient();
+    }
+
+    /**
+     * Builds a WebClient backed by a Reactor Netty HttpClient that skips SSL certificate
+     * verification for upstream connections.
+     *
+     * <p>This is intentionally permissive for the internal Docker network hop only.
+     * The certguard-server uses a self-signed certificate; traffic between the gateway
+     * and the server never leaves the private {@code certguard-net} Docker bridge network.
+     * External clients always connect to nginx over a real certificate — the gateway
+     * itself listens on plain HTTP 8080 and nginx terminates TLS externally.
+     */
+    private static WebClient buildWebClient() {
+        try {
+            io.netty.handler.ssl.SslContext sslContext = SslContextBuilder
+                    .forClient()
+                    .trustManager(InsecureTrustManagerFactory.INSTANCE)
+                    .build();
+            HttpClient httpClient = HttpClient.create()
+                    .secure(spec -> spec.sslContext(sslContext));
+            return WebClient.builder()
+                    .clientConnector(new ReactorClientHttpConnector(httpClient))
+                    .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                    .build();
+        } catch (SSLException e) {
+            throw new IllegalStateException("Failed to configure upstream SSL context", e);
+        }
     }
 
     @Override

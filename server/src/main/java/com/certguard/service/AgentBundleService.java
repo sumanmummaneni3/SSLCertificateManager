@@ -23,7 +23,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -67,6 +72,12 @@ public class AgentBundleService {
 
     @Value("${app.agent.bundle.argon2.parallelism:1}")
     private int argon2Parallelism;
+
+    @Value("${app.agent.artifact-url-template:}")
+    private String agentArtifactUrlTemplate;
+
+    @Value("${app.release-tag:latest}")
+    private String appReleaseTag;
 
     public AgentBundleService(AgentInstallKeyRepository installKeyRepository,
                                AgentRepository agentRepository,
@@ -243,9 +254,8 @@ public class AgentBundleService {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
 
-            // certguard-agent.jar
-            ClassPathResource agentJar = new ClassPathResource("agent/certguard-agent.jar");
-            addZipEntry(zos, "certguard-agent.jar", agentJar.getInputStream());
+            // certguard-agent.jar — sourced from classpath or GHCR
+            addZipEntry(zos, "certguard-agent.jar", fetchAgentJarBytes());
 
             // bundle.cgb — the sealed payload
             addZipEntry(zos, "bundle.cgb", installKey.getSealedPayload());
@@ -273,6 +283,49 @@ public class AgentBundleService {
             addZipEntry(zos, "README.txt", readme.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         return baos.toByteArray();
+    }
+
+    /**
+     * Fetches the agent JAR bytes using a two-step strategy:
+     * <ol>
+     *   <li>Try {@code classpath:agent/certguard-agent.jar} — works in current production
+     *       builds and in unit tests (via the fake JAR in {@code src/test/resources/agent/}).</li>
+     *   <li>If the classpath resource is absent and {@code app.agent.artifact-url-template}
+     *       is configured, fetch from that URL (typically a GHCR redirect) using the JDK
+     *       built-in {@link HttpClient}. This is the post-PR-3 production path.</li>
+     *   <li>Both absent → {@link IllegalStateException}.</li>
+     * </ol>
+     */
+    private byte[] fetchAgentJarBytes() throws Exception {
+        ClassPathResource classpathJar = new ClassPathResource("agent/certguard-agent.jar");
+        if (classpathJar.exists()) {
+            log.debug("Loading agent JAR from classpath resource");
+            try (InputStream is = classpathJar.getInputStream()) {
+                return is.readAllBytes();
+            }
+        }
+
+        if (agentArtifactUrlTemplate != null && !agentArtifactUrlTemplate.isBlank()) {
+            String url = String.format(agentArtifactUrlTemplate, appReleaseTag);
+            log.info("Classpath agent JAR not found — fetching from GHCR: {}", url);
+            HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .build();
+            HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            int status = response.statusCode();
+            if (status < 200 || status >= 300) {
+                throw new IOException(
+                        "Failed to fetch agent JAR from GHCR (HTTP " + status + "): " + url);
+            }
+            return response.body();
+        }
+
+        throw new IllegalStateException(
+                "Agent JAR unavailable: no classpath resource and no artifact URL configured");
     }
 
     private void addZipEntry(ZipOutputStream zos, String name, InputStream data) throws Exception {

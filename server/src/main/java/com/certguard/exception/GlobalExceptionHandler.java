@@ -1,11 +1,14 @@
 package com.certguard.exception;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import java.net.URI;
 
 @Slf4j
 @RestControllerAdvice
@@ -45,6 +48,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public ProblemDetail handleNoResource(NoResourceFoundException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(SubscriptionSuspendedException.class)
+    public ProblemDetail handleSubscriptionSuspended(SubscriptionSuspendedException ex, HttpServletRequest request) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        pd.setType(URI.create("https://certguard.dev/problems/subscription-suspended"));
+        pd.setTitle("Subscription Suspended");
+        return pd;
     }
 
     @ExceptionHandler(Exception.class)

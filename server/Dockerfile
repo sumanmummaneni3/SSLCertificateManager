@@ -1,49 +1,5 @@
 # ─────────────────────────────────────────
-# Stage 1: Build the React UI with Node 20
-# ─────────────────────────────────────────
-FROM node:20-alpine AS ui-builder
-
-WORKDIR /ui
-
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci
-
-COPY ui/ ./
-# Explicitly override VITE_DEV_MODE so a stale ui/.env never leaks into the production bundle
-RUN VITE_DEV_MODE=false npm run build
-
-# ─────────────────────────────────────────
-# Stage 2: Build the agent JAR with JDK 17
-# (server bundles the agent JAR for download)
-# ─────────────────────────────────────────
-FROM eclipse-temurin:25-jdk-alpine AS agent-builder
-
-WORKDIR /agent
-
-ARG MAVEN_VERSION=3.9.8
-ARG MAVEN_SHA512=7d171def9b85846bf757a2cec94b7529371068a0670df14682447224e57983528e97a6d1b850327e4ca02b139abaab7fcb93c4315119e6f0ffb3f0cbc0d0b9a2
-RUN set -eux; \
-    apk add --no-cache curl; \
-    curl -fsSL --retry 3 --retry-delay 2 \
-        -o /tmp/maven.tar.gz \
-        https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz; \
-    echo "${MAVEN_SHA512}  /tmp/maven.tar.gz" | sha512sum -c -; \
-    tar -xzf /tmp/maven.tar.gz -C /opt; \
-    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven; \
-    rm /tmp/maven.tar.gz; \
-    apk del curl
-
-ENV PATH="/opt/maven/bin:${PATH}" \
-    MAVEN_HOME="/opt/maven"
-
-COPY agent/pom.xml .
-RUN mvn dependency:go-offline -q
-
-COPY agent/src ./src
-RUN mvn clean package -DskipTests -q
-
-# ─────────────────────────────────────────
-# Stage 3: Build the server JAR with JDK 17
+# Stage 1: Build the server JAR with JDK 25
 # ─────────────────────────────────────────
 FROM eclipse-temurin:25-jdk-alpine AS builder
 
@@ -65,19 +21,15 @@ RUN set -eux; \
 ENV PATH="/opt/maven/bin:${PATH}" \
     MAVEN_HOME="/opt/maven"
 
-COPY server/pom.xml .
+COPY pom.xml .
 RUN mvn dependency:go-offline -q
 
-COPY server/src ./src
-
-# Inject UI assets and agent JAR before packaging so they land inside app.jar
-COPY --from=ui-builder /ui/dist/ ./src/main/resources/static/
-COPY --from=agent-builder /agent/target/certguard-agent.jar ./src/main/resources/agent/certguard-agent.jar
+COPY src ./src
 
 RUN mvn clean package -DskipTests -q
 
 # ─────────────────────────────────────────
-# Stage 4: Runtime with JRE 17
+# Stage 2: Runtime with JRE 25
 # ─────────────────────────────────────────
 FROM eclipse-temurin:25-jre-alpine
 

@@ -1,0 +1,10 @@
+target/
+*.md
+*.txt
+.idea/
+.git/
+postgres/
+rabbitmq/
+nginx/
+monitoring/
+certs/

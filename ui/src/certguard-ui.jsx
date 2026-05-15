@@ -607,8 +607,33 @@ const styles = `
     display: flex; align-items: flex-start; gap: 10px;
   }
 
-  .alert-error { background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.3); color: #ff8a8a; }
-  .alert-info  { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); color: var(--accent); }
+  .alert-error   { background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.3); color: #ff8a8a; }
+  .alert-info    { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); color: var(--accent); }
+  .alert-warning { background: rgba(255,215,64,0.1); border: 1px solid rgba(255,215,64,0.3); color: var(--yellow); }
+
+  .badge-pending-upgrade {
+    background: rgba(255,215,64,0.1);
+    color: var(--yellow);
+    border: 1px solid rgba(255,215,64,0.3);
+  }
+
+  .msp-locked {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: default;
+  }
+
+  .badge-locked {
+    font-size: 0.6rem;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255,82,82,0.1);
+    border: 1px solid rgba(255,82,82,0.25);
+    color: var(--red);
+    margin-left: 4px;
+    vertical-align: middle;
+  }
 
   /* ── ANIMATIONS ── */
   @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
@@ -911,8 +936,23 @@ const styles = `
 
   .org-type-card.selected {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--color-primary) 6%, var(--surface2));
+    border-width: 3px;
+    background: color-mix(in srgb, var(--color-primary) 14%, var(--surface2));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 15%, transparent);
   }
+  .org-type-card.selected .org-type-card-title {
+    color: var(--accent);
+  }
+  .org-type-card-check {
+    display: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px; font-weight: 700;
+    align-items: center; justify-content: center;
+    float: right; margin-top: -2px;
+  }
+  .org-type-card.selected .org-type-card-check { display: flex; }
 
   .org-type-card-icon {
     font-size: 1.5rem; margin-bottom: 0.5rem;
@@ -955,6 +995,13 @@ const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      // 402 subscription-suspended — surface a user-friendly message
+      if (res.status === 402 && (err.type || "").includes("subscription-suspended")) {
+        const suspendedError = new Error("Scans are blocked — subscription is suspended. Contact support to reactivate.");
+        suspendedError.status = 402;
+        suspendedError.problemDetail = err;
+        throw suspendedError;
+      }
       // ProblemDetail (RFC 9457) uses title + detail; fall back to message for older endpoints
       const msg = err.detail || err.title || err.message || `HTTP ${res.status}: ${res.statusText}`;
       const error = new Error(msg);
@@ -965,8 +1012,8 @@ const api = {
     const text = await res.text();
     return text ? JSON.parse(text) : null;
   },
-  getDevToken: (email) =>
-    api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}`),
+  getDevToken: (email, resetOnboarding = false) =>
+    api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}&resetOnboarding=${resetOnboarding}`),
   logout: (token) => api.call("POST", "/api/v1/auth/logout", null, token),
   getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
@@ -982,6 +1029,7 @@ const api = {
   },
   getTargets:    (token, opts) => api.call("GET",  "/api/v1/targets?size=100", null, token, opts),
   createTarget:  (data, token, opts) => api.call("POST", "/api/v1/targets",    data, token, opts),
+  createTargetForOrg: (orgId, data, token) => api.call("POST", `/api/v1/organizations/${orgId}/targets`, data, token),
   updateTarget:  (id, data, token, opts) => api.call("PUT", `/api/v1/targets/${id}`, data, token, opts),
   deleteTarget:  (id, token, opts) => api.call("DELETE", `/api/v1/targets/${id}`, null, token, opts),
   scanTarget:    (id, token, opts) => api.call("POST", `/api/v1/targets/${id}/scan`, null, token, opts),
@@ -1018,6 +1066,7 @@ const api = {
     getOrgDetail:(token, orgId) => api.call("GET", `/api/v1/admin/orgs/${orgId}`, null, token),
     updateQuota: (token, orgId, body) => api.call("PUT", `/api/v1/admin/orgs/${orgId}/quota`, body, token),
     getAuditLog: (token, params) => api.call("GET", `/api/v1/admin/audit?${new URLSearchParams(params)}`, null, token),
+    promoteMsp:  (token, orgId) => api.call("PATCH", `/api/v1/admin/orgs/${orgId}/promote-msp`, null, token),
   },
 };
 
@@ -1092,11 +1141,22 @@ function DaysBar({ days }) {
 
 // ─── LAUNCH SCREEN ───────────────────────────────────────────────────────────
 function LaunchScreen({ onToken }) {
-  const [email, setEmail]     = useState("admin@certguard.local");
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState("");
-  const [typed, setTyped]     = useState("");
+  const [email, setEmail]               = useState("admin@certguard.local");
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState("");
+  const [typed, setTyped]               = useState("");
+  const [resetOnboarding, setResetOnboarding] = useState(false);
+  // Runtime dev-mode flag — fetched from /api/v1/auth/config so the login form
+  // always matches the server's actual mode regardless of how the bundle was built.
+  const [devMode, setDevMode] = useState(null); // null = loading
   const tagline = "TLS certificate monitoring for teams.";
+
+  useEffect(() => {
+    fetch("/api/v1/auth/config")
+      .then(r => r.json())
+      .then(d => setDevMode(!!d.devMode))
+      .catch(() => setDevMode(false));
+  }, []);
 
   // Typewriter effect
   useEffect(() => {
@@ -1111,7 +1171,7 @@ function LaunchScreen({ onToken }) {
   const handleDevLogin = async () => {
     setError(""); setLoading(true);
     try {
-      const data = await api.getDevToken(email);
+      const data = await api.getDevToken(email, resetOnboarding);
       if (data?.token) onToken(data.token, data.orgId, data.email);
       else setError("No token in response");
     } catch (e) {
@@ -1138,7 +1198,9 @@ function LaunchScreen({ onToken }) {
         <div className="launch-title">Welcome back</div>
         <p className="launch-sub">Sign in to access your certificate dashboard.</p>
 
-        {DEV_MODE ? (
+        {devMode === null ? (
+          <div style={{ textAlign: "center", padding: "1rem" }}><Spinner /></div>
+        ) : devMode ? (
           <>
             <div className="dev-badge">⚡ DEV MODE — Google OAuth bypassed</div>
             {error && <div className="alert alert-error">⚠ {error}</div>}
@@ -1152,13 +1214,17 @@ function LaunchScreen({ onToken }) {
                 placeholder="your@email.com"
               />
             </div>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", color: "var(--muted)", cursor: "pointer", marginTop: "0.5rem" }}>
+              <input
+                type="checkbox"
+                checked={resetOnboarding}
+                onChange={e => setResetOnboarding(e.target.checked)}
+              />
+              Reset onboarding (re-trigger setup flow)
+            </label>
             <button className="btn btn-primary" onClick={handleDevLogin} disabled={loading}>
               {loading ? <><Spinner /> Authenticating...</> : "→ Get Dev Token"}
             </button>
-            <div className="divider" />
-            <p className="text-muted text-sm" style={{ textAlign: "center" }}>
-              Set <code style={{ color: "var(--accent)" }}>DEV_MODE = false</code> to enable Google OAuth
-            </p>
           </>
         ) : (
           <>
@@ -1231,7 +1297,7 @@ function OrgSetup({ token, onDone, toast }) {
                 onClick={() => setOrgType("SINGLE")}
               >
                 <div className="org-type-card-icon" aria-hidden="true">◈</div>
-                <div className="org-type-card-title">Standard Organization</div>
+                <div className="org-type-card-title">Standard Organization <span className="org-type-card-check" aria-hidden="true">✓</span></div>
                 <div className="org-type-card-desc">Manage certificates for your own infrastructure</div>
               </button>
               <button
@@ -1241,7 +1307,7 @@ function OrgSetup({ token, onDone, toast }) {
                 onClick={() => setOrgType("MSP")}
               >
                 <div className="org-type-card-icon" aria-hidden="true">⬡</div>
-                <div className="org-type-card-title">MSP</div>
+                <div className="org-type-card-title">MSP <span className="org-type-card-check" aria-hidden="true">✓</span></div>
                 <div className="org-type-card-desc">Manage certificates across multiple client organizations</div>
               </button>
             </div>
@@ -1249,7 +1315,7 @@ function OrgSetup({ token, onDone, toast }) {
             {orgType === "MSP" && (
               <div className="alert alert-info" style={{ marginBottom: "1rem" }}>
                 <span aria-hidden="true">ℹ</span>
-                <span>MSP accounts require sales activation. Our team will reach out within one business day to activate MSP features.</span>
+                <span>MSP accounts start on a free trial — manage up to 10 certificates across all client organizations at no cost. Upgrade anytime to remove limits.</span>
               </div>
             )}
 
@@ -1406,7 +1472,7 @@ function isRfc1918(h) {
 }
 
 // ─── ADD TARGET MODAL ─────────────────────────────────────────────────────────
-function AddTargetModal({ token, onClose, onAdded, toast }) {
+function AddTargetModal({ token, onClose, onAdded, toast, isMsp }) {
   const [host, setHost]           = useState("");
   const [port, setPort]           = useState("443");
   const [desc, setDesc]           = useState("");
@@ -1415,23 +1481,32 @@ function AddTargetModal({ token, onClose, onAdded, toast }) {
   const [agents, setAgents]       = useState([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
+  const [clientOrgs, setClientOrgs] = useState([]);
+  const [targetOrgId, setTargetOrgId] = useState("");
 
   useEffect(() => {
     api.listAgents(token).then(setAgents).catch(() => {});
-  }, [token]);
+    if (isMsp) {
+      api.msp.listClients(token).then(setClientOrgs).catch(() => {});
+    }
+  }, [token, isMsp]);
 
   const handleAdd = async () => {
+    if (isMsp && !targetOrgId) { setError("Please select a client organization"); return; }
     if (!host.trim()) { setError("Host is required"); return; }
     if (isPrivate && !agentId) { setError("Select an agent for private targets"); return; }
     setError(""); setLoading(true);
     try {
-      const target = await api.createTarget({
+      const payload = {
         host: host.trim().toLowerCase(),
         port: parseInt(port) || 443,
         isPrivate,
         agentId: isPrivate ? agentId : undefined,
         description: desc.trim() || undefined,
-      }, token);
+      };
+      const target = isMsp
+        ? await api.createTargetForOrg(targetOrgId, payload, token)
+        : await api.createTarget(payload, token);
       toast(`Target added: ${target.host}:${target.port}`, "success");
       onAdded(target);
     } catch (e) {
@@ -1451,6 +1526,16 @@ function AddTargetModal({ token, onClose, onAdded, toast }) {
         </p>
 
         {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
+
+        {isMsp && (
+          <div className="field">
+            <label htmlFor="target-org">Client Organization <span style={{color:"var(--red)"}}>*</span></label>
+            <select id="target-org" value={targetOrgId} onChange={e => setTargetOrgId(e.target.value)}>
+              <option value="">— Select client org —</option>
+              {clientOrgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+        )}
 
         <div className="field">
           <label htmlFor="add-host">Host *</label>
@@ -1655,6 +1740,10 @@ function Dashboard({ token, org, me, toast, onLogout }) {
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [locations, setLocations]         = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(false);
+  // Upgrade banner dismissal (persisted per session)
+  const [upgradeBannerDismissed, setUpgradeBannerDismissed] = useState(
+    () => sessionStorage.getItem("cg-upgrade-banner-dismissed") === "true"
+  );
   // Platform admin impersonation state
   const [actingAsOrgId, setActingAsOrgId]   = useState(null);
   const [actingAsOrgName, setActingAsOrgName] = useState(null);
@@ -1750,6 +1839,15 @@ function Dashboard({ token, org, me, toast, onLogout }) {
     setView("platform-admin-orgs");
   };
 
+  const dismissUpgradeBanner = () => {
+    sessionStorage.setItem("cg-upgrade-banner-dismissed", "true");
+    setUpgradeBannerDismissed(true);
+  };
+
+  const showUpgradeBanner = !upgradeBannerDismissed && (
+    me?.permissions?.mspUpgradePending || me?.permissions?.quotaUpgradePending
+  );
+
   if (loading) {
     return (
       <div className="app">
@@ -1780,14 +1878,37 @@ function Dashboard({ token, org, me, toast, onLogout }) {
             </button>
           </div>
         )}
+        {showUpgradeBanner && (
+          <div
+            className="alert alert-warning"
+            role="status"
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "1rem 1.5rem 0" }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {me?.permissions?.mspUpgradePending && (
+                <span>Your MSP upgrade request is pending Sales review. We&apos;ll notify you when it&apos;s approved.</span>
+              )}
+              {me?.permissions?.quotaUpgradePending && (
+                <span>Your certificate quota increase request is pending review.</span>
+              )}
+            </div>
+            <button
+              onClick={dismissUpgradeBanner}
+              aria-label="Dismiss upgrade banner"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--yellow)", fontSize: "1.1rem", padding: "0 0 0 1rem", lineHeight: 1, flexShrink: 0 }}
+            >
+              &times;
+            </button>
+          </div>
+        )}
         {view === "dashboard" && (
           <DashboardView dash={dash} targets={targets} onScan={triggerScan}
-            scanning={scanning} onAddTarget={() => setShowAdd(true)} me={me} />
+            scanning={scanning} onAddTarget={() => setShowAdd(true)} me={me} org={org} />
         )}
         {view === "targets" && (
           <TargetsView targets={targets} onScan={triggerScan} scanning={scanning}
             onAdd={() => setShowAdd(true)} onDelete={setDeleteId}
-            onEdit={setEditTarget} onRefresh={load} me={me} />
+            onEdit={setEditTarget} onRefresh={load} me={me} org={org} />
         )}
         {view === "certs" && (
           <CertsView certs={certs} loading={certsLoading} onRefresh={loadCerts} />
@@ -1801,7 +1922,7 @@ function Dashboard({ token, org, me, toast, onLogout }) {
             onRefresh={loadLocations} toast={toast} me={me} />
         )}
         {view === "team"     && <TeamView     token={token} org={org} toast={toast} me={me} />}
-        {view === "settings" && <SettingsView token={token} org={org} toast={toast} />}
+        {view === "settings" && <SettingsView token={token} org={org} me={me} toast={toast} />}
         {view === "msp-dashboard" && <MspDashboardView token={token} me={me} />}
         {view === "msp-orgs"      && <MspOrgsView     token={token} me={me} toast={toast} />}
         {view === "msp-targets"   && <MspTargetsView   token={token} me={me} />}
@@ -1830,7 +1951,8 @@ function Dashboard({ token, org, me, toast, onLogout }) {
 
       {showAdd && (
         <AddTargetModal token={token} onClose={() => setShowAdd(false)}
-          onAdded={() => { setShowAdd(false); load(); }} toast={toast} />
+          onAdded={() => { setShowAdd(false); load(); }} toast={toast}
+          isMsp={org?.orgType === "MSP"} />
       )}
 
       {editTarget && (
@@ -1916,6 +2038,7 @@ function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout }) {
   const themeVars = SIDEBAR_THEMES[theme]?.vars || SIDEBAR_THEMES.dark.vars;
   const isMsp = org?.orgType === "MSP";
   const isPlatformAdmin = me?.platformAdmin === true;
+  const mspUpgradePending = me?.permissions?.mspUpgradePending === true;
   let groups = [...NAV_GROUPS];
   if (isMsp) groups = [...groups, MSP_GROUP];
   if (isPlatformAdmin) groups = [...groups, ADMIN_GROUP];
@@ -1925,14 +2048,32 @@ function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout }) {
         <div className="logo-icon" aria-hidden="true">🔐</div>
         <div className="logo-text">OOPSSSL</div>
       </div>
-      {groups.map((group) => (
-        <div key={group.label}>
-          <div className="nav-section" aria-hidden="true">{group.label}</div>
-          {group.items.map((item) => (
-            <NavItem key={item.id} item={item} active={view === item.id} onView={onView} />
-          ))}
-        </div>
-      ))}
+      {groups.map((group) => {
+        const isMspGroup = group.label === "MSP";
+        const locked = isMspGroup && mspUpgradePending;
+        return (
+          <div key={group.label}>
+            <div className="nav-section" aria-hidden="true">
+              {group.label}
+              {locked && <span className="badge-locked" aria-label="MSP upgrade pending">[locked]</span>}
+            </div>
+            {group.items.map((item) =>
+              locked ? (
+                <div
+                  key={item.id}
+                  className="nav-item msp-locked"
+                  aria-disabled="true"
+                  title="MSP upgrade pending approval"
+                >
+                  <span aria-hidden="true">{item.icon}</span>{item.label}
+                </div>
+              ) : (
+                <NavItem key={item.id} item={item} active={view === item.id} onView={onView} />
+              )
+            )}
+          </div>
+        );
+      })}
       <div className="sidebar-footer">
         <div className="org-tag"><span aria-hidden="true">🏢</span> <span>{org?.name || "My Org"}</span></div>
         {org?.email && <div className="org-tag" style={{ fontSize: "0.62rem" }}>{org.email}</div>}
@@ -1977,7 +2118,8 @@ function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout }) {
   );
 }
 
-function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me }) {
+function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me, org }) {
+  const showOrgCol = org?.orgType === "MSP" || me?.platformAdmin === true;
   const stats = dash ? [
     { label: "Total Targets",  value: dash.totalTargets, cls: "total"      },
     { label: "Valid",          value: dash.valid,        cls: "valid"      },
@@ -2028,6 +2170,7 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me }) {
             <table>
               <thead>
                 <tr>
+                  {showOrgCol && <th>Org</th>}
                   <th>Host</th>
                   <th>Type</th>
                   <th>Status</th>
@@ -2041,6 +2184,7 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me }) {
                   const cert = t.latestCertificate;
                   return (
                     <tr key={t.id}>
+                      {showOrgCol && <td>{t.orgName || "—"}</td>}
                       <td>
                         <div className="host-cell">{t.host}</div>
                         <div className="mono">:{t.port} {t.isPrivate ? "🔒" : "🌐"}</div>
@@ -2073,8 +2217,10 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me }) {
   );
 }
 
-function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me }) {
+function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org }) {
   const canWrite = me == null || me?.permissions?.canWriteTargets;
+  const scansBlocked = me?.permissions?.scansBlocked === true;
+  const showOrgCol = org?.orgType === "MSP" || me?.platformAdmin === true;
   return (
     <>
       <div className="page-header">
@@ -2085,7 +2231,14 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
           {canWrite && (
-            <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Add Target</button>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={scansBlocked ? undefined : onAdd}
+              disabled={scansBlocked}
+              title={scansBlocked ? "Scans disabled — subscription suspended" : undefined}
+            >
+              + Add Target
+            </button>
           )}
         </div>
       </div>
@@ -2104,6 +2257,7 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
             <table>
               <thead>
                 <tr>
+                  {showOrgCol && <th>Org</th>}
                   <th>Host</th>
                   <th>Port</th>
                   <th>Type</th>
@@ -2119,6 +2273,7 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
                   const cert = t.latestCertificate;
                   return (
                     <tr key={t.id}>
+                      {showOrgCol && <td><span className="badge badge-domain">{t.orgName || "—"}</span></td>}
                       <td>
                         <div className="host-cell">{t.host}</div>
                         {t.description && <div className="mono">{t.description}</div>}
@@ -2156,8 +2311,8 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
                         <div className="row-actions">
                           {canWrite && (
                             <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
-                              onClick={() => onScan(t)} disabled={scanning[t.id]}
-                              title={t.isPrivate ? "Queue scan job for agent" : "Trigger scan"}>
+                              onClick={() => onScan(t)} disabled={scanning[t.id] || scansBlocked}
+                              title={scansBlocked ? "Scans disabled — subscription suspended" : (t.isPrivate ? "Queue scan job for agent" : "Trigger scan")}>
                               {scanning[t.id] ? <Spinner /> : "⟳"}
                             </button>
                           )}
@@ -3041,14 +3196,14 @@ function SettingsField({ label, field, type = "text", placeholder, form, errors,
   );
 }
 
-// eslint-disable-next-line no-unused-vars
-function SettingsView({ token, org, toast }) {
+function SettingsView({ token, org, me, toast }) {
   const [profile, setProfile] = useState(null);
   const [form, setForm]       = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [dirty, setDirty]     = useState(false);
   const [errors, setErrors]   = useState({});
+  const [showMspUpgradeModal, setShowMspUpgradeModal] = useState(false);
 
   useEffect(() => {
     api.getOrgProfile(token)
@@ -3149,6 +3304,25 @@ function SettingsView({ token, org, toast }) {
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}>{profile?.maxCertificateQuota ?? "—"}</span>
                 </div>
               </div>
+              {org?.orgType === "SINGLE" && (
+                <div style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+                  <div style={{ color: "var(--muted)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>Account Type</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <Badge type="pending">Standard</Badge>
+                    {me?.permissions?.mspUpgradePending ? (
+                      <Badge type="pending">MSP Upgrade Pending</Badge>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setShowMspUpgradeModal(true)}
+                      >
+                        Upgrade to MSP
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -3164,7 +3338,74 @@ function SettingsView({ token, org, toast }) {
           </form>
         )}
       </div>
+      {showMspUpgradeModal && (
+        <MspUpgradeModal
+          token={token}
+          onClose={() => setShowMspUpgradeModal(false)}
+          toast={toast}
+        />
+      )}
     </>
+  );
+}
+
+function MspUpgradeModal({ token, onClose, toast }) {
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async () => {
+    setError(""); setLoading(true);
+    try {
+      await api.call("POST", "/api/v1/org/request-msp-upgrade", { reason: reason.trim() || null }, token);
+      toast("MSP upgrade request submitted. Our team will review it shortly.", "success");
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="msp-upgrade-title">
+        <div className="modal-title" id="msp-upgrade-title">Upgrade to MSP</div>
+        <p className="modal-sub">
+          Request an upgrade to an MSP account to manage certificates across multiple client organizations.
+          Our team will review your request and get in touch within one business day.
+        </p>
+        {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
+        <div className="field">
+          <label htmlFor="msp-upgrade-reason">Reason / Use case (optional)</label>
+          <textarea
+            id="msp-upgrade-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Tell us about your use case..."
+            rows={4}
+            style={{
+              width: "100%",
+              background: "var(--surface2)",
+              border: "1px solid var(--border2)",
+              borderRadius: "var(--radius)",
+              color: "var(--text)",
+              fontFamily: "var(--font-head)",
+              fontSize: "0.85rem",
+              padding: "10px 14px",
+              outline: "none",
+              resize: "vertical",
+            }}
+          />
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+            {loading ? <><Spinner /> Submitting...</> : "Submit Request"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3176,6 +3417,7 @@ function MspOrgsView({ token, me, toast }) {
   const [editClient, setEditClient] = useState(null);
   const [archiveId, setArchiveId] = useState(null);
   const [archiveName, setArchiveName] = useState("");
+  const upgradePending = me?.permissions?.mspUpgradePending === true;
 
   const canManage = me == null || me?.permissions?.canManageMspClients ||
     me?.user?.role === "ADMIN";
@@ -3201,6 +3443,19 @@ function MspOrgsView({ token, me, toast }) {
     setArchiveId(null);
     setArchiveName("");
   };
+
+  if (upgradePending) {
+    return (
+      <>
+        <div className="page-header"><div className="page-title">Client Organizations</div></div>
+        <div className="empty" style={{ padding: "4rem 2rem" }}>
+          <div className="empty-icon" aria-hidden="true">⬡</div>
+          <div className="empty-title">MSP Upgrade Pending</div>
+          <p className="empty-sub">Your MSP upgrade request is under review by our team. You&apos;ll receive an email once it&apos;s approved and MSP features are unlocked.</p>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -3337,7 +3592,7 @@ function MspClientModal({ token, client, onClose, onSaved }) {
     if (!name.trim()) { setError("Organization name is required"); return; }
     setError(""); setLoading(true);
     try {
-      const data = { orgName: name.trim(), contactEmail: email.trim() || null, country: country.trim() || null };
+      const data = { name: name.trim(), contactEmail: email.trim() || null, country: country.trim() || null };
       if (isEdit) {
         await api.msp.updateClient(client.id, data, token);
       } else {
@@ -3406,16 +3661,31 @@ function MspClientModal({ token, client, onClose, onSaved }) {
 }
 
 // ─── MSP DASHBOARD VIEW ───────────────────────────────────────────────────────
-function MspDashboardView({ token }) {
+function MspDashboardView({ token, me }) {
   const [dash, setDash]     = useState(null);
   const [loading, setLoading] = useState(true);
+  const upgradePending = me?.permissions?.mspUpgradePending === true;
 
   useEffect(() => {
+    if (upgradePending) return;
     api.msp.getDashboard(token)
       .then(setDash)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, upgradePending]);
+
+  if (upgradePending) {
+    return (
+      <>
+        <div className="page-header"><div className="page-title">MSP Dashboard</div></div>
+        <div className="empty" style={{ padding: "4rem 2rem" }}>
+          <div className="empty-icon" aria-hidden="true">⬡</div>
+          <div className="empty-title">MSP Upgrade Pending</div>
+          <p className="empty-sub">Your MSP upgrade request is under review by our team. You&apos;ll receive an email once it&apos;s approved and MSP features are unlocked.</p>
+        </div>
+      </>
+    );
+  }
 
   const stats = dash ? [
     { label: "Child Orgs",     value: dash.childOrgCount,  cls: "total"       },
@@ -3504,13 +3774,15 @@ function MspDashboardView({ token }) {
 }
 
 // ─── MSP TARGETS VIEW ────────────────────────────────────────────────────────
-function MspTargetsView({ token }) {
+function MspTargetsView({ token, me }) {
   const [targets, setTargets]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [page, setPage]         = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const upgradePending = me?.permissions?.mspUpgradePending === true;
 
   const load = useCallback(async (p) => {
+    if (upgradePending) return;
     setLoading(true);
     try {
       const data = await api.msp.getTargets(token, p, 20);
@@ -3518,12 +3790,25 @@ function MspTargetsView({ token }) {
       setTotalPages(data?.totalPages ?? 0);
     } catch { /* silently ignore — no toast prop */ }
     finally { setLoading(false); }
-  }, [token]);
+  }, [token, upgradePending]);
 
   useEffect(() => { load(page); }, [load, page]);
 
   const handlePrev = () => { if (page > 0) setPage((p) => p - 1); };
   const handleNext = () => { if (page < totalPages - 1) setPage((p) => p + 1); };
+
+  if (upgradePending) {
+    return (
+      <>
+        <div className="page-header"><div className="page-title">All Targets</div></div>
+        <div className="empty" style={{ padding: "4rem 2rem" }}>
+          <div className="empty-icon" aria-hidden="true">⬡</div>
+          <div className="empty-title">MSP Upgrade Pending</div>
+          <p className="empty-sub">Your MSP upgrade request is under review by our team. You&apos;ll receive an email once it&apos;s approved and MSP features are unlocked.</p>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -3801,8 +4086,9 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
   const [orgs, setOrgs]         = useState([]);
   const [loading, setLoading]   = useState(true);
   const [apiUnavailable, setApiUnavailable] = useState(false);
-  const [tab, setTab]           = useState("all"); // all | msps | single
+  const [tab, setTab]           = useState("all"); // all | msps | single | pending
   const [search, setSearch]     = useState("");
+  const [activatingId, setActivatingId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -3861,6 +4147,21 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
     );
   }
 
+  const handleActivateMsp = async (orgId, orgName) => {
+    setActivatingId(orgId);
+    try {
+      await api.admin.promoteMsp(token, orgId);
+      toast(`MSP activated for ${orgName}`, "success");
+      // Refetch orgs list
+      const data = await api.admin.getOrgTree(token);
+      setOrgs(Array.isArray(data) ? data : (data?.content || []));
+    } catch (e) {
+      toast("Activate MSP failed: " + e.message, "error");
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
   // Flatten tree for display — each org may have children[] array for MSP clients
   const flatAll = [];
   const flattenOrg = (o, depth = 0) => {
@@ -3872,8 +4173,9 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
   const q = search.trim().toLowerCase();
   const filtered = flatAll.filter((o) => {
     if (q && !o.name?.toLowerCase().includes(q)) return false;
-    if (tab === "msps")   return o.orgType === "MSP";
-    if (tab === "single") return o.orgType !== "MSP";
+    if (tab === "msps")    return o.orgType === "MSP";
+    if (tab === "single")  return o.orgType !== "MSP";
+    if (tab === "pending") return o.subscriptionStatus === "PENDING_ACTIVATION";
     return true;
   });
 
@@ -3898,9 +4200,10 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
       <div className="page-content">
         <div className="admin-tabs" role="tablist" aria-label="Organisation filter">
           {[
-            { id: "all",    label: "All" },
-            { id: "msps",   label: "MSPs" },
-            { id: "single", label: "Single" },
+            { id: "all",     label: "All" },
+            { id: "msps",    label: "MSPs" },
+            { id: "single",  label: "Single" },
+            { id: "pending", label: "Pending" },
           ].map(({ id, label }) => (
             <button
               key={id}
@@ -3929,6 +4232,7 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
                 <tr>
                   <th>Name</th>
                   <th>Type</th>
+                  <th>Status</th>
                   <th>Parent</th>
                   <th>Targets</th>
                   <th>Agents</th>
@@ -3950,19 +4254,38 @@ function PlatformOrgsView({ token, toast, onManageOrg }) {
                     <td>
                       <Badge type={o.orgType === "MSP" ? "active" : "pending"}>{o.orgType || "SINGLE"}</Badge>
                     </td>
+                    <td>
+                      {o.subscriptionStatus ? (
+                        <Badge type={o.subscriptionStatus === "ACTIVE" ? "active" : o.subscriptionStatus === "SUSPENDED" ? "revoked" : "pending"}>
+                          {o.subscriptionStatus}
+                        </Badge>
+                      ) : <span className="text-muted">—</span>}
+                    </td>
                     <td className="mono" style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
                       {o.parentName || "—"}
                     </td>
                     <td className="mono">{o.targetCount ?? 0}</td>
                     <td className="mono">{o.agentCount ?? 0}</td>
                     <td>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => onManageOrg(o.id, o.name)}
-                        aria-label={`Manage organisation ${o.name}`}
-                      >
-                        Manage
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => onManageOrg(o.id, o.name)}
+                          aria-label={`Manage organisation ${o.name}`}
+                        >
+                          Manage
+                        </button>
+                        {o.subscriptionStatus === "PENDING_ACTIVATION" && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleActivateMsp(o.id, o.name)}
+                            disabled={activatingId === o.id}
+                            aria-label={`Activate MSP for ${o.name}`}
+                          >
+                            {activatingId === o.id ? <Spinner /> : "Activate MSP"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

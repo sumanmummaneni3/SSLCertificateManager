@@ -40,6 +40,7 @@ public class TargetService {
     private final AgentScanJobRepository scanJobRepository;
     private final LocationRepository locationRepository;
     private final SslScannerService sslScannerService;
+    private final SubscriptionGuard subscriptionGuard;
 
     @Transactional(readOnly = true)
     public Page<TargetResponse> listTargets(UUID orgId, Pageable pageable) {
@@ -61,6 +62,7 @@ public class TargetService {
 
     @Transactional
     public TargetResponse createTarget(UUID orgId, CreateTargetRequest request) {
+        subscriptionGuard.assertScansAllowed(orgId);
         enforceTargetQuota(orgId);
         String host = request.getHost().trim().toLowerCase();
 
@@ -198,6 +200,7 @@ public class TargetService {
     public String triggerScan(UUID orgId, UUID targetId,
                                SslScannerService sslScannerService,
                                AgentService agentService) {
+        subscriptionGuard.assertScansAllowed(orgId);
         Target target = findTargetForOrg(orgId, targetId);
 
         if (!target.getIsPrivate()) {

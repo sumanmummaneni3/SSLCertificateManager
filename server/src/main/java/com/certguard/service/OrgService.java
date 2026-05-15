@@ -119,7 +119,7 @@ public class OrgService {
 
     @Transactional
     public OrgResponse updateCertificateQuota(UUID orgId, int newQuota) {
-        if (newQuota < 1) throw new IllegalArgumentException("Certificate quota must be at least 1");
+        if (newQuota < 0) throw new IllegalArgumentException("Certificate quota must be at least 0");
         Subscription sub = subscriptionRepository.findByOrganizationId(orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Subscription not found for org: " + orgId));
         sub.setMaxCertificateQuota(newQuota);

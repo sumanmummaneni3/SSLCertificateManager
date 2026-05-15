@@ -63,11 +63,14 @@ class AgentBundleServiceTest {
                 orgRepository, locationRepository, bundleCrypto, passwordEncoder);
 
         // Inject @Value fields via reflection
-        ReflectionTestUtils.setField(service, "downloadUrlTtlSeconds", 3600);
-        ReflectionTestUtils.setField(service, "baseUrl",               "https://certguard.example.com:8443");
-        ReflectionTestUtils.setField(service, "argon2MemoryKib",       65536);
-        ReflectionTestUtils.setField(service, "argon2Iterations",      3);
-        ReflectionTestUtils.setField(service, "argon2Parallelism",     1);
+        ReflectionTestUtils.setField(service, "downloadUrlTtlSeconds",    3600);
+        ReflectionTestUtils.setField(service, "baseUrl",                   "https://certguard.example.com:8443");
+        ReflectionTestUtils.setField(service, "argon2MemoryKib",           65536);
+        ReflectionTestUtils.setField(service, "argon2Iterations",          3);
+        ReflectionTestUtils.setField(service, "argon2Parallelism",         1);
+        // Force classpath path in tests: blank template means GHCR fetch is skipped
+        ReflectionTestUtils.setField(service, "agentArtifactUrlTemplate", "");
+        ReflectionTestUtils.setField(service, "appReleaseTag",            "test");
 
         orgId  = UUID.randomUUID();
         userId = UUID.randomUUID();

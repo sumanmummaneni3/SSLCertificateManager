@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is **not** a multi-module Maven build — it is a working directory containing two independent source drops plus design docs:
 
-- `certguard-server-source-20260419-0737/` — CertGuard Cloud server (Spring Boot 4.0.3, Java 17). Own `pom.xml`, `Dockerfile`, `docker-compose.yml`.
-- `certguard-agent-source-20260419-0737/` — CertGuard Agent (plain Java 17, no Spring). Own `pom.xml` and a `certguard-agent.service` systemd unit.
+- `certguard-server-source-20260419-0737/` — CertGuard Cloud server (Spring Boot 4.0.3, Java 25 LTS). Own `pom.xml`, `Dockerfile`, `docker-compose.yml`.
+- `certguard-agent-source-20260419-0737/` — CertGuard Agent (plain Java 25 LTS, no Spring). Own `pom.xml` and a `certguard-agent.service` systemd unit.
 - `docs/architecture/{HLD.md,LLD.md,GAPS.md}` — authoritative design docs. `docs/BACKEND_REVIEW.md`, `docs/TEST_PLAN.md`.
 - `docs/perf/` — `k6-api-smoke.js` and `postman-collection.json` for API/perf testing.
 - The `*.zip` files are snapshots of the two source trees; edit the unzipped directories.

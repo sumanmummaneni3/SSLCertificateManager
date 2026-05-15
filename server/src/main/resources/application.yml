@@ -63,6 +63,8 @@ spring:
 
 app:
   dev-mode: ${APP_DEV_MODE:false}
+  # The release tag used to resolve artifact-url-template. Defaults to "latest".
+  release-tag: ${APP_RELEASE_TAG:latest}
   sales:
     webhook:
       url: ${SALES_WEBHOOK_URL:}
@@ -108,6 +110,11 @@ app:
   agent:
     offline-threshold-minutes: ${AGENT_OFFLINE_THRESHOLD_MINUTES:10}
     offline-check-interval-ms: ${AGENT_OFFLINE_CHECK_INTERVAL_MS:300000}
+    # URL template for the agent JAR artifact (typically a GHCR download URL).
+    # Use %s as a placeholder for the release tag (resolved from app.release-tag).
+    # When blank, the controller and service fall back to streaming the JAR from
+    # the classpath resource agent/certguard-agent.jar (pre-PR-3 behaviour).
+    artifact-url-template: ${AGENT_ARTIFACT_URL_TEMPLATE:}
     cert:
       validity-days: 365
     bundle:

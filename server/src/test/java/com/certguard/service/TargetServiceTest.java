@@ -35,6 +35,7 @@ class TargetServiceTest {
     @Mock AgentScanJobRepository scanJobRepository;
     @Mock LocationRepository locationRepository;
     @Mock SslScannerService sslScannerService;
+    @Mock SubscriptionGuard subscriptionGuard;
 
     @InjectMocks TargetService targetService;
 

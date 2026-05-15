@@ -40,6 +40,7 @@ public class AgentService {
     private final OrganizationRepository orgRepository;
     private final AgentHmacService hmacService;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final SubscriptionGuard subscriptionGuard;
 
     @Transactional
     public RegistrationTokenResponse generateRegistrationToken(UUID orgId, String agentName, UUID createdBy) {
@@ -250,6 +251,7 @@ public class AgentService {
 
     @Transactional
     public void queueScanJob(UUID targetId, UUID orgId) {
+        subscriptionGuard.assertScansAllowed(orgId);
         Target target = targetRepository.findByIdAndOrganizationId(targetId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Target not found"));
 

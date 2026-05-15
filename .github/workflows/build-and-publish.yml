@@ -1,20 +1,28 @@
 name: Build and Publish
 
+# Operator .env configuration for agent distribution:
+#
+#   AGENT_ARTIFACT_URL_TEMPLATE=https://github.com/OWNER/REPO/releases/download/%s/certguard-agent.jar
+#   APP_RELEASE_TAG=v1.0.0
+#
+# where %s is substituted with APP_RELEASE_TAG at request time by AgentBundleService.
+# Tags must follow the convention v<VERSION> (e.g. v1.0.0) to match the publish-agent
+# job condition and the GitHub Releases download URL format.
+
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/certguard
+permissions:
+  contents: write   # required to create releases and upload assets
+  packages: write   # required to push to GHCR
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
+  build-app:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,14 +37,94 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push certguard-app image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./server/Dockerfile
+          context: ./server
+          file: server/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ghcr.io/${{ github.repository_owner }}/certguard-app:latest
+            ghcr.io/${{ github.repository_owner }}/certguard-app:${{ github.sha }}
+          cache-from: type=gha,scope=certguard-app
+          cache-to: type=gha,mode=max,scope=certguard-app
+
+  build-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push certguard-gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./certguard-gateway
+          file: certguard-gateway/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/certguard-gateway:latest
+            ghcr.io/${{ github.repository_owner }}/certguard-gateway:${{ github.sha }}
+          cache-from: type=gha,scope=certguard-gateway
+          cache-to: type=gha,mode=max,scope=certguard-gateway
+
+  build-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push certguard-ui image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ui
+          file: ui/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/certguard-ui:latest
+            ghcr.io/${{ github.repository_owner }}/certguard-ui:${{ github.sha }}
+          cache-from: type=gha,scope=certguard-ui
+          cache-to: type=gha,mode=max,scope=certguard-ui
+
+  publish-agent:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build agent JAR
+        run: mvn -f agent/pom.xml package -DskipTests -q
+
+      - name: Publish agent JAR as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agent/target/certguard-agent.jar
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
