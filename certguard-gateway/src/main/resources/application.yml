@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: certguard-gateway
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: never
+    include-exception: false
+
+gateway:
+  jwt:
+    secret: ${AUTH_JWT_SECRET}
+  cors:
+    allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+  dev-mode: ${GATEWAY_DEV_MODE:false}
+  proxy:
+    routes:
+      - path-prefix: /api/auth
+        upstream: ${GATEWAY_AUTH_UPSTREAM:http://localhost:8090}
+      - path-prefix: /api/v1
+        upstream: ${GATEWAY_SERVER_UPSTREAM:http://localhost:8443}
+    connect-timeout-ms: 5000
+    response-timeout-ms: 30000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.certguard.gateway: INFO
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
