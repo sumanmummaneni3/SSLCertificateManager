@@ -42,7 +42,8 @@ server/monitoring/grafana/data/
 .env
 !.env.example
 
-# Claude Code agent memory and session files
+# Claude Code agent memory and session files — but track shared project commands
 .claude/
+!.claude/commands/
 prompty.txt
 ui/*.txt
