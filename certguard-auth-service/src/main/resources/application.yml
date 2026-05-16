@@ -26,6 +26,9 @@ spring:
 
   flyway:
     enabled: true
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5432/certguard_auth}
+    user: ${AUTH_DB_USERNAME:auth_user}
+    password: ${AUTH_DB_PASSWORD:auth_pass}
     locations: classpath:db/migration
     baseline-on-migrate: false
 
