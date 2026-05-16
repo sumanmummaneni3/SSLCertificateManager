@@ -1197,7 +1197,7 @@ function LaunchScreen({ onToken }) {
       });
       if (!res.ok) throw new Error("Failed to initiate login");
       const data = await res.json();
-      window.location.href = data.authorizeUrl;
+      window.location.href = data.auth_url;
     } catch (e) {
       setError(e.message);
       setLoading(false);

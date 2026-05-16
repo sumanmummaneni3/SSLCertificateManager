@@ -29,6 +29,9 @@ services:
       AUTH_DB_URL: jdbc:postgresql://auth-db:5432/certguard_auth
     ports:
       - "${AUTH_SERVER_PORT:-8090}:8090"
+    networks:
+      - default
+      - certguard-net
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8090/actuator/health | grep -q UP"]
       interval: 30s
@@ -37,3 +40,8 @@ services:
 
 volumes:
   auth_db_data:
+
+networks:
+  certguard-net:
+    external: true
+    name: ${CERTGUARD_NET_NAME:-certguard_certguard-net}
