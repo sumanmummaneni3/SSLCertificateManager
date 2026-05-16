@@ -184,8 +184,8 @@ services:
   # ─────────────────────────────────────────
   gateway:
     build:
-      context: ..
-      dockerfile: certguard-gateway/Dockerfile
+      context: ../certguard-gateway
+      dockerfile: Dockerfile
     container_name: certguard-gateway
     restart: unless-stopped
     depends_on:

@@ -7,6 +7,7 @@
 # Required .env entries:
 #   GHCR_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-app
 #   GHCR_AUTH_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-auth-service
+#   GHCR_GATEWAY_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-gateway
 
 services:
   app:
@@ -15,4 +16,8 @@ services:
 
   auth-service:
     image: ${GHCR_AUTH_IMAGE}:latest
+    build: !reset null
+
+  gateway:
+    image: ${GHCR_GATEWAY_IMAGE}:latest
     build: !reset null
