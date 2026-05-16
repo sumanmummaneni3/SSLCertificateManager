@@ -71,7 +71,19 @@ public class JwtValidationFilter implements WebFilter, Ordered {
             "/api/auth/**",
             "/actuator/**",
             "/oauth2/**",
-            "/login/**"
+            "/login/**",
+            // React SPA static assets — served by the app, no auth required
+            "/",
+            "/index.html",
+            "/auth/**",
+            "/assets/**",
+            "/favicon.ico",
+            "/*.js",
+            "/*.css",
+            "/*.svg",
+            "/*.png",
+            "/*.ico",
+            "/*.map"
     );
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
