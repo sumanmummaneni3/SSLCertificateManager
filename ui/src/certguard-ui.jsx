@@ -1141,7 +1141,8 @@ function DaysBar({ days }) {
 
 // ─── LAUNCH SCREEN ───────────────────────────────────────────────────────────
 function LaunchScreen({ onToken }) {
-  const [email, setEmail]               = useState("admin@certguard.local");
+  const [email, setEmail]               = useState("");
+  const [password, setPassword]         = useState("");
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState("");
   const [typed, setTyped]               = useState("");
@@ -1149,13 +1150,17 @@ function LaunchScreen({ onToken }) {
   // Runtime dev-mode flag — fetched from /api/v1/auth/config so the login form
   // always matches the server's actual mode regardless of how the bundle was built.
   const [devMode, setDevMode] = useState(null); // null = loading
+  const [providers, setProviders]       = useState([]);
   const tagline = "TLS certificate monitoring for teams.";
 
   useEffect(() => {
-    fetch("/api/v1/auth/config")
-      .then(r => r.json())
-      .then(d => setDevMode(!!d.devMode))
-      .catch(() => setDevMode(false));
+    Promise.all([
+      fetch("/api/v1/auth/config").then(r => r.json()).catch(() => ({ devMode: false })),
+      fetch("/api/auth/providers").then(r => r.json()).catch(() => ({ providers: [] })),
+    ]).then(([configRes, providersRes]) => {
+      setDevMode(!!configRes.devMode);
+      setProviders(providersRes.providers || []);
+    });
   }, []);
 
   // Typewriter effect
@@ -1174,6 +1179,43 @@ function LaunchScreen({ onToken }) {
       const data = await api.getDevToken(email, resetOnboarding);
       if (data?.token) onToken(data.token, data.orgId, data.email);
       else setError("No token in response");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOAuthLogin = async (providerId) => {
+    setError(""); setLoading(true);
+    try {
+      const callbackUri = window.location.origin + "/api/auth/callback/" + providerId;
+      const res = await fetch("/api/auth/initiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, redirectUri: callbackUri }),
+      });
+      if (!res.ok) throw new Error("Failed to initiate login");
+      const data = await res.json();
+      window.location.href = data.authorizeUrl;
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
+
+  const handleEmailLogin = async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/auth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "email", email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || "Login failed");
+      if (data?.token) onToken(data.token, data.orgId, data.email);
+      else throw new Error("No token in response");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1229,9 +1271,62 @@ function LaunchScreen({ onToken }) {
         ) : (
           <>
             {error && <div className="alert alert-error">⚠ {error}</div>}
-            <button className="btn btn-primary" onClick={() => window.location.href = `${API_BASE}/oauth2/authorization/google`}>
-              <span>🔑</span> Continue with Google
-            </button>
+
+            {providers.filter(p => p.type === "oauth2").map(p => (
+              <button
+                key={p.id}
+                className="btn btn-primary"
+                onClick={() => handleOAuthLogin(p.id)}
+                disabled={loading}
+                style={{ marginBottom: "0.75rem" }}
+              >
+                {loading ? <><Spinner /> Connecting...</> : (
+                  <><span>{p.id === "google" ? "🔑" : "🪟"}</span> Continue with {p.id.charAt(0).toUpperCase() + p.id.slice(1)}</>
+                )}
+              </button>
+            ))}
+
+            {providers.some(p => p.id === "email") && (
+              <>
+                {providers.some(p => p.type === "oauth2") && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "1rem 0", color: "var(--muted)", fontSize: "0.8rem" }}>
+                    <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
+                    or
+                    <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
+                  </div>
+                )}
+                <div className="field">
+                  <label htmlFor="email-input">Email</label>
+                  <input
+                    id="email-input"
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="password-input">Password</label>
+                  <input
+                    id="password-input"
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleEmailLogin()}
+                    placeholder="••••••••"
+                  />
+                </div>
+                <button className="btn btn-secondary" onClick={handleEmailLogin} disabled={loading}>
+                  {loading ? <><Spinner /> Signing in...</> : "Sign in with Email"}
+                </button>
+              </>
+            )}
+
+            {providers.length === 0 && !loading && (
+              <p style={{ color: "var(--muted)", textAlign: "center", fontSize: "0.85rem" }}>
+                Loading sign-in options...
+              </p>
+            )}
           </>
         )}
       </div>
@@ -4021,6 +4116,23 @@ export default function App() {
     const urlToken = params.get("token");
     const urlInvite = params.get("invite");
     const isInvitePath = window.location.pathname === "/invite";
+
+    // Handle OAuth callback via URL fragment (new auth-service flow)
+    const hash = window.location.hash;
+    if ((window.location.pathname === "/auth/callback" || hash.startsWith("#token=")) && hash) {
+      const hashParams = new URLSearchParams(hash.slice(1));
+      const hashToken = hashParams.get("token");
+      const hashError = hashParams.get("error");
+      window.history.replaceState({}, "", "/");
+      if (hashToken) {
+        handleToken(hashToken);
+        return;
+      }
+      if (hashError) {
+        // Will fall through to launch phase with an error — for now just clear URL
+      }
+    }
+
     window.history.replaceState({}, "", "/");
     if (isInvitePath && urlToken) {
       setInviteToken(urlToken);

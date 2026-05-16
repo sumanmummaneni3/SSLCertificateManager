@@ -1,87 +1,106 @@
 package com.certguard.auth.security;
 
 import com.certguard.auth.dto.response.ValidateResponse;
+import com.certguard.auth.service.OrgContextRecord;
 import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.*;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.time.Instant;
-import java.util.Date;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /**
- * Issues and validates the unified JWT consumed by both the Java app and the PHP app.
+ * Issues and validates the unified RS256 JWT consumed by the gateway and downstream services.
  *
  * Token claims:
- *   sub        — user UUID
- *   provider   — google | microsoft | email
- *   email      — verified email address
- *   name       — display name
- *   providerIds — {"google":"<sub>", "microsoft":"<oid>"} — only the active provider populated
- *   iss        — certguard-auth
- *   aud        — certguard-apps
- *   iat / exp  — standard
- *   jti        — session UUID (enables revocation via session table lookup)
+ *   sub           — user UUID
+ *   provider      — google | microsoft | email
+ *   email         — verified email address
+ *   orgId         — organization UUID (empty string when not yet assigned)
+ *   orgRole       — member | admin | owner (empty string when not yet assigned)
+ *   platformAdmin — boolean
+ *   iss           — certguard-cloud
+ *   aud           — [certguard-ui, certguard-apps]
+ *   iat / exp     — standard
+ *   jti           — session UUID (enables revocation via session table lookup)
  */
 @Slf4j
 @Component
 public class UnifiedTokenProvider {
 
-    private static final String ISSUER   = "certguard-auth";
-    private static final String AUDIENCE = "certguard-apps";
+    public static final String ISSUER = "certguard-cloud";
+    public static final List<String> AUDIENCE = List.of("certguard-ui", "certguard-apps");
 
-    @Value("${auth.jwt.secret}")
-    private String secret;
+    @Value("${auth.jwt.private-key-path:/opt/certguard-auth/certs/jwt-private.pem}")
+    private String privateKeyPath;
 
-    @Value("${auth.jwt.expiration-seconds:28800}")
-    private long expirationSeconds;
+    @Value("${auth.jwt.public-key-path:/opt/certguard-auth/certs/jwt-public.pem}")
+    private String publicKeyPath;
+
+    @Value("${auth.jwt.expiration-ms:3600000}")
+    private long expirationMs;
+
+    private PrivateKey privateKey;
+    private RSAPublicKey publicKey;
 
     @PostConstruct
-    public void validate() {
-        if (secret == null || secret.length() < 64) {
-            throw new IllegalStateException("auth.jwt.secret must be at least 64 characters");
+    public void initKeys() {
+        Path privPath = Path.of(privateKeyPath);
+        Path pubPath  = Path.of(publicKeyPath);
+
+        if (Files.exists(privPath) && Files.exists(pubPath)) {
+            log.info("Loading existing RSA key pair from {} / {}", privateKeyPath, publicKeyPath);
+            this.privateKey = loadPrivateKey(privPath);
+            this.publicKey  = (RSAPublicKey) loadPublicKey(pubPath);
+        } else {
+            log.info("Generating new RSA-2048 key pair and persisting to {} / {}", privateKeyPath, publicKeyPath);
+            KeyPair pair = generateKeyPair();
+            this.privateKey = pair.getPrivate();
+            this.publicKey  = (RSAPublicKey) pair.getPublic();
+            persistKeys(privPath, pubPath, pair);
         }
     }
 
-    private SecretKey key() {
-        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+    public RSAPublicKey getPublicKey() {
+        return publicKey;
     }
 
     public String issue(UUID userId, String provider, String email, String name,
-                        String providerUserId, UUID sessionId) {
+                        String providerUserId, UUID sessionId, OrgContextRecord ctx) {
         Instant now    = Instant.now();
-        Instant expiry = now.plusSeconds(expirationSeconds);
-
-        Map<String, String> providerIds = providerUserId != null
-                ? Map.of(provider, providerUserId)
-                : Map.of();
+        Instant expiry = now.plusMillis(expirationMs);
 
         return Jwts.builder()
                 .id(sessionId.toString())
                 .issuer(ISSUER)
                 .audience().add(AUDIENCE).and()
-                .subject(userId.toString())
+                .subject(ctx != null && ctx.userId() != null ? ctx.userId().toString() : userId.toString())
                 .claim("provider", provider)
                 .claim("email", email)
                 .claim("name", name)
-                .claim("providerIds", providerIds)
+                .claim("orgId",         ctx != null && ctx.orgId() != null ? ctx.orgId().toString() : "")
+                .claim("orgRole",       ctx != null && ctx.orgRole() != null ? ctx.orgRole() : "")
+                .claim("platformAdmin", ctx != null && ctx.platformAdmin())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
-                .signWith(key())
+                .signWith(privateKey, Jwts.SIG.RS256)
                 .compact();
     }
 
     public Claims parse(String token) {
         return Jwts.parser()
-                .verifyWith(key())
+                .verifyWith(publicKey)
                 .requireIssuer(ISSUER)
-                .requireAudience(AUDIENCE)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
@@ -113,6 +132,59 @@ public class UnifiedTokenProvider {
     }
 
     public long expirationSeconds() {
-        return expirationSeconds;
+        return expirationMs / 1000;
+    }
+
+    private KeyPair generateKeyPair() {
+        try {
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+            gen.initialize(2048, new SecureRandom());
+            return gen.generateKeyPair();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("RSA key generation failed", e);
+        }
+    }
+
+    private void persistKeys(Path privPath, Path pubPath, KeyPair pair) {
+        try {
+            Files.createDirectories(privPath.getParent());
+            Files.writeString(privPath, toPem("PRIVATE KEY", pair.getPrivate().getEncoded()));
+            Files.writeString(pubPath,  toPem("PUBLIC KEY",  pair.getPublic().getEncoded()));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to persist RSA key pair", e);
+        }
+    }
+
+    private PrivateKey loadPrivateKey(Path path) {
+        try {
+            byte[] der = decodePem(Files.readString(path));
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(der));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to load private key from " + path, e);
+        }
+    }
+
+    private PublicKey loadPublicKey(Path path) {
+        try {
+            byte[] der = decodePem(Files.readString(path));
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            return kf.generatePublic(new X509EncodedKeySpec(der));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to load public key from " + path, e);
+        }
+    }
+
+    private String toPem(String type, byte[] encoded) {
+        String b64 = Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(encoded);
+        return "-----BEGIN " + type + "-----\n" + b64 + "\n-----END " + type + "-----\n";
+    }
+
+    private byte[] decodePem(String pem) {
+        String stripped = pem
+                .replaceAll("-----BEGIN [^-]+-----", "")
+                .replaceAll("-----END [^-]+-----", "")
+                .replaceAll("\\s+", "");
+        return Base64.getDecoder().decode(stripped);
     }
 }

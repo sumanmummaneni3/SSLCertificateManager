@@ -43,11 +43,11 @@ public class User {
     private String passwordHash;
 
     /** Current OAuth access token from the provider. */
-    @Column(name = "access_token", length = 2048)
+    @Column(name = "access_token", columnDefinition = "TEXT")
     private String accessToken;
 
     /** Current OAuth refresh token from the provider. */
-    @Column(name = "refresh_token", length = 2048)
+    @Column(name = "refresh_token", columnDefinition = "TEXT")
     private String refreshToken;
 
     @Column(name = "token_expires_at")

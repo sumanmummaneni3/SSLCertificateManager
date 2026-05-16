@@ -13,9 +13,14 @@ import com.certguard.auth.service.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -27,6 +32,12 @@ public class AuthController {
     private final MicrosoftAuthService microsoftAuthService;
     private final EmailAuthService emailAuthService;
     private final RateLimitService rateLimitService;
+
+    @Value("${auth.google.client-id:}")
+    private String googleClientId;
+
+    @Value("${auth.microsoft.client-id:}")
+    private String microsoftClientId;
 
     /**
      * POST /api/auth/initiate
@@ -106,6 +117,25 @@ public class AuthController {
         String token = extractBearer(authHeader);
         tokenService.revokeAllSessions(token);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * GET /api/auth/providers
+     * Returns the list of enabled authentication providers. Public endpoint.
+     */
+    @GetMapping("/providers")
+    public ResponseEntity<Map<String, Object>> getProviders() {
+        List<Map<String, Object>> providers = new ArrayList<>();
+
+        if (googleClientId != null && !googleClientId.isBlank()) {
+            providers.add(Map.of("id", "google", "type", "oauth2"));
+        }
+        if (microsoftClientId != null && !microsoftClientId.isBlank()) {
+            providers.add(Map.of("id", "microsoft", "type", "oauth2"));
+        }
+        providers.add(Map.of("id", "email", "type", "password"));
+
+        return ResponseEntity.ok(Map.of("providers", providers));
     }
 
     private String extractBearer(String authHeader) {

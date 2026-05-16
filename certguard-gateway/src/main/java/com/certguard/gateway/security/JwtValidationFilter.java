@@ -1,13 +1,14 @@
 package com.certguard.gateway.security;
 
+import com.certguard.gateway.config.GatewayJwtProperties;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
@@ -22,14 +23,19 @@ import org.springframework.util.AntPathMatcher;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import javax.crypto.SecretKey;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.interfaces.RSAPublicKey;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Reactive global filter that validates HS256 JWTs on every inbound request.
+ * Reactive global filter that validates RS256 JWTs on every inbound request.
  *
  * <p>Paths exempt from JWT validation:
  * <ul>
@@ -58,9 +64,6 @@ public class JwtValidationFilter implements WebFilter, Ordered {
      */
     private static final int FILTER_ORDER = Ordered.HIGHEST_PRECEDENCE + 10;
 
-    private static final String ISSUER   = "certguard-cloud";
-    private static final String AUDIENCE = "certguard-ui";
-
     private static final String BEARER_PREFIX = "Bearer ";
 
     /** Paths that bypass JWT validation entirely. */
@@ -72,19 +75,18 @@ public class JwtValidationFilter implements WebFilter, Ordered {
     );
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
+    private final GatewayJwtProperties gwJwtProps;
 
-    @Value("${gateway.jwt.secret}")
-    private String jwtSecret;
+    private RSAPublicKey publicKey;
 
-    private SecretKey signingKey;
+    public JwtValidationFilter(GatewayJwtProperties gwJwtProps) {
+        this.gwJwtProps = gwJwtProps;
+    }
 
     @PostConstruct
-    public void init() {
-        if (jwtSecret == null || jwtSecret.length() < 64) {
-            throw new IllegalStateException(
-                    "gateway.jwt.secret must be at least 64 characters (same value as AUTH_JWT_SECRET)");
-        }
-        this.signingKey = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+    public void initKeys() {
+        this.publicKey = fetchPublicKey();
+        log.info("RS256 public key loaded from JWKS at {}", gwJwtProps.jwksUri());
     }
 
     @Override
@@ -115,9 +117,25 @@ public class JwtValidationFilter implements WebFilter, Ordered {
             return reject(exchange, HttpStatus.UNAUTHORIZED, "JWT token has expired",
                     "https://certguard.dev/problems/token-expired");
         } catch (JwtException | IllegalArgumentException ex) {
-            log.debug("Rejected invalid JWT for path {}: {}", path, ex.getMessage());
-            return reject(exchange, HttpStatus.UNAUTHORIZED, "JWT token is invalid",
-                    "https://certguard.dev/problems/invalid-token");
+            log.debug("JWT validation failed for path {}: {} — attempting key refresh", path, ex.getMessage());
+            String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
+            if (msg.contains("unable to find") || msg.contains("signature")) {
+                try {
+                    refreshPublicKey();
+                    claims = parseToken(token);
+                } catch (ExpiredJwtException retryEx) {
+                    log.debug("Rejected expired JWT after key refresh for path {}: {}", path, retryEx.getMessage());
+                    return reject(exchange, HttpStatus.UNAUTHORIZED, "JWT token has expired",
+                            "https://certguard.dev/problems/token-expired");
+                } catch (JwtException | IllegalArgumentException retryEx) {
+                    log.debug("Rejected invalid JWT after key refresh for path {}: {}", path, retryEx.getMessage());
+                    return reject(exchange, HttpStatus.UNAUTHORIZED, "JWT token is invalid",
+                            "https://certguard.dev/problems/invalid-token");
+                }
+            } else {
+                return reject(exchange, HttpStatus.UNAUTHORIZED, "JWT token is invalid",
+                        "https://certguard.dev/problems/invalid-token");
+            }
         }
 
         // Build the mutated request: strip inbound X-CG-* headers, inject trusted values.
@@ -134,12 +152,58 @@ public class JwtValidationFilter implements WebFilter, Ordered {
 
     private Claims parseToken(String token) {
         return Jwts.parser()
-                .verifyWith(signingKey)
-                .requireIssuer(ISSUER)
-                .requireAudience(AUDIENCE)
+                .verifyWith(publicKey)
+                .requireIssuer(gwJwtProps.issuer())
+                .requireAudience(gwJwtProps.audience())
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+    }
+
+    private void refreshPublicKey() {
+        log.info("Refreshing RS256 public key from JWKS at {}", gwJwtProps.jwksUri());
+        this.publicKey = fetchPublicKey();
+        log.info("RS256 public key refreshed successfully");
+    }
+
+    private RSAPublicKey fetchPublicKey() {
+        try {
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(gwJwtProps.jwksUri()))
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException(
+                        "JWKS endpoint returned HTTP " + response.statusCode() +
+                        " from " + gwJwtProps.jwksUri());
+            }
+
+            JWKSet jwkSet = JWKSet.parse(response.body());
+            RSAKey rsaKey = jwkSet.getKeys().stream()
+                    .filter(k -> k instanceof RSAKey)
+                    .map(k -> (RSAKey) k)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "No RSA key found in JWKS at " + gwJwtProps.jwksUri()));
+
+            return rsaKey.toRSAPublicKey();
+
+        } catch (IllegalStateException ex) {
+            log.error("Failed to load RS256 public key from JWKS: {}", ex.getMessage());
+            throw ex;
+        } catch (Exception ex) {
+            log.error("Failed to load RS256 public key from JWKS at {}: {}", gwJwtProps.jwksUri(), ex.getMessage());
+            throw new IllegalStateException(
+                    "Cannot load RS256 public key from JWKS at " + gwJwtProps.jwksUri(), ex);
+        }
     }
 
     /**

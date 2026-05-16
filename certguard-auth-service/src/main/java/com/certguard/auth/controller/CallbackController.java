@@ -10,9 +10,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Handles the OAuth redirect-back from Google and Microsoft.
@@ -38,19 +42,19 @@ public class CallbackController {
      * GET /api/auth/callback/google?code=xxx&state=yyy
      *
      * Google redirects here after the user authenticates.
-     * Exchanges the code, creates a session, and returns the JWT as JSON.
+     * Exchanges the code, creates a session, and redirects to the UI callback route.
      */
-    @GetMapping(value = "/google", produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<String> googleCallback(
-            @RequestParam String code,
+    @GetMapping("/google")
+    public ResponseEntity<Void> googleCallback(
+            @RequestParam(required = false) String code,
             @RequestParam(required = false) String error,
             HttpServletRequest req) {
 
         if (error != null) {
             log.warn("Google OAuth error: {}", error);
-            return ResponseEntity.badRequest()
-                    .contentType(MediaType.TEXT_HTML)
-                    .body(errorPage("Google login failed: " + error));
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .header(HttpHeaders.LOCATION, buildErrorRedirect("Google login failed: " + error))
+                    .build();
         }
 
         String redirectUri = baseUrl + "/api/auth/callback/google";
@@ -58,19 +62,19 @@ public class CallbackController {
         TokenResponse token = tokenService.createSession(user, "google", clientIp(req));
 
         log.info("Google OAuth callback success for {}", user.getEmail());
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_HTML)
-                .body(successPage(token));
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, buildCallbackRedirect(token))
+                .build();
     }
 
     /**
      * GET /api/auth/callback/microsoft?code=xxx
      *
      * Microsoft redirects here after the user authenticates.
-     * Exchanges the code, creates a session, and returns the JWT as JSON.
+     * Exchanges the code, creates a session, and redirects to the UI callback route.
      */
-    @GetMapping(value = "/microsoft", produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<String> microsoftCallback(
+    @GetMapping("/microsoft")
+    public ResponseEntity<Void> microsoftCallback(
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String error,
             @RequestParam(name = "error_description", required = false) String errorDescription,
@@ -78,9 +82,9 @@ public class CallbackController {
 
         if (error != null) {
             log.warn("Microsoft OAuth error: {} — {}", error, errorDescription);
-            return ResponseEntity.badRequest()
-                    .contentType(MediaType.TEXT_HTML)
-                    .body(errorPage("Microsoft login failed: " + errorDescription));
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .header(HttpHeaders.LOCATION, buildErrorRedirect("Microsoft login failed: " + errorDescription))
+                    .build();
         }
         if (code == null) {
             throw new AuthException("No authorization code received from Microsoft");
@@ -91,9 +95,9 @@ public class CallbackController {
         TokenResponse token = tokenService.createSession(user, "microsoft", clientIp(req));
 
         log.info("Microsoft OAuth callback success for {}", user.getEmail());
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_HTML)
-                .body(successPage(token));
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, buildCallbackRedirect(token))
+                .build();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -103,50 +107,13 @@ public class CallbackController {
         return forwarded != null ? forwarded.split(",")[0].trim() : req.getRemoteAddr();
     }
 
-    /** Simple HTML page that displays the token and lets you copy it. */
-    private String successPage(TokenResponse t) {
-        return """
-                <!DOCTYPE html>
-                <html>
-                <head><title>Login Successful</title>
-                <style>
-                  body { font-family: monospace; padding: 2rem; background: #f0f4f8; }
-                  .card { background: white; padding: 1.5rem; border-radius: 8px;
-                          box-shadow: 0 2px 8px rgba(0,0,0,.1); max-width: 800px; }
-                  h2 { color: #2d7a2d; }
-                  textarea { width: 100%%; height: 120px; font-size: 0.8rem; }
-                  .meta { color: #555; margin-top: 1rem; }
-                  button { margin-top: .5rem; padding: .4rem 1rem; cursor: pointer; }
-                </style></head>
-                <body>
-                <div class="card">
-                  <h2>&#10003; Login successful</h2>
-                  <p>Copy your token to use in API calls:</p>
-                  <textarea id="tok">%s</textarea>
-                  <button onclick="navigator.clipboard.writeText(document.getElementById('tok').value)">Copy</button>
-                  <div class="meta">
-                    <b>User:</b> %s &nbsp;|&nbsp;
-                    <b>Provider:</b> %s &nbsp;|&nbsp;
-                    <b>Expires in:</b> %d seconds
-                  </div>
-                  <hr/>
-                  <p>Test it now — paste in terminal:</p>
-                  <textarea>curl -s http://localhost:8090/api/users/me -H "Authorization: Bearer %s" | jq .</textarea>
-                </div>
-                </body></html>
-                """.formatted(t.token(), t.email(), t.provider(), t.expiresIn(), t.token());
+    private String buildCallbackRedirect(TokenResponse t) {
+        return baseUrl + "/auth/callback#token=" + t.token()
+                + "&expiresIn=" + t.expiresIn()
+                + "&email=" + URLEncoder.encode(t.email() != null ? t.email() : "", StandardCharsets.UTF_8);
     }
 
-    private String errorPage(String message) {
-        return """
-                <!DOCTYPE html>
-                <html>
-                <head><title>Login Failed</title></head>
-                <body style="font-family:monospace;padding:2rem">
-                  <h2 style="color:red">&#10007; %s</h2>
-                  <p><a href="javascript:history.back()">Go back</a></p>
-                </body>
-                </html>
-                """.formatted(message);
+    private String buildErrorRedirect(String message) {
+        return baseUrl + "/auth/callback#error=" + URLEncoder.encode(message, StandardCharsets.UTF_8);
     }
 }

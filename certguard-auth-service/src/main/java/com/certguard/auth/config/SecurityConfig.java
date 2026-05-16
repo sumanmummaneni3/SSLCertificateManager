@@ -46,7 +46,9 @@ public class SecurityConfig {
                         "/api/auth/dev-token").permitAll()
                 .requestMatchers(HttpMethod.GET,
                         "/api/auth/callback/google",
-                        "/api/auth/callback/microsoft").permitAll()
+                        "/api/auth/callback/microsoft",
+                        "/api/auth/.well-known/**",
+                        "/api/auth/providers").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .anyRequest().authenticated()
             )

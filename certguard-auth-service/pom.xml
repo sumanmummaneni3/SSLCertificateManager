@@ -23,6 +23,7 @@
         <bucket4j.version>8.10.1</bucket4j.version>
         <lombok.version>1.18.38</lombok.version>
         <flyway.version>11.3.0</flyway.version>
+        <nimbus-jose-jwt.version>9.37.3</nimbus-jose-jwt.version>
     </properties>
 
     <dependencies>
@@ -84,6 +85,13 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>${jjwt.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- JWKS construction -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${nimbus-jose-jwt.version}</version>
         </dependency>
 
         <!-- Rate limiting (core only — no Spring dependency, compatible with any Boot version) -->

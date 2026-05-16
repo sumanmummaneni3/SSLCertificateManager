@@ -1,7 +1,12 @@
 package com.certguard.gateway;
 
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
+import com.sun.net.httpserver.HttpServer;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,47 +14,78 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
-import javax.crypto.SecretKey;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Integration tests for {@link com.certguard.gateway.security.JwtValidationFilter}.
  *
- * <p>Uses a random port SpringBootTest with a WebTestClient. Upstream routes target
- * localhost so they will fail to connect, but the gateway's own filter logic
- * (401 on missing/invalid/expired tokens) is exercised before any upstream call.
+ * <p>Spins up an in-process JDK {@link HttpServer} that serves a JWKS containing
+ * a generated RSA-2048 key pair so the filter can fetch the public key at startup.
+ * Tokens are signed with the corresponding private key.
  *
- * <p>For the "valid token injects headers" test, the request to /api/v1/certs will
- * get a 503/502 because no upstream is running — that is expected and acceptable for
- * a unit-level filter test. We assert only on the absence of a 401 (meaning the filter
- * passed the request forward rather than rejecting it) by checking that the X-CG-User-Id
- * header was injected. However, since WebTestClient only sees response headers, we use
- * a mock approach: assert the filter does NOT return 401 for a valid token.
+ * <p>Upstream routes target localhost so they will fail to connect, but the gateway's
+ * own filter logic (401 on missing/invalid/expired tokens) is exercised before any
+ * upstream call.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = {
-        "gateway.jwt.secret=test-secret-value-that-is-at-least-64-chars-long-for-hs256-validation-ok",
-        "gateway.dev-mode=true",
-        "gateway.cors.allowed-origins=",
-        "spring.cloud.config.enabled=false"
-})
 class JwtValidationFilterTest {
 
-    private static final String JWT_SECRET =
-            "test-secret-value-that-is-at-least-64-chars-long-for-hs256-validation-ok";
-    private static final String ISSUER   = "certguard-auth";
-    private static final String AUDIENCE = "certguard-apps";
+    private static RSAKey rsaKey;
+    private static HttpServer jwksServer;
+    private static int jwksPort;
 
     @LocalServerPort
     private int port;
 
     private WebTestClient webTestClient;
+
+    @BeforeAll
+    static void startJwksServer() throws Exception {
+        rsaKey = new RSAKeyGenerator(2048)
+                .keyID("test-key-1")
+                .generate();
+
+        JWKSet jwkSet = new JWKSet(rsaKey.toPublicJWK());
+        byte[] jwksBytes = jwkSet.toString().getBytes(StandardCharsets.UTF_8);
+
+        jwksServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        jwksServer.createContext("/api/auth/.well-known/jwks.json", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, jwksBytes.length);
+            exchange.getResponseBody().write(jwksBytes);
+            exchange.getResponseBody().close();
+        });
+        jwksServer.start();
+        jwksPort = jwksServer.getAddress().getPort();
+    }
+
+    @AfterAll
+    static void stopJwksServer() {
+        if (jwksServer != null) {
+            jwksServer.stop(0);
+        }
+    }
+
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        registry.add("gateway.jwt.jwks-uri",
+                () -> "http://127.0.0.1:" + jwksPort + "/api/auth/.well-known/jwks.json");
+        registry.add("gateway.jwt.issuer", () -> "certguard-cloud");
+        registry.add("gateway.jwt.audience", () -> "certguard-ui");
+        registry.add("gateway.dev-mode", () -> "true");
+        registry.add("gateway.cors.allowed-origins", () -> "");
+    }
 
     @BeforeEach
     void setUp() {
@@ -60,18 +96,15 @@ class JwtValidationFilterTest {
 
     // ── Test helpers ───────────────────────────────────────────────────────────
 
-    private SecretKey signingKey() {
-        return Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** Builds a valid, non-expired JWT matching the UnifiedTokenProvider contract. */
-    private String validToken() {
+    /** Builds a valid, non-expired RS256 JWT. */
+    private String validToken() throws Exception {
         Instant now    = Instant.now();
         Instant expiry = now.plusSeconds(3600);
+        RSAPrivateKey privateKey = rsaKey.toRSAPrivateKey();
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
-                .issuer(ISSUER)
-                .audience().add(AUDIENCE).and()
+                .issuer("certguard-cloud")
+                .audience().add("certguard-ui").and()
                 .subject(UUID.randomUUID().toString())
                 .claim("provider", "email")
                 .claim("email", "user@example.com")
@@ -80,24 +113,25 @@ class JwtValidationFilterTest {
                 .claim("orgRole", "VIEWER")
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
-                .signWith(signingKey())
+                .signWith(privateKey)
                 .compact();
     }
 
     /** Builds a token that expired 1 hour ago. */
-    private String expiredToken() {
+    private String expiredToken() throws Exception {
         Instant past = Instant.now().minusSeconds(7200);
+        RSAPrivateKey privateKey = rsaKey.toRSAPrivateKey();
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
-                .issuer(ISSUER)
-                .audience().add(AUDIENCE).and()
+                .issuer("certguard-cloud")
+                .audience().add("certguard-ui").and()
                 .subject(UUID.randomUUID().toString())
                 .claim("provider", "email")
                 .claim("email", "old@example.com")
                 .claim("name", "Old User")
                 .issuedAt(Date.from(past))
                 .expiration(Date.from(past.plusSeconds(1800)))
-                .signWith(signingKey())
+                .signWith(privateKey)
                 .compact();
     }
 
@@ -123,7 +157,7 @@ class JwtValidationFilterTest {
      * An expired JWT must return 401.
      */
     @Test
-    void expiredToken_returns401() {
+    void expiredToken_returns401() throws Exception {
         webTestClient.get()
                 .uri("/api/v1/certs")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + expiredToken())
@@ -159,7 +193,7 @@ class JwtValidationFilterTest {
      * filter accepted the token and let the request through.
      */
     @Test
-    void validToken_doesNotReturn401() {
+    void validToken_doesNotReturn401() throws Exception {
         webTestClient.get()
                 .uri("/api/v1/certs")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + validToken())

@@ -11,3 +11,7 @@ services:
   app:
     image: ${GHCR_IMAGE}:latest
     build: !reset null
+
+  auth-service:
+    image: ${GHCR_IMAGE}-auth:latest
+    build: !reset null

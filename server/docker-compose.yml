@@ -11,6 +11,7 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB}
       POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTH_DB_PASSWORD:  ${AUTH_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -101,6 +102,50 @@ services:
       - certguard-net
 
   # ─────────────────────────────────────────
+  # CertGuard Auth Service
+  # ─────────────────────────────────────────
+  auth-service:
+    build:
+      context: ..
+      dockerfile: certguard-auth-service/Dockerfile
+    container_name: certguard-auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AUTH_DB_URL:                  jdbc:postgresql://postgres:5432/certguard_auth
+      AUTH_DB_USERNAME:             auth_user
+      AUTH_DB_PASSWORD:             ${AUTH_DB_PASSWORD}
+      GOOGLE_CLIENT_ID:             ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET:         ${GOOGLE_CLIENT_SECRET:-}
+      MICROSOFT_CLIENT_ID:          ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET:      ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID:          ${MICROSOFT_TENANT_ID:-common}
+      AUTH_CALLBACK_BASE_URL:       ${APP_BASE_URL}
+      AUTH_CORS_ALLOWED_ORIGINS:    ${GATEWAY_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      AUTH_JWT_PRIVATE_KEY_PATH:    /opt/certguard-auth/certs/jwt-private.pem
+      AUTH_JWT_PUBLIC_KEY_PATH:     /opt/certguard-auth/certs/jwt-public.pem
+      AUTH_JWT_EXPIRATION_MS:       ${AUTH_JWT_EXPIRATION_MS:-3600000}
+      MAIN_DB_URL:                  jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      MAIN_DB_USERNAME:             ${POSTGRES_USER}
+      MAIN_DB_PASSWORD:             ${POSTGRES_PASSWORD}
+      PLATFORM_ADMIN_EMAILS:        ${PLATFORM_ADMIN_EMAILS:-}
+      JAVA_OPTS:                    "-Xms128m -Xmx256m -XX:+UseContainerSupport"
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - auth_certs:/opt/certguard-auth/certs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/actuator/health | grep -q UP || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
   # Prometheus Monitoring
   # ─────────────────────────────────────────
   prometheus:
@@ -146,14 +191,13 @@ services:
     depends_on:
       app:
         condition: service_healthy
+      auth-service:
+        condition: service_healthy
     environment:
-      # Must equal JWT_SECRET so the gateway and the server share the same HS256 signing key.
-      AUTH_JWT_SECRET:              ${JWT_SECRET}
       GATEWAY_CORS_ALLOWED_ORIGINS: ${GATEWAY_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
       GATEWAY_DEV_MODE:             ${APP_DEV_MODE:-false}
-      # auth-service runs in its own separate compose stack and is not on certguard-net.
-      # Override GATEWAY_AUTH_UPSTREAM in .env when you want to connect them.
-      GATEWAY_AUTH_UPSTREAM:        ${GATEWAY_AUTH_UPSTREAM:-http://localhost:8090}
+      GATEWAY_AUTH_UPSTREAM:        http://auth-service:8090
+      GATEWAY_JWKS_URI:             http://auth-service:8090/api/auth/.well-known/jwks.json
       GATEWAY_SERVER_UPSTREAM:      https://app:8443
       JAVA_OPTS:                    "-Xms128m -Xmx256m -XX:+UseContainerSupport"
     healthcheck:
@@ -192,6 +236,7 @@ volumes:
   rabbitmq_data:
   prometheus_data:
   grafana_data:
+  auth_certs:
 
 # ─────────────────────────────────────────
 # Internal Network

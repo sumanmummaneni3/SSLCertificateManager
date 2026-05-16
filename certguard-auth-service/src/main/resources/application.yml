@@ -17,7 +17,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -40,10 +40,17 @@ server:
 auth:
   dev-mode: ${AUTH_DEV_MODE:false}
 
+  platform-admin:
+    emails: ${PLATFORM_ADMIN_EMAILS:}
+
   jwt:
-    # REQUIRED: at least 64 characters, set via environment variable
-    secret: ${AUTH_JWT_SECRET}
-    expiration-seconds: ${AUTH_JWT_EXPIRATION_SECONDS:28800}
+    private-key-path: ${AUTH_JWT_PRIVATE_KEY_PATH:/opt/certguard-auth/certs/jwt-private.pem}
+    public-key-path: ${AUTH_JWT_PUBLIC_KEY_PATH:/opt/certguard-auth/certs/jwt-public.pem}
+    expiration-ms: ${AUTH_JWT_EXPIRATION_MS:3600000}
+    issuer: certguard-cloud
+    audience:
+      - certguard-ui
+      - certguard-apps
 
   google:
     client-id: ${GOOGLE_CLIENT_ID:}
@@ -58,7 +65,6 @@ auth:
     base-url: ${AUTH_CALLBACK_BASE_URL:http://localhost:8090}
 
   cors:
-    # Comma-separated list of allowed origins
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
 
   rate-limit:
@@ -68,6 +74,16 @@ auth:
 
   session:
     cleanup-interval-ms: ${AUTH_SESSION_CLEANUP_MS:3600000}
+
+main:
+  datasource:
+    url:      ${MAIN_DB_URL:jdbc:postgresql://localhost:5432/certguard}
+    username: ${MAIN_DB_USERNAME:certguard_user}
+    password: ${MAIN_DB_PASSWORD:certguard_pass}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 30000
 
 management:
   endpoints:

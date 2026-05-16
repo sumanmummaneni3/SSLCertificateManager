@@ -34,7 +34,7 @@ public class UserSession {
     private String provider;
 
     /** Provider's refresh token at session-creation time (encrypted at rest recommended). */
-    @Column(name = "refresh_token", length = 2048)
+    @Column(name = "refresh_token", columnDefinition = "TEXT")
     private String refreshToken;
 
     @Column(name = "expires_at", nullable = false)

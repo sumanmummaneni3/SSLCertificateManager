@@ -20,6 +20,7 @@
     <properties>
         <java.version>25</java.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <nimbus.version>9.37.3</nimbus.version>
         <lombok.version>1.18.38</lombok.version>
     </properties>
 
@@ -65,6 +66,13 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>${jjwt.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Nimbus JOSE+JWT — JWKS fetch and RSA key parsing -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${nimbus.version}</version>
         </dependency>
 
         <!-- Jackson — pulled transitively by WebFlux but declared explicitly for compile-time use -->

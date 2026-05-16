@@ -15,7 +15,9 @@ server:
 
 gateway:
   jwt:
-    secret: ${AUTH_JWT_SECRET}
+    jwks-uri: ${GATEWAY_JWKS_URI:http://auth-service:8090/api/auth/.well-known/jwks.json}
+    issuer: ${GATEWAY_JWT_ISSUER:certguard-cloud}
+    audience: ${GATEWAY_JWT_AUDIENCE:certguard-ui}
   cors:
     allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
   dev-mode: ${GATEWAY_DEV_MODE:false}

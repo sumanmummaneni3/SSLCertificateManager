@@ -29,6 +29,7 @@ public class TokenService {
     private final GoogleAuthService googleAuthService;
     private final MicrosoftAuthService microsoftAuthService;
     private final EmailAuthService emailAuthService;
+    private final AuthProvisioningService provisioningService;
 
     /**
      * Dispatches to the correct provider, creates a session, and returns a signed unified token.
@@ -50,9 +51,17 @@ public class TokenService {
         UUID sessionId = UUID.randomUUID();
         Instant expiry = Instant.now().plusSeconds(tokenProvider.expirationSeconds());
 
+        OrgContextRecord ctx = null;
+        try {
+            ctx = provisioningService.resolveOrProvision(user.getEmail(), user.getName());
+        } catch (Exception ex) {
+            log.error("Failed to resolve org context for {} — JWT will have empty org claims: {}",
+                    user.getEmail(), ex.getMessage());
+        }
+
         String jwt = tokenProvider.issue(
                 user.getId(), provider, user.getEmail(), user.getName(),
-                user.getProviderUserId(), sessionId);
+                user.getProviderUserId(), sessionId, ctx);
 
         UserSession session = UserSession.builder()
                 .id(sessionId)
