@@ -4,8 +4,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# Set GHCR_IMAGE in your .env file:
-#   GHCR_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard
+# Required .env entries:
+#   GHCR_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-app
+#   GHCR_AUTH_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-auth-service
 
 services:
   app:
@@ -13,5 +14,5 @@ services:
     build: !reset null
 
   auth-service:
-    image: ${GHCR_IMAGE}-auth:latest
+    image: ${GHCR_AUTH_IMAGE}:latest
     build: !reset null
