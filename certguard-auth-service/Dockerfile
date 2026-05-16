@@ -36,7 +36,10 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 COPY --from=builder /build/target/certguard-auth-service-*.jar app.jar
 
-RUN chown appuser:appgroup app.jar
+RUN chown appuser:appgroup app.jar \
+ && mkdir -p /opt/certguard-auth/certs \
+ && chown appuser:appgroup /opt/certguard-auth/certs
+
 USER appuser
 
 EXPOSE 8090
