@@ -1,0 +1,27 @@
+# Production image override — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+#
+# This file replaces the build: blocks in docker-compose.yml with pre-built GHCR
+# image references so that no Docker build happens on the VPS.
+#
+# Required variables in /opt/certguard/.env on the VPS:
+#   GITHUB_REPOSITORY_OWNER  — GitHub username or org that owns the GHCR packages
+#                              (e.g. myorg — images must be at ghcr.io/myorg/certguard-*)
+#   APP_IMAGE_TAG             — SHA or version tag to deploy (e.g. abc1234 or v1.2.0)
+#                              Defaults to "latest" when not set.
+#
+# The deploy script (scripts/vps-deploy.sh) writes APP_IMAGE_TAG to .env.deploy and
+# passes both --env-file .env --env-file .env.deploy so .env is never modified.
+
+services:
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-app:${APP_IMAGE_TAG:-latest}
+    build: !reset null
+
+  gateway:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-gateway:${APP_IMAGE_TAG:-latest}
+    build: !reset null
+
+  ui:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-ui:${APP_IMAGE_TAG:-latest}
+    build: !reset null
