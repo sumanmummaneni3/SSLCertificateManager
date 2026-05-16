@@ -208,50 +208,9 @@ The credentials are saved to `/home/deploy/.docker/config.json` and persist acro
 
 ---
 
-## 9. Generate SSH key for GitHub Actions
+## 9. First deploy
 
-GitHub Actions SSHes into the VPS to run the deploy script. Generate a dedicated key pair for this.
-
-```bash
-# Generate the key pair as the deploy user
-sudo -u deploy ssh-keygen \
-  -t ed25519 \
-  -C "github-actions-certguard-deploy" \
-  -f /home/deploy/.ssh/github_actions \
-  -N ""
-
-# Authorise the public key for SSH login
-sudo -u deploy bash -c \
-  'cat /home/deploy/.ssh/github_actions.pub >> /home/deploy/.ssh/authorized_keys'
-chmod 600 /home/deploy/.ssh/authorized_keys
-
-# Print the PRIVATE key — you will paste this into GitHub as a secret
-sudo cat /home/deploy/.ssh/github_actions
-```
-
----
-
-## 10. Configure GitHub Actions secrets
-
-**On GitHub → your repo → Settings → Secrets and variables → Actions → New repository secret:**
-
-| Secret name | Value |
-|---|---|
-| `VPS_HOST` | Your VPS IP address or domain (e.g. `1.2.3.4`) |
-| `VPS_USER` | `deploy` |
-| `VPS_SSH_KEY` | The full private key printed in step 9 (including `-----BEGIN...` and `-----END...` lines) |
-
----
-
-## 11. First deploy
-
-### Option A — Trigger from GitHub Actions (recommended)
-
-1. Go to **GitHub → your repo → Actions → Deploy to VPS**
-2. Click **Run workflow** → leave `image_tag` blank (uses `latest`) → **Run workflow**
-3. Watch the workflow log — it will SSH in and run `vps-deploy.sh`
-
-### Option B — Run manually on the VPS
+Run the deploy script on the VPS whenever you are ready. GitHub Actions builds and pushes the images to GHCR automatically on every push to `main` — the VPS just pulls them.
 
 ```bash
 sudo -u deploy bash /opt/certguard/scripts/vps-deploy.sh latest
@@ -268,7 +227,7 @@ All services should show `healthy` within 2 minutes.
 
 ---
 
-## 12. Smoke test
+## 10. Smoke test
 
 ```bash
 # Health check through nginx → gateway → app
