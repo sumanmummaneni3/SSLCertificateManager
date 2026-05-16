@@ -66,7 +66,9 @@ public class JwtValidationFilter implements WebFilter, Ordered {
     /** Paths that bypass JWT validation entirely. */
     private static final List<String> PUBLIC_PATTERNS = List.of(
             "/api/auth/**",
-            "/actuator/**"
+            "/actuator/**",
+            "/oauth2/**",
+            "/login/**"
     );
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
