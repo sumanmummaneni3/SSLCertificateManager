@@ -138,6 +138,12 @@ public class ReverseProxyFilter implements WebFilter, Ordered {
                 filtered.addAll(name, values);
             }
         });
+        // Preserve the original Host as X-Forwarded-Host so the downstream app can
+        // resolve {baseUrl} to the public domain rather than the internal Docker hostname.
+        String originalHost = original.getFirst(HttpHeaders.HOST);
+        if (originalHost != null && filtered.getFirst("X-Forwarded-Host") == null) {
+            filtered.set("X-Forwarded-Host", originalHost);
+        }
         // Rewrite Host to match the upstream
         URI upstreamUri = URI.create(upstreamBase);
         filtered.set(HttpHeaders.HOST, upstreamUri.getHost()

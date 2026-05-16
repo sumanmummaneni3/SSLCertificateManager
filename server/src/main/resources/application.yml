@@ -152,6 +152,7 @@ springdoc:
 
 server:
   port: 8443
+  forward-headers-strategy: native
   ssl:
     enabled: true
     key-store: /opt/certguard/certs/certguard.p12
