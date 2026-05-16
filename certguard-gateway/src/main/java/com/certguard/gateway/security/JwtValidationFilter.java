@@ -85,8 +85,27 @@ public class JwtValidationFilter implements WebFilter, Ordered {
 
     @PostConstruct
     public void initKeys() {
-        this.publicKey = fetchPublicKey();
-        log.info("RS256 public key loaded from JWKS at {}", gwJwtProps.jwksUri());
+        int maxAttempts = 10;
+        int delaySeconds = 6;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                this.publicKey = fetchPublicKey();
+                log.info("RS256 public key loaded from JWKS at {} (attempt {})",
+                        gwJwtProps.jwksUri(), attempt);
+                return;
+            } catch (Exception ex) {
+                if (attempt == maxAttempts) {
+                    throw new IllegalStateException(
+                            "Failed to load RS256 public key from JWKS after " + maxAttempts + " attempts", ex);
+                }
+                log.warn("JWKS fetch attempt {}/{} failed ({}), retrying in {}s…",
+                        attempt, maxAttempts, ex.getMessage(), delaySeconds);
+                try { Thread.sleep(delaySeconds * 1000L); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for JWKS", ie);
+                }
+            }
+        }
     }
 
     @Override
