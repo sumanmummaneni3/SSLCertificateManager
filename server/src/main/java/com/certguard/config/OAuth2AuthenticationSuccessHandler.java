@@ -15,10 +15,12 @@ import com.certguard.repository.UserRepository;
 import com.certguard.security.JwtTokenProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
@@ -154,6 +156,15 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
                 isPlatformAdmin, orgRole);
 
         String redirect = baseUrl + "/?token=" + token + (isNewUser.get() ? "&newUser=true" : "");
+
+        // The session was only needed for the OAuth2 state round-trip.
+        // Invalidate it now so normal API use remains effectively stateless.
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        SecurityContextHolder.clearContext();
+
         getRedirectStrategy().sendRedirect(request, response, redirect);
     }
 }

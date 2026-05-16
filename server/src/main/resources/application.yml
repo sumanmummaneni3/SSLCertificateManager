@@ -153,6 +153,14 @@ springdoc:
 server:
   port: 8443
   forward-headers-strategy: native
+  servlet:
+    session:
+      timeout: 60s
+      cookie:
+        name: CGSESSION
+        http-only: true
+        secure: true
+        same-site: lax
   ssl:
     enabled: true
     key-store: /opt/certguard/certs/certguard.p12
