@@ -124,7 +124,7 @@ jobs:
       - name: Build and push certguard-auth-service image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./certguard-auth-service
           file: certguard-auth-service/Dockerfile
           push: true
           tags: |

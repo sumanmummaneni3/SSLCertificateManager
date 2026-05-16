@@ -106,8 +106,8 @@ services:
   # ─────────────────────────────────────────
   auth-service:
     build:
-      context: ..
-      dockerfile: certguard-auth-service/Dockerfile
+      context: ../certguard-auth-service
+      dockerfile: Dockerfile
     container_name: certguard-auth-service
     restart: unless-stopped
     depends_on:
