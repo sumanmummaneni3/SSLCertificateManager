@@ -8,6 +8,7 @@
 #   GHCR_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-app
 #   GHCR_AUTH_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-auth-service
 #   GHCR_GATEWAY_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-gateway
+#   GHCR_UI_IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/certguard-ui
 
 services:
   app:
@@ -20,4 +21,8 @@ services:
 
   gateway:
     image: ${GHCR_GATEWAY_IMAGE}:latest
+    build: !reset null
+
+  ui:
+    image: ${GHCR_UI_IMAGE}:latest
     build: !reset null

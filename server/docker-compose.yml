@@ -210,6 +210,18 @@ services:
       - certguard-net
 
   # ─────────────────────────────────────────
+  # CertGuard React UI
+  # ─────────────────────────────────────────
+  ui:
+    build:
+      context: ../ui
+      dockerfile: Dockerfile
+    container_name: certguard-ui
+    restart: unless-stopped
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
   # NGINX Reverse Proxy (port 443)
   # ─────────────────────────────────────────
   nginx:
@@ -225,6 +237,8 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+      ui:
+        condition: service_started
     networks:
       - certguard-net
 
