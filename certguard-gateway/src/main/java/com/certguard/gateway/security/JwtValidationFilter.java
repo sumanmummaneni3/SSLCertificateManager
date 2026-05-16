@@ -58,8 +58,8 @@ public class JwtValidationFilter implements WebFilter, Ordered {
      */
     private static final int FILTER_ORDER = Ordered.HIGHEST_PRECEDENCE + 10;
 
-    private static final String ISSUER   = "certguard-auth";
-    private static final String AUDIENCE = "certguard-apps";
+    private static final String ISSUER   = "certguard-cloud";
+    private static final String AUDIENCE = "certguard-ui";
 
     private static final String BEARER_PREFIX = "Bearer ";
 
