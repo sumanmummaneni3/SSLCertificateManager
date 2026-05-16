@@ -25,6 +25,12 @@ gateway:
         upstream: ${GATEWAY_AUTH_UPSTREAM:http://localhost:8090}
       - path-prefix: /api/v1
         upstream: ${GATEWAY_SERVER_UPSTREAM:http://localhost:8443}
+      - path-prefix: /oauth2
+        upstream: ${GATEWAY_SERVER_UPSTREAM:http://localhost:8443}
+      - path-prefix: /login
+        upstream: ${GATEWAY_SERVER_UPSTREAM:http://localhost:8443}
+      - path-prefix: /agent
+        upstream: ${GATEWAY_SERVER_UPSTREAM:http://localhost:8443}
     connect-timeout-ms: 5000
     response-timeout-ms: 30000
 
