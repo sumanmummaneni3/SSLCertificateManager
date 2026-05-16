@@ -159,7 +159,7 @@ services:
       GATEWAY_SERVER_UPSTREAM:      https://app:8443
       JAVA_OPTS:                    "-Xms128m -Xmx256m -XX:+UseContainerSupport"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q UP || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -180,7 +180,7 @@ services:
       gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ | grep -q 'id=\"root\"' || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ | grep -q 'id=\"root\"' || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

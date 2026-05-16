@@ -87,7 +87,7 @@ public class ReverseProxyFilter implements WebFilter, Ordered {
         String upstream = resolveUpstream(path);
 
         if (upstream == null) {
-            return notFound(exchange);
+            return chain.filter(exchange);
         }
 
         URI upstreamUri = buildUri(upstream, exchange.getRequest().getURI());

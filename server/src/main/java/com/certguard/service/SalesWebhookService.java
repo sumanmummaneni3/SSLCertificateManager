@@ -6,6 +6,7 @@ import com.certguard.entity.Organization;
 import com.certguard.entity.Subscription;
 import com.certguard.enums.SalesWebhookEventType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -28,8 +29,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SalesWebhookService {
 
+    private static final ObjectMapper objectMapper =
+            new ObjectMapper().registerModule(new JavaTimeModule());
+
     private final SalesWebhookProperties props;
-    private final ObjectMapper objectMapper;
 
     @Async
     public void fire(SalesWebhookEventType type,
