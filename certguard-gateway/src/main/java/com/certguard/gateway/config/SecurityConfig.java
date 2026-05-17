@@ -72,13 +72,15 @@ public class SecurityConfig {
         }
 
         CorsConfiguration config = new CorsConfiguration();
+        // setAllowedOriginPatterns is required in Spring 6.x when allowCredentials=true;
+        // setAllowedOrigins causes CORS rejection even for matching origins in this mode.
         if (devMode && hasWildcard) {
             config.setAllowedOriginPatterns(List.of("*"));
         } else {
-            config.setAllowedOrigins(origins);
+            config.setAllowedOriginPatterns(origins);
         }
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        config.setAllowedHeaders(List.of("*"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Forwarded-For"));
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
