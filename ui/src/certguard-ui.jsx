@@ -1058,6 +1058,12 @@ const api = {
   // Invite acceptance endpoints
   validateInvite: (token) => api.call("POST", `/api/v1/auth/invite/validate?token=${encodeURIComponent(token)}`),
   acceptInvite:   (data) => api.call("POST", "/api/v1/auth/invite/accept", data),
+  // Email auth — registration & password reset
+  registerEmail:        (data) => api.call("POST", "/api/auth/register", data),
+  verifyEmail:          (token) => api.call("GET", `/api/auth/verify-email?token=${encodeURIComponent(token)}`),
+  resendVerification:   (email) => api.call("POST", "/api/auth/resend-verification", { email }),
+  forgotPassword:       (email) => api.call("POST", "/api/auth/forgot-password", { email }),
+  resetPassword:        (data)  => api.call("POST", "/api/auth/reset-password", data),
   // Platform admin endpoints
   admin: {
     listOrgs:    (token) => api.call("GET", "/api/v1/admin/orgs", null, token),
@@ -1140,13 +1146,19 @@ function DaysBar({ days }) {
 }
 
 // ─── LAUNCH SCREEN ───────────────────────────────────────────────────────────
-function LaunchScreen({ onToken }) {
+function LaunchScreen({ onToken, onPostRegister, onForgotPassword }) {
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState("");
   const [typed, setTyped]               = useState("");
   const [resetOnboarding, setResetOnboarding] = useState(false);
+  // "signin" | "register"
+  const [authTab, setAuthTab]           = useState("signin");
+  // Registration extra fields
+  const [confirmPassword, setConfirmPassword] = useState("");
+  // Whether the last login attempt returned EMAIL_NOT_VERIFIED
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
   // Runtime dev-mode flag — fetched from /api/v1/auth/config so the login form
   // always matches the server's actual mode regardless of how the bundle was built.
   const [devMode, setDevMode] = useState(null); // null = loading
@@ -1205,7 +1217,7 @@ function LaunchScreen({ onToken }) {
   };
 
   const handleEmailLogin = async () => {
-    setError(""); setLoading(true);
+    setError(""); setEmailNotVerified(false); setLoading(true);
     try {
       const res = await fetch("/api/auth/token", {
         method: "POST",
@@ -1213,9 +1225,39 @@ function LaunchScreen({ onToken }) {
         body: JSON.stringify({ provider: "email", email, password }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || data.message || "Login failed");
+      if (!res.ok) {
+        // Check for EMAIL_NOT_VERIFIED in any error field
+        const raw = JSON.stringify(data);
+        if (res.status === 401 && raw.includes("EMAIL_NOT_VERIFIED")) {
+          setEmailNotVerified(true);
+          return;
+        }
+        throw new Error(data.detail || data.message || "Login failed");
+      }
       if (data?.token) onToken(data.token, data.orgId, data.email);
       else throw new Error("No token in response");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailRegister = async () => {
+    setError(""); setLoading(true);
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      setLoading(false);
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      setLoading(false);
+      return;
+    }
+    try {
+      await api.registerEmail({ email, password });
+      onPostRegister(email);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1237,8 +1279,12 @@ function LaunchScreen({ onToken }) {
       </div>
 
       <div className="launch-card">
-        <div className="launch-title">Welcome back</div>
-        <p className="launch-sub">Sign in to access your certificate dashboard.</p>
+        <div className="launch-title">{authTab === "register" ? "Create account" : "Welcome back"}</div>
+        <p className="launch-sub">
+          {authTab === "register"
+            ? "Start monitoring your TLS certificates."
+            : "Sign in to access your certificate dashboard."}
+        </p>
 
         {devMode === null ? (
           <div style={{ textAlign: "center", padding: "1rem" }}><Spinner /></div>
@@ -1270,62 +1316,164 @@ function LaunchScreen({ onToken }) {
           </>
         ) : (
           <>
-            {error && <div className="alert alert-error">⚠ {error}</div>}
-
-            {providers.filter(p => p.type === "oauth2").map(p => (
-              <button
-                key={p.id}
-                className="btn btn-primary"
-                onClick={() => handleOAuthLogin(p.id)}
-                disabled={loading}
-                style={{ marginBottom: "0.75rem" }}
-              >
-                {loading ? <><Spinner /> Connecting...</> : (
-                  <><span>{p.id === "google" ? "🔑" : "🪟"}</span> Continue with {p.id.charAt(0).toUpperCase() + p.id.slice(1)}</>
-                )}
-              </button>
-            ))}
-
+            {/* Sign in / Create account tab switcher — only shown when email provider is enabled */}
             {providers.some(p => p.id === "email") && (
+              <div style={{ display: "flex", marginBottom: "1.25rem", borderBottom: "1px solid var(--border)" }}>
+                <button
+                  className={`admin-tab${authTab === "signin" ? " active" : ""}`}
+                  onClick={() => { setAuthTab("signin"); setError(""); setEmailNotVerified(false); }}
+                  aria-pressed={authTab === "signin"}
+                  style={{ flex: 1 }}
+                >
+                  Sign in
+                </button>
+                <button
+                  className={`admin-tab${authTab === "register" ? " active" : ""}`}
+                  onClick={() => { setAuthTab("register"); setError(""); setEmailNotVerified(false); }}
+                  aria-pressed={authTab === "register"}
+                  style={{ flex: 1 }}
+                >
+                  Create account
+                </button>
+              </div>
+            )}
+
+            {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
+
+            {/* EMAIL_NOT_VERIFIED inline message */}
+            {emailNotVerified && (
+              <div className="alert alert-warning" role="alert">
+                Please verify your email before signing in.{" "}
+                <button
+                  className="btn-ghost"
+                  style={{ display: "inline", padding: "0", fontSize: "inherit", color: "var(--accent)" }}
+                  onClick={async () => {
+                    try {
+                      await api.resendVerification(email);
+                    } catch {
+                      /* ignore — always says 202 */
+                    }
+                    onPostRegister(email);
+                  }}
+                >
+                  Resend verification email
+                </button>
+              </div>
+            )}
+
+            {/* ── Sign In form ── */}
+            {authTab === "signin" && !emailNotVerified && (
               <>
-                {providers.some(p => p.type === "oauth2") && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "1rem 0", color: "var(--muted)", fontSize: "0.8rem" }}>
-                    <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
-                    or
-                    <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
-                  </div>
+                {providers.filter(p => p.type === "oauth2").map(p => (
+                  <button
+                    key={p.id}
+                    className="btn btn-primary"
+                    onClick={() => handleOAuthLogin(p.id)}
+                    disabled={loading}
+                    style={{ marginBottom: "0.75rem" }}
+                  >
+                    {loading ? <><Spinner /> Connecting...</> : (
+                      <><span aria-hidden="true">{p.id === "google" ? "G" : "W"}</span> Continue with {p.id.charAt(0).toUpperCase() + p.id.slice(1)}</>
+                    )}
+                  </button>
+                ))}
+
+                {providers.some(p => p.id === "email") && (
+                  <>
+                    {providers.some(p => p.type === "oauth2") && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "1rem 0", color: "var(--muted)", fontSize: "0.8rem" }} role="separator" aria-label="or">
+                        <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
+                        or
+                        <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
+                      </div>
+                    )}
+                    <div className="field">
+                      <label htmlFor="email-input">Email</label>
+                      <input
+                        id="email-input"
+                        type="email"
+                        autoComplete="username"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        placeholder="you@example.com"
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="password-input">Password</label>
+                      <input
+                        id="password-input"
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && handleEmailLogin()}
+                        placeholder="••••••••"
+                      />
+                    </div>
+                    <div style={{ textAlign: "right", marginBottom: "1rem", marginTop: "-0.5rem" }}>
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: "0.75rem", padding: "0", color: "var(--muted)" }}
+                        onClick={() => onForgotPassword()}
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
+                    <button className="btn btn-secondary" onClick={handleEmailLogin} disabled={loading}>
+                      {loading ? <><Spinner /> Signing in...</> : "Sign in with Email"}
+                    </button>
+                  </>
                 )}
+
+                {providers.length === 0 && (
+                  <p style={{ color: "var(--muted)", textAlign: "center", fontSize: "0.85rem" }}>
+                    Loading sign-in options...
+                  </p>
+                )}
+              </>
+            )}
+
+            {/* ── Create Account form ── */}
+            {authTab === "register" && (
+              <>
                 <div className="field">
-                  <label htmlFor="email-input">Email</label>
+                  <label htmlFor="reg-email-input">Email</label>
                   <input
-                    id="email-input"
+                    id="reg-email-input"
                     type="email"
+                    autoComplete="username"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     placeholder="you@example.com"
                   />
                 </div>
                 <div className="field">
-                  <label htmlFor="password-input">Password</label>
+                  <label htmlFor="reg-password-input">Password</label>
                   <input
-                    id="password-input"
+                    id="reg-password-input"
                     type="password"
+                    autoComplete="new-password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleEmailLogin()}
-                    placeholder="••••••••"
+                    placeholder="Min. 8 characters"
                   />
                 </div>
-                <button className="btn btn-secondary" onClick={handleEmailLogin} disabled={loading}>
-                  {loading ? <><Spinner /> Signing in...</> : "Sign in with Email"}
+                <div className="field">
+                  <label htmlFor="reg-confirm-input">Confirm password</label>
+                  <input
+                    id="reg-confirm-input"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleEmailRegister()}
+                    placeholder="Re-enter password"
+                  />
+                </div>
+                <button className="btn btn-primary" onClick={handleEmailRegister} disabled={loading || !email || !password}>
+                  {loading ? <><Spinner /> Creating account...</> : "Create account"}
                 </button>
               </>
-            )}
-
-            {providers.length === 0 && !loading && (
-              <p style={{ color: "var(--muted)", textAlign: "center", fontSize: "0.85rem" }}>
-                Loading sign-in options...
-              </p>
             )}
           </>
         )}
@@ -1334,6 +1482,275 @@ function LaunchScreen({ onToken }) {
       <p className="text-muted text-sm" style={{ marginTop: "2rem" }}>
         API — <span className="text-accent">{window.location.origin}</span>
       </p>
+    </div>
+  );
+}
+
+// ─── POST-REGISTRATION SCREEN ────────────────────────────────────────────────
+function PostRegistrationScreen({ email, onBack }) {
+  const [resending, setResending] = useState(false);
+  const [resent, setResent]       = useState(false);
+  const [resentError, setResentError] = useState("");
+
+  const handleResend = async () => {
+    setResending(true); setResent(false); setResentError("");
+    try {
+      await api.resendVerification(email);
+      setResent(true);
+    } catch {
+      // The endpoint always returns 202; if it throws it's a network error
+      setResentError("Could not resend. Please try again.");
+    } finally {
+      setResending(false);
+    }
+  };
+
+  return (
+    <div className="launch">
+      <div className="launch-logo">
+        <div className="logo-icon" aria-hidden="true">✉</div>
+        <div className="logo-text">OOPSSSL</div>
+      </div>
+
+      <div className="launch-card">
+        <div className="launch-title">Check your inbox</div>
+        <p className="launch-sub">
+          We sent a verification email to <strong style={{ color: "var(--text)" }}>{email}</strong>.
+          Click the link in the email to activate your account.
+        </p>
+
+        {resent && (
+          <div className="alert alert-info" role="status">
+            Verification email resent — check your inbox.
+          </div>
+        )}
+        {resentError && (
+          <div className="alert alert-error" role="alert">{resentError}</div>
+        )}
+
+        <button className="btn btn-secondary" onClick={handleResend} disabled={resending} style={{ marginBottom: "0.75rem" }}>
+          {resending ? <><Spinner /> Sending...</> : "Resend email"}
+        </button>
+
+        <button className="btn btn-ghost" onClick={onBack} style={{ width: "100%", textAlign: "center" }}>
+          Back to sign in
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── FORGOT PASSWORD SCREEN ───────────────────────────────────────────────────
+function ForgotPasswordScreen({ onBack }) {
+  const [email, setEmail]     = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent]       = useState(false);
+  const [error, setError]     = useState("");
+
+  const handleSubmit = async (ev) => {
+    ev.preventDefault();
+    if (!email.trim()) return;
+    setLoading(true); setError("");
+    try {
+      await api.forgotPassword(email.trim());
+      setSent(true);
+    } catch {
+      // The endpoint always returns 202; any thrown error is a network issue
+      setSent(true); // still show the generic message to avoid leaking account existence
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="launch">
+      <div className="launch-logo">
+        <div className="logo-icon" aria-hidden="true">🔐</div>
+        <div className="logo-text">OOPSSSL</div>
+      </div>
+
+      <div className="launch-card">
+        <div className="launch-title">Reset your password</div>
+
+        {sent ? (
+          <>
+            <p className="launch-sub">
+              If an account exists for that email, we sent a password reset link. Check your inbox.
+            </p>
+            <button className="btn btn-secondary" onClick={onBack}>Back to sign in</button>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <p className="launch-sub">Enter your account email and we will send you a reset link.</p>
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+            <div className="field">
+              <label htmlFor="forgot-email">Email</label>
+              <input
+                id="forgot-email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoFocus
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={loading || !email.trim()} style={{ marginBottom: "0.75rem" }}>
+              {loading ? <><Spinner /> Sending...</> : "Send reset link"}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={onBack} style={{ width: "100%", textAlign: "center" }}>
+              Back to sign in
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── VERIFY EMAIL LANDING PAGE ────────────────────────────────────────────────
+// The verification token from the email link is consumed here. If invalid/expired,
+// the user is sent back to sign-in where EMAIL_NOT_VERIFIED will offer a resend option.
+function VerifyEmailScreen({ verifyToken, onGoToSignIn }) {
+  // Derive initial state synchronously — no token means error right away
+  const [status, setStatus]   = useState(() => verifyToken ? "loading" : "error");
+  const [errorMsg, setErrorMsg] = useState(() => verifyToken ? "" : "No verification token found in the link.");
+
+  useEffect(() => {
+    if (!verifyToken) return; // already set to error in initial state
+    let cancelled = false;
+    api.verifyEmail(verifyToken)
+      .then(() => { if (!cancelled) setStatus("success"); })
+      .catch((e) => {
+        if (!cancelled) {
+          setErrorMsg(e.message || "Verification failed.");
+          setStatus("error");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [verifyToken]);
+
+  return (
+    <div className="launch">
+      <div className="launch-logo">
+        <div className="logo-icon" aria-hidden="true">✉</div>
+        <div className="logo-text">OOPSSSL</div>
+      </div>
+
+      <div className="launch-card">
+        {status === "loading" && (
+          <div className="loading-center" style={{ padding: "2rem 0" }}>
+            <Spinner lg />
+            <span>Verifying your email...</span>
+          </div>
+        )}
+
+        {status === "success" && (
+          <>
+            <div className="launch-title" style={{ color: "var(--green)" }}>Email verified</div>
+            <p className="launch-sub">Your email address has been confirmed. You can now sign in.</p>
+            <button className="btn btn-primary" onClick={onGoToSignIn}>Sign in</button>
+          </>
+        )}
+
+        {status === "error" && (
+          <>
+            <div className="launch-title" style={{ color: "var(--red)" }}>Link invalid or expired</div>
+            <p className="launch-sub">{errorMsg || "This verification link is invalid or has expired."}</p>
+            <p className="launch-sub" style={{ marginTop: "-1rem" }}>
+              Try signing in — you can request a new verification email from the sign-in page.
+            </p>
+            <button className="btn btn-secondary" onClick={onGoToSignIn} style={{ marginBottom: "0.75rem" }}>
+              Resend verification email
+            </button>
+            <button className="btn btn-ghost" onClick={onGoToSignIn} style={{ width: "100%", textAlign: "center" }}>
+              Back to sign in
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── RESET PASSWORD LANDING PAGE ──────────────────────────────────────────────
+function ResetPasswordScreen({ resetToken, onGoToSignIn }) {
+  const [newPassword, setNewPassword]       = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading]               = useState(false);
+  const [status, setStatus]                 = useState("form"); // form | success | error
+  const [error, setError]                   = useState("");
+
+  const handleSubmit = async (ev) => {
+    ev.preventDefault();
+    if (newPassword !== confirmPassword) { setError("Passwords do not match"); return; }
+    if (newPassword.length < 8) { setError("Password must be at least 8 characters"); return; }
+    setLoading(true); setError("");
+    try {
+      await api.resetPassword({ token: resetToken, newPassword });
+      setStatus("success");
+    } catch (e) {
+      setError(e.message || "Password reset failed. The link may have expired.");
+      setStatus("error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="launch">
+      <div className="launch-logo">
+        <div className="logo-icon" aria-hidden="true">🔐</div>
+        <div className="logo-text">OOPSSSL</div>
+      </div>
+
+      <div className="launch-card">
+        {status === "success" ? (
+          <>
+            <div className="launch-title" style={{ color: "var(--green)" }}>Password reset</div>
+            <p className="launch-sub">Your password has been updated. You can now sign in with your new password.</p>
+            <button className="btn btn-primary" onClick={onGoToSignIn}>Sign in</button>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <div className="launch-title">Set a new password</div>
+            <p className="launch-sub">Enter and confirm your new password below.</p>
+
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+            <div className="field">
+              <label htmlFor="reset-password-input">New password</label>
+              <input
+                id="reset-password-input"
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                placeholder="Min. 8 characters"
+                autoFocus
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="reset-confirm-input">Confirm new password</label>
+              <input
+                id="reset-confirm-input"
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleSubmit(e)}
+                placeholder="Re-enter new password"
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={loading || !newPassword || !confirmPassword} style={{ marginBottom: "0.75rem" }}>
+              {loading ? <><Spinner /> Resetting...</> : "Reset password"}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={onGoToSignIn} style={{ width: "100%", textAlign: "center" }}>
+              Back to sign in
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
@@ -4067,9 +4484,15 @@ export default function App() {
   const [orgData, setOrgData] = useState(null);
   const [meData, setMeData]   = useState(null);
   const [, setTargets] = useState(null);
-  const [phase, setPhase]     = useState("launch"); // launch | org-setup | first-target | app | invite
+  // launch | org-setup | first-target | app | invite |
+  // post-register | forgot-password | verify-email | reset-password
+  const [phase, setPhase]     = useState("launch");
   const [loading, setLoading] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
+  // Stored email for post-registration screen
+  const [pendingEmail, setPendingEmail] = useState("");
+  // Token read from URL for verify-email and reset-password pages
+  const [authUrlToken, setAuthUrlToken] = useState("");
   const { toasts, add: toast } = useToasts();
 
   const handleToken = async (t) => {
@@ -4111,15 +4534,35 @@ export default function App() {
 
   // Pick up the JWT after OAuth redirect (?token= on non-invite paths) or start invite
   // flow (?invite= anywhere, or ?token= when the path is /invite).
+  // Also handles deep-link paths: /auth/verify-email and /auth/reset-password.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
     const urlInvite = params.get("invite");
-    const isInvitePath = window.location.pathname === "/invite";
+    const pathname = window.location.pathname;
+    const isInvitePath = pathname === "/invite";
+
+    // ── Email verification deep link ─────────────────────────────────────────
+    if (pathname === "/auth/verify-email") {
+      const verifyToken = params.get("token");
+      window.history.replaceState({}, "", "/");
+      setAuthUrlToken(verifyToken || "");
+      setPhase("verify-email");
+      return;
+    }
+
+    // ── Password reset deep link ──────────────────────────────────────────────
+    if (pathname === "/auth/reset-password") {
+      const resetTok = params.get("token");
+      window.history.replaceState({}, "", "/");
+      setAuthUrlToken(resetTok || "");
+      setPhase("reset-password");
+      return;
+    }
 
     // Handle OAuth callback via URL fragment (new auth-service flow)
     const hash = window.location.hash;
-    if ((window.location.pathname === "/auth/callback" || hash.startsWith("#token=")) && hash) {
+    if ((pathname === "/auth/callback" || hash.startsWith("#token=")) && hash) {
       const hashParams = new URLSearchParams(hash.slice(1));
       const hashToken = hashParams.get("token");
       const hashError = hashParams.get("error");
@@ -4181,9 +4624,21 @@ export default function App() {
     );
   }
 
+  const goToLaunch = () => setPhase("launch");
+
   return (
     <>
-      {phase === "launch"       && <LaunchScreen onToken={handleToken} />}
+      {phase === "launch" && (
+        <LaunchScreen
+          onToken={handleToken}
+          onPostRegister={(email) => { setPendingEmail(email); setPhase("post-register"); }}
+          onForgotPassword={() => setPhase("forgot-password")}
+        />
+      )}
+      {phase === "post-register"  && <PostRegistrationScreen email={pendingEmail} onBack={goToLaunch} />}
+      {phase === "forgot-password" && <ForgotPasswordScreen onBack={goToLaunch} />}
+      {phase === "verify-email"   && <VerifyEmailScreen verifyToken={authUrlToken} onGoToSignIn={goToLaunch} />}
+      {phase === "reset-password" && <ResetPasswordScreen resetToken={authUrlToken} onGoToSignIn={goToLaunch} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
       {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} />}
