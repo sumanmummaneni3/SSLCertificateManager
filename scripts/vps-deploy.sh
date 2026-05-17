@@ -128,17 +128,21 @@ log "Pulling images for tag ${IMAGE_TAG}..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
 log "Image pull complete."
 
-# ── 9. Bring services up ─────────────────────────────────────────────────────
+# ── 9. Remove existing containers so compose can replace them ────────────────
+log "Removing existing app/gateway/ui containers..."
+docker rm -f certguard-app certguard-gateway certguard-ui 2>/dev/null || true
+
+# ── 10. Bring services up ────────────────────────────────────────────────────
 log "Deploying services (only app, gateway, ui are restarted; no-deps=${NO_DEPS:-false})..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate ${NO_DEPS} app gateway ui
 log "docker compose up complete."
 
-# ── 10. Health checks ────────────────────────────────────────────────────────
+# ── 11. Health checks ────────────────────────────────────────────────────────
 wait_healthy "certguard-app"     "${HEALTH_APP_TIMEOUT}"
 wait_healthy "certguard-gateway" "${HEALTH_GATEWAY_TIMEOUT}"
 wait_healthy "certguard-ui"      "${HEALTH_UI_TIMEOUT}"
 
-# ── 11. Cleanup ──────────────────────────────────────────────────────────────
+# ── 12. Cleanup ──────────────────────────────────────────────────────────────
 log "Cleaning up ${ENV_DEPLOY}..."
 rm -f "${ENV_DEPLOY}"
 
