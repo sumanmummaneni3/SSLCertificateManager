@@ -5,24 +5,43 @@
 #   chmod +x /opt/certguard/scripts/vps-deploy.sh
 #
 # Usage:
-#   bash /opt/certguard/scripts/vps-deploy.sh <IMAGE_TAG>
+#   bash /opt/certguard/scripts/vps-deploy.sh [OPTIONS] [IMAGE_TAG]
 #
 # IMAGE_TAG: The Docker image tag to deploy (SHA or version string, e.g. abc1234 or v1.2.0).
 #            Defaults to "latest" if not supplied.
 #
+# Options:
+#   --no-deps   Pass --no-deps to docker compose up, skipping recreation of
+#               dependency containers (postgres, rabbitmq). Use this when those
+#               containers are already running and must not be restarted.
+#
+# Examples:
+#   bash scripts/vps-deploy.sh latest --no-deps
+#   bash scripts/vps-deploy.sh v1.2.0
+#   bash scripts/vps-deploy.sh --no-deps
+#
 # Environment variables (read from .env):
-#   POSTGRES_USER        — Postgres superuser for pg_dump
-#   POSTGRES_DB          — Database name for pg_dump
+#   POSTGRES_USER           — Postgres superuser for pg_dump
+#   POSTGRES_DB             — Database name for pg_dump
 #   GITHUB_REPOSITORY_OWNER — Owner of the GHCR packages
-#   GITHUB_PAT           — Personal Access Token with read:packages scope (used for GHCR token exchange)
+#   GITHUB_PAT              — Personal Access Token with read:packages scope
 #
 # The script writes a temporary .env.deploy file to pass APP_IMAGE_TAG without
 # modifying the canonical .env file. It is cleaned up on completion.
 
 set -euo pipefail
 
+# ── Argument parsing ──────────────────────────────────────────────────────────
+IMAGE_TAG="latest"
+NO_DEPS=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-deps) NO_DEPS="--no-deps" ;;
+    *)         IMAGE_TAG="$arg" ;;
+  esac
+done
+
 # ── Configuration ────────────────────────────────────────────────────────────
-IMAGE_TAG="${1:-latest}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/certguard}"
 COMPOSE_BASE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
 ENV_DEPLOY=".env.deploy"
@@ -110,8 +129,8 @@ ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
 log "Image pull complete."
 
 # ── 9. Bring services up ─────────────────────────────────────────────────────
-log "Deploying services (only app, gateway, ui are restarted)..."
-${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --no-deps app gateway ui
+log "Deploying services (only app, gateway, ui are restarted; no-deps=${NO_DEPS:-false})..."
+${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build ${NO_DEPS} app gateway ui
 log "docker compose up complete."
 
 # ── 10. Health checks ────────────────────────────────────────────────────────
