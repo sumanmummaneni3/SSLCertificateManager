@@ -130,7 +130,7 @@ log "Image pull complete."
 
 # ── 9. Bring services up ─────────────────────────────────────────────────────
 log "Deploying services (only app, gateway, ui are restarted; no-deps=${NO_DEPS:-false})..."
-${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build ${NO_DEPS} app gateway ui
+${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate ${NO_DEPS} app gateway ui
 log "docker compose up complete."
 
 # ── 10. Health checks ────────────────────────────────────────────────────────
