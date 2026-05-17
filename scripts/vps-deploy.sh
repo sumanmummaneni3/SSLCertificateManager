@@ -43,7 +43,7 @@ done
 
 # ── Configuration ────────────────────────────────────────────────────────────
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/certguard}"
-COMPOSE_BASE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+COMPOSE_BASE="docker compose -p server -f docker-compose.yml -f docker-compose.prod.yml"
 ENV_DEPLOY=".env.deploy"
 HEALTH_APP_TIMEOUT=120
 HEALTH_GATEWAY_TIMEOUT=60
