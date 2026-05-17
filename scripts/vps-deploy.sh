@@ -14,6 +14,7 @@
 #   POSTGRES_USER        — Postgres superuser for pg_dump
 #   POSTGRES_DB          — Database name for pg_dump
 #   GITHUB_REPOSITORY_OWNER — Owner of the GHCR packages
+#   GITHUB_PAT           — Personal Access Token with read:packages scope (used for GHCR token exchange)
 #
 # The script writes a temporary .env.deploy file to pass APP_IMAGE_TAG without
 # modifying the canonical .env file. It is cleaned up on completion.
@@ -93,22 +94,40 @@ log "git pull complete."
 printf 'APP_IMAGE_TAG=%s\n' "${IMAGE_TAG}" > "${ENV_DEPLOY}"
 log "Image tag written to ${ENV_DEPLOY}."
 
-# ── 7. Pull images from GHCR ─────────────────────────────────────────────────
+# ── 7. Authenticate to GHCR via token exchange ───────────────────────────────
+log "Authenticating to GHCR..."
+if [ -z "${GITHUB_PAT:-}" ]; then
+  log "ERROR: GITHUB_PAT is not set in .env. Cannot authenticate to GHCR."
+  exit 1
+fi
+OWNER="${GITHUB_REPOSITORY_OWNER}"
+GHCR_TOKEN=$(curl -fsSL \
+  -u "${OWNER}:${GITHUB_PAT}" \
+  "https://ghcr.io/token?service=ghcr.io&scope=repository:${OWNER}/certguard-app:pull&scope=repository:${OWNER}/certguard-gateway:pull&scope=repository:${OWNER}/certguard-ui:pull" \
+  | jq -r '.token')
+if [ -z "${GHCR_TOKEN}" ] || [ "${GHCR_TOKEN}" = "null" ]; then
+  log "ERROR: Failed to obtain GHCR token. Check GITHUB_PAT and GITHUB_REPOSITORY_OWNER."
+  exit 1
+fi
+echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin
+log "GHCR authentication successful."
+
+# ── 8. Pull images from GHCR ─────────────────────────────────────────────────
 log "Pulling images for tag ${IMAGE_TAG}..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
 log "Image pull complete."
 
-# ── 8. Bring services up ─────────────────────────────────────────────────────
+# ── 9. Bring services up ─────────────────────────────────────────────────────
 log "Deploying services (postgres and rabbitmq are NOT recreated)..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build
 log "docker compose up complete."
 
-# ── 9. Health checks ─────────────────────────────────────────────────────────
+# ── 10. Health checks ────────────────────────────────────────────────────────
 wait_healthy "certguard-app"     "${HEALTH_APP_TIMEOUT}"
 wait_healthy "certguard-gateway" "${HEALTH_GATEWAY_TIMEOUT}"
 wait_healthy "certguard-ui"      "${HEALTH_UI_TIMEOUT}"
 
-# ── 10. Cleanup ──────────────────────────────────────────────────────────────
+# ── 11. Cleanup ──────────────────────────────────────────────────────────────
 log "Cleaning up ${ENV_DEPLOY}..."
 rm -f "${ENV_DEPLOY}"
 
