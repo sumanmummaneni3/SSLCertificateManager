@@ -94,22 +94,14 @@ log "git pull complete."
 printf 'APP_IMAGE_TAG=%s\n' "${IMAGE_TAG}" > "${ENV_DEPLOY}"
 log "Image tag written to ${ENV_DEPLOY}."
 
-# ── 7. Authenticate to GHCR via token exchange ───────────────────────────────
+# ── 7. Authenticate to GHCR ──────────────────────────────────────────────────
 log "Authenticating to GHCR..."
 if [ -z "${GITHUB_PAT:-}" ]; then
   log "ERROR: GITHUB_PAT is not set in .env. Cannot authenticate to GHCR."
   exit 1
 fi
 OWNER="${GITHUB_REPOSITORY_OWNER}"
-GHCR_TOKEN=$(curl -fsSL \
-  -u "${OWNER}:${GITHUB_PAT}" \
-  "https://ghcr.io/token?service=ghcr.io&scope=repository:${OWNER}/certguard-app:pull&scope=repository:${OWNER}/certguard-gateway:pull&scope=repository:${OWNER}/certguard-ui:pull" \
-  | jq -r '.token')
-if [ -z "${GHCR_TOKEN}" ] || [ "${GHCR_TOKEN}" = "null" ]; then
-  log "ERROR: Failed to obtain GHCR token. Check GITHUB_PAT and GITHUB_REPOSITORY_OWNER."
-  exit 1
-fi
-echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin
+echo "${GITHUB_PAT}" | docker login ghcr.io -u "${OWNER}" --password-stdin
 log "GHCR authentication successful."
 
 # ── 8. Pull images from GHCR ─────────────────────────────────────────────────
