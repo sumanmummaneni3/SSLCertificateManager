@@ -110,8 +110,8 @@ ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
 log "Image pull complete."
 
 # ── 9. Bring services up ─────────────────────────────────────────────────────
-log "Deploying services (postgres and rabbitmq are NOT recreated)..."
-${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build
+log "Deploying services (only app, gateway, ui are restarted)..."
+${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build app gateway ui
 log "docker compose up complete."
 
 # ── 10. Health checks ────────────────────────────────────────────────────────
