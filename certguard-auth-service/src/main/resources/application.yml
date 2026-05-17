@@ -5,6 +5,19 @@ spring:
     virtual:
       enabled: true
 
+  mail:
+    host: ${MAIL_HOST:smtp.mailgun.org}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
   datasource:
     url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5432/certguard_auth}
     username: ${AUTH_DB_USERNAME:auth_user}
@@ -69,6 +82,10 @@ auth:
 
   cors:
     allowed-origins: ${AUTH_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+  mail:
+    from: ${MAIL_FROM:noreply@certguard.cloud}
+    from-name: ${MAIL_FROM_NAME:CertGuard}
 
   rate-limit:
     max-attempts: ${AUTH_RATE_LIMIT_MAX_ATTEMPTS:10}

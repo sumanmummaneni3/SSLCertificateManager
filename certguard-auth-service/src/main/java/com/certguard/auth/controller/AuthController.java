@@ -1,9 +1,6 @@
 package com.certguard.auth.controller;
 
-import com.certguard.auth.dto.request.EmailRegisterRequest;
-import com.certguard.auth.dto.request.InitiateRequest;
-import com.certguard.auth.dto.request.TokenRequest;
-import com.certguard.auth.dto.request.ValidateRequest;
+import com.certguard.auth.dto.request.*;
 import com.certguard.auth.dto.response.InitiateResponse;
 import com.certguard.auth.dto.response.TokenResponse;
 import com.certguard.auth.dto.response.ValidateResponse;
@@ -85,16 +82,63 @@ public class AuthController {
 
     /**
      * POST /api/auth/register
-     * Email-only registration. Returns a session token immediately (email unverified).
+     * Email-only registration. Sends verification email; returns 202 (no session token yet).
      */
     @PostMapping("/register")
-    @ResponseStatus(HttpStatus.CREATED)
-    public ResponseEntity<TokenResponse> register(@Valid @RequestBody EmailRegisterRequest req,
-                                                   HttpServletRequest httpReq) {
+    public ResponseEntity<Map<String, String>> register(@Valid @RequestBody EmailRegisterRequest req,
+                                                         HttpServletRequest httpReq) {
         rateLimitService.check(clientIp(httpReq));
-        User user = emailAuthService.register(req);
-        TokenResponse resp = tokenService.createSession(user, "email", clientIp(httpReq));
-        return ResponseEntity.status(HttpStatus.CREATED).body(resp);
+        emailAuthService.register(req);
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(Map.of("message", "Verification email sent to " + req.email() + ". Please check your inbox."));
+    }
+
+    /**
+     * GET /api/auth/verify-email?token=…
+     * Verifies an email address using the token from the verification email.
+     */
+    @GetMapping("/verify-email")
+    public ResponseEntity<Map<String, String>> verifyEmail(@RequestParam String token) {
+        emailAuthService.verifyEmail(token);
+        return ResponseEntity.ok(Map.of("message", "Email verified successfully. You can now sign in."));
+    }
+
+    /**
+     * POST /api/auth/resend-verification
+     * Resends the verification email. Always returns 202 to avoid email enumeration.
+     */
+    @PostMapping("/resend-verification")
+    public ResponseEntity<Map<String, String>> resendVerification(
+            @Valid @RequestBody ResendVerificationRequest req,
+            HttpServletRequest httpReq) {
+        rateLimitService.check(clientIp(httpReq));
+        emailAuthService.resendVerification(req.email());
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(Map.of("message", "If an unverified account exists for that email, a new verification link has been sent."));
+    }
+
+    /**
+     * POST /api/auth/forgot-password
+     * Sends a password-reset email. Always returns 202 to avoid email enumeration.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest req,
+            HttpServletRequest httpReq) {
+        rateLimitService.check(clientIp(httpReq));
+        emailAuthService.forgotPassword(req.email());
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(Map.of("message", "If an account exists for that email, a password reset link has been sent."));
+    }
+
+    /**
+     * POST /api/auth/reset-password
+     * Resets the password using the token from the reset email.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest req) {
+        emailAuthService.resetPassword(req.token(), req.newPassword());
+        return ResponseEntity.ok(Map.of("message", "Password reset successfully. You can now sign in with your new password."));
     }
 
     /**

@@ -58,6 +58,20 @@ public class User {
     @Builder.Default
     private boolean emailVerified = false;
 
+    /** Token emailed to the user to verify their address. Null after verification. */
+    @Column(name = "email_verification_token", length = 256)
+    private String emailVerificationToken;
+
+    @Column(name = "email_verification_expires_at")
+    private Instant emailVerificationExpiresAt;
+
+    /** Token emailed to the user for a self-service password reset. Null when unused. */
+    @Column(name = "password_reset_token", length = 256)
+    private String passwordResetToken;
+
+    @Column(name = "password_reset_expires_at")
+    private Instant passwordResetExpiresAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
