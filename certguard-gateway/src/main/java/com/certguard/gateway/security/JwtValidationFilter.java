@@ -252,9 +252,11 @@ public class JwtValidationFilter implements WebFilter, Ordered {
             requestId = UUID.randomUUID().toString();
         }
 
-        String userId = claims.getSubject();                             // sub = user UUID
-        String orgId  = claims.get("orgId",  String.class);             // nullable
-        String role   = claims.get("orgRole", String.class);            // nullable
+        String userId        = claims.getSubject();                              // sub = user UUID
+        String orgId         = claims.get("orgId",         String.class);      // nullable
+        String role          = claims.get("orgRole",        String.class);      // nullable
+        String email         = claims.get("email",          String.class);      // nullable
+        Boolean platformAdmin = claims.get("platformAdmin", Boolean.class);     // nullable
 
         final String finalRequestId = requestId;
 
@@ -267,21 +269,15 @@ public class JwtValidationFilter implements WebFilter, Ordered {
                             .toList();
                     cgHeaders.forEach(headers::remove);
 
-                    // 2. Inject trusted values.
-                    if (userId != null) {
-                        headers.set("X-CG-User-Id", userId);
-                    }
-                    if (orgId != null) {
-                        headers.set("X-CG-Org-Id", orgId);
-                    }
-                    if (role != null) {
-                        headers.set("X-CG-Role", role);
-                    }
+                    // 2. Inject trusted values from validated JWT claims.
+                    if (userId != null)        { headers.set("X-CG-User-Id",        userId); }
+                    if (orgId != null)         { headers.set("X-CG-Org-Id",         orgId); }
+                    if (role != null)          { headers.set("X-CG-Role",           role); }
+                    if (email != null)         { headers.set("X-CG-Email",          email); }
+                    if (platformAdmin != null) { headers.set("X-CG-Platform-Admin", platformAdmin.toString()); }
                     headers.set("X-Request-Id", finalRequestId);
 
-                    // 3. Re-add the original Authorization header (was cleared by removeIf
-                    //    only if it started with "x-cg-", so it is still present here —
-                    //    but be explicit to guarantee downstream sees it).
+                    // 3. Re-add the original Authorization header.
                     headers.set(HttpHeaders.AUTHORIZATION, originalAuthHeader);
                 })
                 .build();

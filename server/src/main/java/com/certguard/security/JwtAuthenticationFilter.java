@@ -51,8 +51,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
 
-        String token = extractToken(request);
-
         // Acting-as context captured for the audit row, populated when X-Acting-As-Org is used.
         UUID   auditActingUserId    = null;
         String auditActingUserEmail = null;
@@ -61,27 +59,57 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String auditReason          = null;
         boolean needsAudit          = false;
 
-        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
+        // Try trusted X-CG-* headers injected by the gateway after RS256 JWT validation.
+        // The gateway strips any client-supplied X-CG-* headers before injection, so these
+        // are safe to trust for requests arriving through the gateway.
+        String cgUserId        = request.getHeader("X-CG-User-Id");
+        String cgOrgId         = request.getHeader("X-CG-Org-Id");
+        String cgRole          = request.getHeader("X-CG-Role");
+        String cgEmail         = request.getHeader("X-CG-Email");
+        String cgPlatformAdmin = request.getHeader("X-CG-Platform-Admin");
+
+        boolean authedViaGateway = StringUtils.hasText(cgUserId) && StringUtils.hasText(cgOrgId);
+
+        // Fall back to direct JWT validation (local dev / legacy path).
+        Claims claims = null;
+        if (!authedViaGateway) {
+            String token = extractToken(request);
+            if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
+                try { claims = jwtTokenProvider.parseToken(token); }
+                catch (Exception e) { log.warn("Could not parse JWT: {}", e.getMessage()); }
+            }
+        }
+
+        if (authedViaGateway || claims != null) {
             try {
-                Claims claims = jwtTokenProvider.parseToken(token);
-                UUID userId = UUID.fromString(claims.getSubject());
-                UUID orgId  = UUID.fromString(claims.get("orgId", String.class));
-                String email = claims.get("email", String.class);
-
-                // Resolve role — prefer new claims, fall back to legacy `role` claim
-                Boolean platformAdminClaim = claims.get("platformAdmin", Boolean.class);
-                String orgRoleClaim        = claims.get("orgRole",        String.class);
-                String legacyRole          = claims.get("role",           String.class);
-
-                boolean platformAdmin;
+                final UUID userId;
+                final UUID orgId;
+                final String email;
+                final boolean platformAdmin;
                 String orgRole;
-                if (platformAdminClaim != null) {
-                    platformAdmin = platformAdminClaim;
-                    orgRole       = orgRoleClaim;
+
+                if (authedViaGateway) {
+                    userId        = UUID.fromString(cgUserId);
+                    orgId         = UUID.fromString(cgOrgId);
+                    email         = cgEmail;
+                    platformAdmin = Boolean.parseBoolean(cgPlatformAdmin);
+                    orgRole       = cgRole;
                 } else {
-                    // Legacy token — derive from old `role` claim
-                    platformAdmin = "PLATFORM_ADMIN".equals(legacyRole);
-                    orgRole       = platformAdmin ? null : legacyRole;
+                    userId = UUID.fromString(claims.getSubject());
+                    orgId  = UUID.fromString(claims.get("orgId", String.class));
+                    email  = claims.get("email", String.class);
+
+                    Boolean platformAdminClaim = claims.get("platformAdmin", Boolean.class);
+                    String orgRoleClaim        = claims.get("orgRole",       String.class);
+                    String legacyRole          = claims.get("role",          String.class);
+
+                    if (platformAdminClaim != null) {
+                        platformAdmin = platformAdminClaim;
+                        orgRole       = orgRoleClaim;
+                    } else {
+                        platformAdmin = "PLATFORM_ADMIN".equals(legacyRole);
+                        orgRole       = platformAdmin ? null : legacyRole;
+                    }
                 }
 
                 UUID effectiveOrgId = orgId;
@@ -155,7 +183,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         principal, null, principal.getAuthorities());
                 SecurityContextHolder.getContext().setAuthentication(auth);
             } catch (Exception e) {
-                log.warn("Could not set authentication from JWT: {}", e.getMessage());
+                log.warn("Could not set authentication: {}", e.getMessage());
             }
         }
 
