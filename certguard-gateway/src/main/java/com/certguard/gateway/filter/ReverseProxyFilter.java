@@ -38,7 +38,14 @@ public class ReverseProxyFilter implements WebFilter, Ordered {
 
     private static final Set<String> HOP_BY_HOP = Set.of(
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-            "te", "trailers", "transfer-encoding", "upgrade", "host"
+            "te", "trailers", "transfer-encoding", "upgrade", "host",
+            // CORS headers: gateway's CorsWebFilter owns CORS end-to-end.
+            // Strip these from upstream requests so upstreams skip CORS checks,
+            // and from upstream responses to prevent duplicate Access-Control-* headers.
+            "origin", "access-control-request-method", "access-control-request-headers",
+            "access-control-allow-origin", "access-control-allow-credentials",
+            "access-control-allow-methods", "access-control-allow-headers",
+            "access-control-expose-headers", "access-control-max-age"
     );
 
     private final ProxyProperties props;
