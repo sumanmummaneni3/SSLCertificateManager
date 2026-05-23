@@ -1,0 +1,14 @@
+# Production image override — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+#
+# Replaces the build: block with the pre-built GHCR image so no Docker build
+# happens on the VPS.
+#
+# Required variables (read from the auth-service .env):
+#   GITHUB_REPOSITORY_OWNER  — GitHub username or org that owns the GHCR packages
+#   APP_IMAGE_TAG             — SHA or version tag to deploy (defaults to "latest")
+
+services:
+  auth-service:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-auth-service:${APP_IMAGE_TAG:-latest}
+    build: !reset null

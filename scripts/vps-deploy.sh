@@ -44,10 +44,12 @@ done
 # ── Configuration ────────────────────────────────────────────────────────────
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/certguard}"
 COMPOSE_BASE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+AUTH_COMPOSE_BASE="docker compose -f certguard-auth-service/docker-compose.yml -f certguard-auth-service/docker-compose.prod.yml"
 ENV_DEPLOY=".env.deploy"
 HEALTH_APP_TIMEOUT=120
 HEALTH_GATEWAY_TIMEOUT=60
 HEALTH_UI_TIMEOUT=30
+HEALTH_AUTH_TIMEOUT=90
 # ─────────────────────────────────────────────────────────────────────────────
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -126,21 +128,24 @@ log "GHCR authentication successful."
 # ── 8. Pull images from GHCR ─────────────────────────────────────────────────
 log "Pulling images for tag ${IMAGE_TAG}..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
+${AUTH_COMPOSE_BASE} --env-file certguard-auth-service/.env --env-file "${ENV_DEPLOY}" pull auth-service
 log "Image pull complete."
 
 # ── 9. Remove existing containers so compose can replace them ────────────────
-log "Removing existing app/gateway/ui containers..."
-docker rm -f certguard-app certguard-gateway certguard-ui 2>/dev/null || true
+log "Removing existing app/gateway/ui/auth-service containers..."
+docker rm -f certguard-app certguard-gateway certguard-ui certguard-auth-service-auth-service-1 2>/dev/null || true
 
 # ── 10. Bring services up ────────────────────────────────────────────────────
-log "Deploying services (only app, gateway, ui are restarted; no-deps=${NO_DEPS:-false})..."
+log "Deploying services (app, gateway, ui, auth-service; no-deps=${NO_DEPS:-false})..."
 ${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate ${NO_DEPS} app gateway ui
+${AUTH_COMPOSE_BASE} --env-file certguard-auth-service/.env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate --no-deps auth-service
 log "docker compose up complete."
 
 # ── 11. Health checks ────────────────────────────────────────────────────────
-wait_healthy "certguard-app"     "${HEALTH_APP_TIMEOUT}"
-wait_healthy "certguard-gateway" "${HEALTH_GATEWAY_TIMEOUT}"
-wait_healthy "certguard-ui"      "${HEALTH_UI_TIMEOUT}"
+wait_healthy "certguard-app"                          "${HEALTH_APP_TIMEOUT}"
+wait_healthy "certguard-gateway"                      "${HEALTH_GATEWAY_TIMEOUT}"
+wait_healthy "certguard-ui"                           "${HEALTH_UI_TIMEOUT}"
+wait_healthy "certguard-auth-service-auth-service-1"  "${HEALTH_AUTH_TIMEOUT}"
 
 # ── 12. Cleanup ──────────────────────────────────────────────────────────────
 log "Cleaning up ${ENV_DEPLOY}..."
