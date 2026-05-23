@@ -40,6 +40,10 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // Method-neutral rules first — Spring Security 7 method-specific matchers
+                // don't reliably handle all path patterns (e.g. segments starting with dot).
+                .requestMatchers("/api/auth/.well-known/**").permitAll()
+                .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .requestMatchers(HttpMethod.POST,
                         "/api/auth/initiate",
                         "/api/auth/token",
@@ -52,10 +56,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET,
                         "/api/auth/callback/google",
                         "/api/auth/callback/microsoft",
-                        "/api/auth/.well-known/**",
                         "/api/auth/providers",
                         "/api/auth/verify-email").permitAll()
-                .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
