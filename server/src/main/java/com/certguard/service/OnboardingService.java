@@ -32,11 +32,7 @@ public class OnboardingService {
         org.setName(req.getOrgName().trim());
         if (req.getContactEmail() != null) org.setContactEmail(req.getContactEmail());
         if (req.getCountry() != null)      org.setCountry(req.getCountry());
-
-        // Decision #4: self-service MSP promotion is disabled.
-        // User intent is recorded via the wizard UI, but type stays SINGLE.
-        // PLATFORM_ADMIN runs PATCH /api/v1/admin/orgs/{id}/promote-msp after sales call.
-        org.setOrgType(OrgType.SINGLE);
+        org.setOrgType(req.getOrgType() != null ? req.getOrgType() : OrgType.SINGLE);
         orgRepository.save(org);
 
         User user = userRepository.findById(userId)

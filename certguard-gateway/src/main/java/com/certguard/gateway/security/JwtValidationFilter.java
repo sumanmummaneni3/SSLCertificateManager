@@ -69,7 +69,12 @@ public class JwtValidationFilter implements WebFilter, Ordered {
     /** Paths that bypass JWT validation entirely. */
     private static final List<String> PUBLIC_PATTERNS = List.of(
             "/api/auth/**",
-            "/api/v1/auth/**",
+            // Only the specific server auth endpoints that are genuinely unauthenticated.
+            // /api/v1/auth/me is intentionally excluded so the gateway injects X-CG-* headers.
+            "/api/v1/auth/config",
+            "/api/v1/auth/logout",
+            "/api/v1/auth/dev-token",
+            "/api/v1/auth/invite/**",
             "/actuator/**",
             "/oauth2/**",
             "/login/**",
