@@ -4419,7 +4419,7 @@ function InviteAcceptScreen({ inviteToken, onAccepted, toast }) {
     setSubmitting(true);
     try {
       const res = await api.acceptInvite({ token: inviteToken, email, otp: otp.trim() });
-      onAccepted(res.token);
+      onAccepted(res.token, { fromInvite: true });
     } catch (e) {
       setErrMsg(e.message);
       toast("Failed to accept invite: " + e.message, "error");
@@ -4495,7 +4495,7 @@ export default function App() {
   const [authUrlToken, setAuthUrlToken] = useState("");
   const { toasts, add: toast } = useToasts();
 
-  const handleToken = async (t) => {
+  const handleToken = async (t, ctx = {}) => {
     setToken(t);
     setLoading(true);
     try {
@@ -4506,6 +4506,14 @@ export default function App() {
       ]);
       setOrgData(org);
       setMeData(me);
+
+      // Invited users join an existing org — skip onboarding and go straight to the app.
+      if (ctx.fromInvite) {
+        const tgts = await api.getTargets(t);
+        setTargets(tgts?.content || []);
+        setPhase("app");
+        return;
+      }
 
       const onboardingDone = me?.user?.onboardingCompleted === true;
       if (!onboardingDone) {
