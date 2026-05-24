@@ -9,6 +9,7 @@ import com.certguard.enums.OrgMemberRole;
 import com.certguard.enums.UserRole;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
+import com.certguard.security.CertGuardUserPrincipal;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,8 @@ public class TeamService {
     private final OrganizationRepository orgRepository;
     private final UserRepository userRepository;
     private final InvitationService invitationService;
+    private final EmailDispatchService emailDispatchService;
+    private final PlatformAdminAuditService platformAdminAuditService;
 
     @Value("${app.ui-base-url:http://localhost:8080}")
     private String uiBaseUrl;
@@ -143,15 +146,93 @@ public class TeamService {
     // ── Revoke ────────────────────────────────────────────────────────────
 
     @Transactional
-    public void revokeMember(UUID orgId, UUID requestingUserId, UUID targetUserId) {
+    public void revokeMember(UUID orgId, CertGuardUserPrincipal caller, UUID targetUserId, String reason) {
+        UUID requestingUserId = caller.getUserId();
+        boolean isPlatformAdmin = caller.isPlatformAdmin();
+
+        // Self-removal guard
         if (requestingUserId.equals(targetUserId)) {
-            throw new IllegalArgumentException("You cannot revoke your own access");
+            throw new IllegalStateException("You cannot remove yourself — transfer admin access to another member first");
         }
-        OrgMember member = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Member not found"));
-        member.setInviteStatus(InviteStatus.REVOKED);
-        memberRepository.save(member);
-        log.info("Member {} revoked from org {} by {}", targetUserId, orgId, requestingUserId);
+
+        // Load target membership — 404 if not in this org
+        OrgMember targetMember = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Member not found in this organisation"));
+
+        // Idempotent: already revoked
+        if (targetMember.getInviteStatus() == InviteStatus.REVOKED) {
+            log.info("Member {} already revoked from org {} — no-op", targetUserId, orgId);
+            return;
+        }
+
+        // Role-based authorization (defense-in-depth on top of @PreAuthorize)
+        if (!isPlatformAdmin) {
+            // Verify caller is an accepted ADMIN in this org
+            OrgMember callerMember = memberRepository.findByOrganizationIdAndUserId(orgId, requestingUserId)
+                    .orElseThrow(() -> new SecurityException("You are not a member of this organisation"));
+            if (callerMember.getRole() != OrgMemberRole.ADMIN
+                    || callerMember.getInviteStatus() != InviteStatus.ACCEPTED) {
+                throw new SecurityException("Only organisation admins can remove members");
+            }
+            // OrgAdmin cannot remove another ADMIN — PLATFORM_ADMIN only
+            if (targetMember.getRole() == OrgMemberRole.ADMIN) {
+                throw new SecurityException(
+                        "Org admins cannot remove other admins — only a Platform Admin can do this");
+            }
+        }
+
+        // Last-admin guard (applies when a PA removes an ADMIN too)
+        if (targetMember.getRole() == OrgMemberRole.ADMIN) {
+            long acceptedAdminCount = memberRepository.countByOrganizationIdAndRoleAndInviteStatus(
+                    orgId, OrgMemberRole.ADMIN, InviteStatus.ACCEPTED);
+            if (acceptedAdminCount <= 1) {
+                throw new IllegalStateException(
+                        "Cannot remove the last admin of an organisation — assign another admin first");
+            }
+        }
+
+        // Revoke the membership
+        targetMember.setInviteStatus(InviteStatus.REVOKED);
+        memberRepository.save(targetMember);
+
+        // Cancel any pending invitations for this email in this org
+        String targetEmail = targetMember.getUser().getEmail();
+        java.util.List<Invitation> pending = invitationRepository
+                .findAllByOrganizationIdAndEmailIgnoreCaseAndUsedAtIsNull(orgId, targetEmail);
+        if (!pending.isEmpty()) {
+            Instant now = Instant.now();
+            pending.forEach(inv -> inv.setUsedAt(now));
+            invitationRepository.saveAll(pending);
+            log.info("Cancelled {} pending invite(s) for {} in org {} due to member removal",
+                    pending.size(), targetEmail, orgId);
+        }
+
+        // Load org for audit and email
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Organisation not found"));
+
+        // Capture primitive/string values before leaving transactional context
+        final String finalEmail    = targetEmail;
+        final String orgName       = org.getName();
+        final String callerEmail   = caller.getEmail();
+
+        // After commit: send notification + write PA audit if applicable
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                emailDispatchService.sendMemberRemovedEmail(finalEmail, orgName, callerEmail);
+                if (isPlatformAdmin) {
+                    platformAdminAuditService.recordAsync(
+                            requestingUserId, callerEmail,
+                            orgId, orgName,
+                            "DELETE", "/api/v1/org/members/" + targetUserId,
+                            reason, 204);
+                }
+            }
+        });
+
+        log.info("Member {} ({}) removed from org {} by {} (platformAdmin={}, reason='{}')",
+                targetUserId, targetEmail, orgId, requestingUserId, isPlatformAdmin, reason);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

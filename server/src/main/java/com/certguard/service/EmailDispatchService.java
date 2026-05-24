@@ -81,6 +81,28 @@ public class EmailDispatchService {
     }
 
     /**
+     * Notifies a user that their org membership has been removed.
+     *
+     * @param toEmail       the removed member's address
+     * @param orgName       name of the organisation
+     * @param removedByName email/name of the admin who removed them
+     */
+    @Async
+    public void sendMemberRemovedEmail(String toEmail, String orgName, String removedByName) {
+        if (devMode) {
+            log.warn("[DEV] Member-removed email suppressed — to={} org={}", toEmail, orgName);
+            return;
+        }
+        Context ctx = new Context();
+        ctx.setVariable("orgName", orgName);
+        ctx.setVariable("removedByName", removedByName);
+        ctx.setVariable("baseUrl", baseUrl);
+        sendMimeEmail(toEmail,
+                "Your access to " + orgName + " on CertGuard Cloud has been removed",
+                "member-removed", ctx);
+    }
+
+    /**
      * Sends the OTP sign-in code email asynchronously.
      *
      * @param toEmail  recipient address (the invited user)

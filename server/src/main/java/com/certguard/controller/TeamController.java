@@ -52,8 +52,9 @@ public class TeamController {
     @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
     public ResponseEntity<Void> revoke(
             @PathVariable UUID userId,
+            @RequestParam(required = false) String reason,
             @AuthenticationPrincipal CertGuardUserPrincipal principal) {
-        teamService.revokeMember(TenantContext.getOrgId(), principal.getUserId(), userId);
+        teamService.revokeMember(TenantContext.getOrgId(), principal, userId, reason);
         return ResponseEntity.noContent().build();
     }
 }

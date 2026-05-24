@@ -15,5 +15,6 @@ public interface InvitationRepository extends JpaRepository<Invitation, UUID> {
     List<Invitation> findAllByOrganizationId(UUID orgId);
     boolean existsByOrganizationIdAndEmailAndUsedAtIsNull(UUID orgId, String email);
     Optional<Invitation> findFirstByOrganizationIdAndEmailAndUsedAtIsNull(UUID orgId, String email);
+    List<Invitation> findAllByOrganizationIdAndEmailIgnoreCaseAndUsedAtIsNull(UUID orgId, String email);
     void deleteByExpiresAtBeforeAndUsedAtIsNull(Instant before);
 }

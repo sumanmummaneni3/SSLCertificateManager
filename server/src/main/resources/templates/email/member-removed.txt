@@ -1,0 +1,10 @@
+Your access to [(${orgName})] on CertGuard Cloud has been removed
+
+Hi,
+
+Your membership in [(${orgName})] on CertGuard Cloud has been removed by [(${removedByName})].
+
+If you believe this was done in error, please contact your organisation administrator.
+
+— CertGuard Cloud
+[(${baseUrl})]
