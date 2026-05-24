@@ -6,8 +6,10 @@ import com.certguard.dto.response.OrgMemberResponse;
 import com.certguard.entity.*;
 import com.certguard.enums.InviteStatus;
 import com.certguard.enums.OrgMemberRole;
+import com.certguard.enums.UserRole;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,8 +38,13 @@ public class TeamService {
     private final UserRepository userRepository;
     private final InvitationService invitationService;
 
-    @Value("${app.base-url:http://localhost:8080}")
-    private String baseUrl;
+    @Value("${app.ui-base-url:http://localhost:8080}")
+    private String uiBaseUrl;
+
+    @PostConstruct
+    void logInviteLinkOrigin() {
+        log.info("Invite links will use UI base URL: {} — set APP_UI_BASE_URL if this is not the public SPA origin", uiBaseUrl);
+    }
 
     // ── List members ──────────────────────────────────────────────────────
 
@@ -55,6 +62,15 @@ public class TeamService {
         User invitedBy = userRepository.findById(invitedByUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
+        // Platform admins have system-wide access — an org_members row would be redundant
+        // and creates confusing entries in the member list without adding any capability
+        userRepository.findByEmail(req.getEmail().toLowerCase().trim()).ifPresent(u -> {
+            if (u.getRole() == UserRole.PLATFORM_ADMIN) {
+                throw new IllegalArgumentException(
+                        "Platform administrators already have system-wide access and cannot be invited as org members");
+            }
+        });
+
         // If already an accepted member, reject
         memberRepository.findAllByOrganizationId(orgId).stream()
                 .filter(m -> m.getUser().getEmail().equalsIgnoreCase(req.getEmail())
@@ -62,6 +78,15 @@ public class TeamService {
                 .findFirst()
                 .ifPresent(m -> { throw new IllegalArgumentException(
                         req.getEmail() + " is already a member of this organisation"); });
+
+        // Revoke any existing pending invite for this email so the old token is immediately dead
+        invitationRepository.findFirstByOrganizationIdAndEmailAndUsedAtIsNull(
+                        orgId, req.getEmail().toLowerCase().trim())
+                .ifPresent(existing -> {
+                    existing.setUsedAt(Instant.now());
+                    invitationRepository.save(existing);
+                    log.info("Revoked stale pending invite {} for {} before re-invite", existing.getId(), req.getEmail());
+                });
 
         // Generate raw token and store its hash
         String rawToken = generateSecureToken();
@@ -81,7 +106,7 @@ public class TeamService {
         // visible to any DB read the async task might trigger.  The lambda captures
         // all needed values; no entity references are held across the boundary to
         // avoid detached-entity issues on the async thread.
-        String inviteLink = baseUrl + "/invite?token=" + rawToken;
+        String inviteLink = uiBaseUrl + "/invite?token=" + rawToken;
         final String toEmail    = req.getEmail();
         final String orgName    = org.getName();
         final String inviterName = invitedBy.getName();

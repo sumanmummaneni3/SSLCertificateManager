@@ -5,8 +5,9 @@ import com.certguard.auth.entity.User;
 import com.certguard.auth.exception.AuthException;
 import com.certguard.auth.exception.ConflictException;
 import com.certguard.auth.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,10 +16,11 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class EmailAuthService {
 
     private static final String PROVIDER = "email";
@@ -28,6 +30,17 @@ public class EmailAuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final MailService mailService;
+    private final JdbcTemplate mainJdbc;
+
+    public EmailAuthService(UserRepository userRepository,
+                            PasswordEncoder passwordEncoder,
+                            MailService mailService,
+                            @Qualifier("mainJdbcTemplate") JdbcTemplate mainJdbc) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.mailService = mailService;
+        this.mainJdbc = mainJdbc;
+    }
 
     @Transactional
     public User register(EmailRegisterRequest req) {
@@ -86,16 +99,33 @@ public class EmailAuthService {
 
     @Transactional
     public void forgotPassword(String email) {
-        userRepository.findByEmail(email).ifPresent(user -> {
-            if (!PROVIDER.equals(user.getProviderId())) return;
+        User user = userRepository.findByEmail(email).orElse(null);
 
-            String token = generateToken();
-            user.setPasswordResetToken(token);
-            user.setPasswordResetExpiresAt(Instant.now().plus(1, ChronoUnit.HOURS));
+        if (user == null) {
+            // Check if this email belongs to an invited user who has a server-side account
+            // but no auth_users row yet (invite acceptance never creates one).
+            List<Map<String, Object>> serverRows = mainJdbc.queryForList(
+                    "SELECT id FROM users WHERE email = ?", email);
+            if (serverRows.isEmpty()) return; // Unknown email — silently no-op.
+
+            // Provision the auth_users row. Email is already verified via invite OTP.
+            user = User.builder()
+                    .providerId(PROVIDER)
+                    .email(email)
+                    .emailVerified(true)
+                    .build();
             userRepository.save(user);
-            mailService.sendPasswordResetEmail(email, token);
-            log.info("Password reset email sent to {}", email);
-        });
+            log.info("Provisioned auth_users for invited user {} to allow first-time password set", email);
+        }
+
+        if (!PROVIDER.equals(user.getProviderId())) return;
+
+        String token = generateToken();
+        user.setPasswordResetToken(token);
+        user.setPasswordResetExpiresAt(Instant.now().plus(1, ChronoUnit.HOURS));
+        userRepository.save(user);
+        mailService.sendPasswordResetEmail(email, token);
+        log.info("Password reset email sent to {}", email);
         // Always return silently — don't reveal whether the email exists.
     }
 

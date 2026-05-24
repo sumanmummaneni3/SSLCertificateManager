@@ -84,6 +84,11 @@ app:
     # The dev default (http://localhost:5173) is only used when app.dev-mode=true.
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  # Public origin of the React SPA / nginx (used in invite email links).
+  # Must be the URL the invitee's browser reaches — NOT the internal server port.
+  # Defaults to app.base-url so local dev (server serves the SPA) works out of the box.
+  # In production set APP_UI_BASE_URL=https://app.example.com separately from APP_BASE_URL.
+  ui-base-url: ${APP_UI_BASE_URL:${app.base-url}}
   async:
     core-pool-size: 4
     max-pool-size: 10

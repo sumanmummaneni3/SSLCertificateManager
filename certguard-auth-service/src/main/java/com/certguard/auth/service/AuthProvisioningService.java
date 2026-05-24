@@ -47,7 +47,22 @@ public class AuthProvisioningService {
                 List<Map<String, Object>> memberRows = mainJdbc.queryForList(
                         "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND invite_status = 'ACCEPTED'",
                         orgId, userId);
-                orgRole = memberRows.isEmpty() ? "ADMIN" : (String) memberRows.get(0).get("role");
+
+                if (!memberRows.isEmpty()) {
+                    orgRole = (String) memberRows.get(0).get("role");
+                } else {
+                    // users.org_id may point to a placeholder created at invite acceptance.
+                    // Fall back to the oldest accepted membership across all orgs.
+                    List<Map<String, Object>> anyMember = mainJdbc.queryForList(
+                            "SELECT org_id, role FROM org_members WHERE user_id = ? AND invite_status = 'ACCEPTED' ORDER BY created_at ASC LIMIT 1",
+                            userId);
+                    if (!anyMember.isEmpty()) {
+                        orgId = (UUID) anyMember.get(0).get("org_id");
+                        orgRole = (String) anyMember.get(0).get("role");
+                    } else {
+                        orgRole = "ADMIN";
+                    }
+                }
             }
 
             return new OrgContextRecord(userId, orgId, orgRole, isPlatformAdmin);

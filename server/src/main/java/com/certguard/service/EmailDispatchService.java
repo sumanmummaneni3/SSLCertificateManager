@@ -2,6 +2,7 @@ package com.certguard.service;
 
 import com.certguard.enums.OrgMemberRole;
 import com.certguard.exception.EmailDeliveryException;
+import jakarta.annotation.PostConstruct;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +47,13 @@ public class EmailDispatchService {
         this.templateEngine = templateEngine;
     }
 
+    @PostConstruct
+    void warnIfDevMode() {
+        if (devMode) {
+            log.warn("*** EMAIL DISPATCH IS IN DEV MODE — invite and OTP emails will NOT be sent ***");
+        }
+    }
+
     /**
      * Sends the org-invitation email asynchronously.
      *
@@ -59,7 +67,7 @@ public class EmailDispatchService {
     public void sendInviteEmail(String toEmail, String orgName, String inviterName,
                                 String inviteLink, OrgMemberRole role) {
         if (devMode) {
-            log.info("[DEV] Invite email to {} — link: {}", toEmail, inviteLink);
+            log.warn("[DEV] Invite email suppressed — to={} link={}", toEmail, inviteLink);
             return;
         }
         Context ctx = new Context();
@@ -82,7 +90,7 @@ public class EmailDispatchService {
     @Async
     public void sendOtpEmail(String toEmail, String otp, String orgName) {
         if (devMode) {
-            log.info("[DEV] OTP for {} joining {}: {}", toEmail, orgName, otp);
+            log.warn("[DEV] OTP email suppressed — to={} org={} otp={}", toEmail, orgName, otp);
             return;
         }
         Context ctx = new Context();
