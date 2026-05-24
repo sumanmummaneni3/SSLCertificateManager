@@ -33,6 +33,7 @@ public class InvitationService {
     private final UserRepository userRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final EmailDispatchService emailDispatchService;
+    private final TokenRevocationService tokenRevocationService;
 
     private static final int MAX_OTP_ATTEMPTS  = 5;
     private static final int MAX_OTP_RESENDS   = 3;
@@ -51,12 +52,14 @@ public class InvitationService {
                              OrgMemberRepository memberRepository,
                              UserRepository userRepository,
                              JwtTokenProvider jwtTokenProvider,
-                             EmailDispatchService emailDispatchService) {
-        this.invitationRepository = invitationRepository;
-        this.memberRepository = memberRepository;
-        this.userRepository = userRepository;
-        this.jwtTokenProvider = jwtTokenProvider;
-        this.emailDispatchService = emailDispatchService;
+                             EmailDispatchService emailDispatchService,
+                             TokenRevocationService tokenRevocationService) {
+        this.invitationRepository   = invitationRepository;
+        this.memberRepository       = memberRepository;
+        this.userRepository         = userRepository;
+        this.jwtTokenProvider       = jwtTokenProvider;
+        this.emailDispatchService   = emailDispatchService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     // -- Step 1: validate invite token and send OTP ----------------------------
@@ -164,6 +167,9 @@ public class InvitationService {
         member.setRole(inv.getRole());
         member.setInviteStatus(InviteStatus.ACCEPTED);
         memberRepository.save(member);
+
+        // Clear any prior revocation so a re-invited user can access the org again
+        tokenRevocationService.clearRevocationForUserInOrg(user.getId(), org.getId());
 
         if (user.getOnboardingCompletedAt() == null) {
             user.setOnboardingCompletedAt(Instant.now());

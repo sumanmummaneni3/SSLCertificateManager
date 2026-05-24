@@ -2,6 +2,7 @@ package com.certguard.security;
 
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.service.PlatformAdminAuditService;
+import com.certguard.service.TokenRevocationService;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -36,13 +37,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtTokenProvider jwtTokenProvider;
     private final OrganizationRepository organizationRepository;
     private final PlatformAdminAuditService platformAdminAuditService;
+    private final TokenRevocationService tokenRevocationService;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
                                     OrganizationRepository organizationRepository,
-                                    PlatformAdminAuditService platformAdminAuditService) {
+                                    PlatformAdminAuditService platformAdminAuditService,
+                                    TokenRevocationService tokenRevocationService) {
         this.jwtTokenProvider         = jwtTokenProvider;
         this.organizationRepository   = organizationRepository;
         this.platformAdminAuditService = platformAdminAuditService;
+        this.tokenRevocationService   = tokenRevocationService;
     }
 
     @Override
@@ -110,6 +114,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         platformAdmin = "PLATFORM_ADMIN".equals(legacyRole);
                         orgRole       = platformAdmin ? null : legacyRole;
                     }
+                }
+
+                // Reject revoked sessions before any further processing
+                if (!platformAdmin && tokenRevocationService.isRevoked(userId, orgId)) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    response.getWriter().write(
+                            "{\"status\":401,\"title\":\"Unauthorized\"," +
+                            "\"detail\":\"Your access to this organisation has been revoked\"}");
+                    return;
                 }
 
                 UUID effectiveOrgId = orgId;

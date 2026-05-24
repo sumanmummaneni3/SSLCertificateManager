@@ -40,6 +40,8 @@ public class TeamService {
     private final InvitationService invitationService;
     private final EmailDispatchService emailDispatchService;
     private final PlatformAdminAuditService platformAdminAuditService;
+    private final OrgAuditService orgAuditService;
+    private final TokenRevocationService tokenRevocationService;
 
     @Value("${app.ui-base-url:http://localhost:8080}")
     private String uiBaseUrl;
@@ -192,7 +194,11 @@ public class TeamService {
         }
 
         // Revoke the membership
+        Instant now = Instant.now();
         targetMember.setInviteStatus(InviteStatus.REVOKED);
+        targetMember.setRevokedAt(now);
+        targetMember.setRevokedByUserId(requestingUserId);
+        targetMember.setRevokeReason(reason);
         memberRepository.save(targetMember);
 
         // Cancel any pending invitations for this email in this org
@@ -200,8 +206,11 @@ public class TeamService {
         java.util.List<Invitation> pending = invitationRepository
                 .findAllByOrganizationIdAndEmailIgnoreCaseAndUsedAtIsNull(orgId, targetEmail);
         if (!pending.isEmpty()) {
-            Instant now = Instant.now();
-            pending.forEach(inv -> inv.setUsedAt(now));
+            pending.forEach(inv -> {
+                inv.setUsedAt(now);
+                inv.setCancelledAt(now);
+                inv.setCancelledReason("Member removed" + (reason != null ? ": " + reason : ""));
+            });
             invitationRepository.saveAll(pending);
             log.info("Cancelled {} pending invite(s) for {} in org {} due to member removal",
                     pending.size(), targetEmail, orgId);
@@ -211,21 +220,27 @@ public class TeamService {
         Organization org = orgRepository.findById(orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Organisation not found"));
 
+        // Revoke in-flight JWTs (backed by Caffeine + DB)
+        tokenRevocationService.revokeForUserInOrg(targetUserId, orgId, requestingUserId, reason);
+
         // Capture primitive/string values before leaving transactional context
         final String finalEmail    = targetEmail;
+        final String finalTargetId = targetUserId.toString();
         final String orgName       = org.getName();
         final String callerEmail   = caller.getEmail();
 
-        // After commit: send notification + write PA audit if applicable
+        // After commit: email notification + org audit + PA audit if applicable
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 emailDispatchService.sendMemberRemovedEmail(finalEmail, orgName, callerEmail);
+                orgAuditService.recordAsync(orgId, requestingUserId, callerEmail,
+                        "MEMBER_REMOVED", targetUserId, finalEmail, reason);
                 if (isPlatformAdmin) {
                     platformAdminAuditService.recordAsync(
                             requestingUserId, callerEmail,
                             orgId, orgName,
-                            "DELETE", "/api/v1/org/members/" + targetUserId,
+                            "DELETE", "/api/v1/org/members/" + finalTargetId,
                             reason, 204);
                 }
             }

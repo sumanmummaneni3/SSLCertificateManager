@@ -37,4 +37,10 @@ public class Invitation extends BaseEntity {
 
     @Column(name = "used_at")
     private Instant usedAt;
+
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
+
+    @Column(name = "cancelled_reason")
+    private String cancelledReason;
 }

@@ -35,6 +35,7 @@ class InvitationServiceTest {
     @Mock UserRepository userRepository;
     @Mock JwtTokenProvider jwtTokenProvider;
     @Mock EmailDispatchService emailDispatchService;
+    @Mock TokenRevocationService tokenRevocationService;
 
     InvitationService invitationService;
 
@@ -47,8 +48,7 @@ class InvitationServiceTest {
     void setUp() {
         invitationService = new InvitationService(
                 invitationRepository, memberRepository, userRepository,
-                jwtTokenProvider,
-                emailDispatchService);
+                jwtTokenProvider, emailDispatchService, tokenRevocationService);
 
         tokenHash = TeamService.sha256(rawToken);
 
@@ -174,7 +174,7 @@ class InvitationServiceTest {
             // Accept without a prior validate call so no OTP entry exists
             InvitationService freshService = new InvitationService(
                     invitationRepository, memberRepository, userRepository,
-                    jwtTokenProvider, emailDispatchService);
+                    jwtTokenProvider, emailDispatchService, tokenRevocationService);
 
             when(invitationRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(invitation));
 

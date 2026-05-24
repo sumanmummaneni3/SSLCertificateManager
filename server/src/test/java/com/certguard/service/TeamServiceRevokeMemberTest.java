@@ -6,6 +6,8 @@ import com.certguard.enums.OrgMemberRole;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.CertGuardUserPrincipal;
+import com.certguard.service.OrgAuditService;
+import com.certguard.service.TokenRevocationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -35,6 +37,8 @@ class TeamServiceRevokeMemberTest {
     @Mock InvitationService invitationService;
     @Mock EmailDispatchService emailDispatchService;
     @Mock PlatformAdminAuditService platformAdminAuditService;
+    @Mock OrgAuditService orgAuditService;
+    @Mock TokenRevocationService tokenRevocationService;
 
     TeamService teamService;
 
@@ -53,7 +57,8 @@ class TeamServiceRevokeMemberTest {
     @BeforeEach
     void setUp() {
         teamService = new TeamService(memberRepository, invitationRepository, orgRepository,
-                userRepository, invitationService, emailDispatchService, platformAdminAuditService);
+                userRepository, invitationService, emailDispatchService,
+                platformAdminAuditService, orgAuditService, tokenRevocationService);
         ReflectionTestUtils.setField(teamService, "uiBaseUrl", "http://localhost:8080");
 
         org = Organization.builder().name("TestOrg").build();

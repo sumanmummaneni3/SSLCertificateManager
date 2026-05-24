@@ -7,6 +7,9 @@ import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.Instant;
+import java.util.UUID;
+
 @Entity @Table(name = "org_members",
     uniqueConstraints = @UniqueConstraint(columnNames = {"org_id", "user_id"}))
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
@@ -35,4 +38,13 @@ public class OrgMember extends BaseEntity {
     @Column(name = "invite_status", nullable = false, columnDefinition = "invite_status")
     @Builder.Default
     private InviteStatus inviteStatus = InviteStatus.PENDING;
+
+    @Column(name = "revoked_at")
+    private Instant revokedAt;
+
+    @Column(name = "revoked_by_user_id")
+    private UUID revokedByUserId;
+
+    @Column(name = "revoke_reason")
+    private String revokeReason;
 }
