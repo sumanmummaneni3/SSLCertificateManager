@@ -95,7 +95,7 @@ public class JwtValidationFilter implements WebFilter, Ordered {
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
     private final GatewayJwtProperties gwJwtProps;
 
-    private RSAPublicKey publicKey;
+    private volatile RSAPublicKey publicKey;
 
     public JwtValidationFilter(GatewayJwtProperties gwJwtProps) {
         this.gwJwtProps = gwJwtProps;
@@ -113,14 +113,21 @@ public class JwtValidationFilter implements WebFilter, Ordered {
                 return;
             } catch (Exception ex) {
                 if (attempt == maxAttempts) {
-                    throw new IllegalStateException(
-                            "Failed to load RS256 public key from JWKS after " + maxAttempts + " attempts", ex);
+                    // Auth-service is not yet reachable — allow the gateway to start anyway.
+                    // Public routes (/api/auth/**, /actuator/**, static assets) remain fully
+                    // available. Protected routes return 503 until the key is loaded lazily
+                    // on the first successful request after auth-service comes up.
+                    log.warn("JWKS unavailable after {} attempts — gateway starting without RS256 key. " +
+                             "Protected routes will return 503 until auth-service is reachable. Cause: {}",
+                             maxAttempts, ex.getMessage());
+                    return;
                 }
                 log.warn("JWKS fetch attempt {}/{} failed ({}), retrying in {}s…",
                         attempt, maxAttempts, ex.getMessage(), delaySeconds);
                 try { Thread.sleep(delaySeconds * 1000L); } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted while waiting for JWKS", ie);
+                    log.warn("Interrupted while waiting for JWKS — gateway starting without RS256 key");
+                    return;
                 }
             }
         }
@@ -143,6 +150,18 @@ public class JwtValidationFilter implements WebFilter, Ordered {
         if (authHeader == null || !authHeader.startsWith(BEARER_PREFIX)) {
             return reject(exchange, HttpStatus.UNAUTHORIZED, "Missing or malformed Authorization header",
                     "https://certguard.dev/problems/missing-token");
+        }
+
+        // Lazy key load: if auth-service wasn't reachable at startup, try once now.
+        if (publicKey == null) {
+            try {
+                refreshPublicKey();
+            } catch (Exception ex) {
+                log.warn("Auth-service JWKS still unavailable on request to {}: {}", path, ex.getMessage());
+                return reject(exchange, HttpStatus.SERVICE_UNAVAILABLE,
+                        "Authentication service is temporarily unavailable — please retry in a moment",
+                        "https://certguard.dev/problems/auth-service-unavailable");
+            }
         }
 
         String token = authHeader.substring(BEARER_PREFIX.length()).trim();
