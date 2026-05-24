@@ -1,9 +1,10 @@
 package com.certguard.service;
 
-import com.certguard.entity.*;
-import com.certguard.enums.InviteStatus;
+import com.certguard.entity.Invitation;
+import com.certguard.entity.OrgMember;
+import com.certguard.entity.Organization;
+import com.certguard.entity.User;
 import com.certguard.enums.OrgMemberRole;
-import com.certguard.enums.SubscriptionStatus;
 import com.certguard.repository.*;
 import com.certguard.security.JwtTokenProvider;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,9 +21,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class InvitationServiceTest {
@@ -30,8 +33,6 @@ class InvitationServiceTest {
     @Mock InvitationRepository invitationRepository;
     @Mock OrgMemberRepository memberRepository;
     @Mock UserRepository userRepository;
-    @Mock OrganizationRepository orgRepository;
-    @Mock SubscriptionRepository subscriptionRepository;
     @Mock JwtTokenProvider jwtTokenProvider;
     @Mock EmailDispatchService emailDispatchService;
 
@@ -46,7 +47,7 @@ class InvitationServiceTest {
     void setUp() {
         invitationService = new InvitationService(
                 invitationRepository, memberRepository, userRepository,
-                orgRepository, subscriptionRepository, jwtTokenProvider,
+                jwtTokenProvider,
                 emailDispatchService);
 
         tokenHash = TeamService.sha256(rawToken);
@@ -129,7 +130,7 @@ class InvitationServiceTest {
             // extract the OTP that was stored
             Map<String, Object> otpStore = (Map<String, Object>) ReflectionTestUtils.getField(invitationService, "otpStore");
             Object entry = otpStore.get(tokenHash);
-            String otp = (String) ReflectionTestUtils.invokeMethod(entry, "otp");
+            String otp = ReflectionTestUtils.invokeMethod(entry, "otp");
 
             User user = User.builder().email("invited@example.com").build();
             ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
@@ -173,8 +174,7 @@ class InvitationServiceTest {
             // Accept without a prior validate call so no OTP entry exists
             InvitationService freshService = new InvitationService(
                     invitationRepository, memberRepository, userRepository,
-                    orgRepository, subscriptionRepository, jwtTokenProvider,
-                    emailDispatchService);
+                    jwtTokenProvider, emailDispatchService);
 
             when(invitationRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(invitation));
 
