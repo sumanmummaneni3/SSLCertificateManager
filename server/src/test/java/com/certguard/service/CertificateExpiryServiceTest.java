@@ -83,7 +83,7 @@ class CertificateExpiryServiceTest {
             scheduler.checkExpiringCertificates();
 
             ArgumentCaptor<String> severityCaptor = ArgumentCaptor.forClass(String.class);
-            verify(notificationService).dispatchExpiryAlert(eq(target), anyInt(), severityCaptor.capture());
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), severityCaptor.capture());
             assertThat(severityCaptor.getValue()).isEqualTo("WARNING");
         }
 
@@ -98,7 +98,7 @@ class CertificateExpiryServiceTest {
             scheduler.checkExpiringCertificates();
 
             ArgumentCaptor<String> severityCaptor = ArgumentCaptor.forClass(String.class);
-            verify(notificationService).dispatchExpiryAlert(eq(target), anyInt(), severityCaptor.capture());
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), severityCaptor.capture());
             assertThat(severityCaptor.getValue()).isEqualTo("CRITICAL");
         }
 
@@ -113,7 +113,7 @@ class CertificateExpiryServiceTest {
             scheduler.checkExpiringCertificates();
 
             ArgumentCaptor<Integer> daysCaptor = ArgumentCaptor.forClass(Integer.class);
-            verify(notificationService).dispatchExpiryAlert(eq(target), daysCaptor.capture(), eq("CRITICAL"));
+            verify(notificationService).dispatchExpiryAlert(eq(cert), daysCaptor.capture(), eq("CRITICAL"));
             assertThat(daysCaptor.getValue()).isNegative();
         }
     }
@@ -123,9 +123,6 @@ class CertificateExpiryServiceTest {
 
         @Test
         void disabledTarget_skipped() {
-            Target disabled = Target.builder().organization(org).host("x.com").port(443).enabled(false).build();
-            CertificateRecord cert = certExpiring(disabled, 5);
-
             // Disabled targets are filtered out at the JPQL query level; simulate empty result
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of());
@@ -185,12 +182,12 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
-            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+            when(notificationService.dispatchExpiryAlert(eq(cert), anyInt(), anyString()))
                     .thenReturn(true);
 
             scheduler.checkExpiringCertificates();
 
-            verify(notificationService).dispatchExpiryAlert(eq(target), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
         }
 
@@ -201,12 +198,12 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
-            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+            when(notificationService.dispatchExpiryAlert(eq(cert), anyInt(), anyString()))
                     .thenReturn(true);
 
             scheduler.checkExpiringCertificates();
 
-            verify(notificationService).dispatchExpiryAlert(eq(target), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
         }
 
@@ -232,7 +229,7 @@ class CertificateExpiryServiceTest {
 
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of(cert));
-            when(notificationService.dispatchExpiryAlert(eq(target), anyInt(), anyString()))
+            when(notificationService.dispatchExpiryAlert(eq(cert), anyInt(), anyString()))
                     .thenReturn(true);
 
             Instant before = Instant.now().minusSeconds(1);

@@ -1,5 +1,11 @@
 # CertGuard — Low-Level Design
 
+> **Note — source paths.** Earlier revisions of this document reference
+> `certguard-server-source-20260419-0737/...` and
+> `certguard-agent-source-20260419-0737/...`. The live source tree is now at
+> `server/...` and `agent/...` respectively. When following a citation, resolve
+> the old prefix to the new one.
+
 ## 1. Server — Module Class Map
 
 ### 1.1 Bootstrap & Config
@@ -88,6 +94,13 @@ Auth legend: **J** = JWT Bearer (`JwtAuthenticationFilter`); **A** = Agent key h
 | GET | `/agent/download` | P | — | `certguard-agent.jar` (octet-stream) | 404 missing |
 | GET | `/agent/version` | P | — | `{version,available,minServerVersion}` | — |
 | GET | `/actuator/health,info,prometheus` | P/partial | — | Spring actuator | — |
+| POST | `/api/v1/agents` | J + ADMIN/ENGINEER/PLATFORM_ADMIN | `{agentName, allowedCidrs[], maxTargets, locationId?}` | 201 `{agentId, installKey, bundleDownloadUrl, expiresAt}` | 400 validation, 403 role, 404 location |
+| GET | `/api/v1/agents/{agentId}/bundle?dlToken=…` | dlToken bearer (single-use) | — | 200 `application/zip` | 404 token/agent mismatch, 410 expired/already-downloaded |
+| GET | `/api/v1/admin/orgs` | J + PLATFORM_ADMIN | `Pageable` | `Page<OrgResponse>` | 403 |
+| POST | `/api/v1/admin/orgs/{orgId}/archive` | J + PLATFORM_ADMIN | — | `OrgResponse` | 403, 404 |
+| POST | `/api/v1/admin/orgs/{orgId}/restore` | J + PLATFORM_ADMIN | — | `OrgResponse` | 403, 404 |
+| GET | `/api/v1/admin/audit` | J + PLATFORM_ADMIN | `actingUserId?, targetOrgId?, from?, to?, Pageable` | `Page<PlatformAdminAuditResponse>` | 403 |
+| GET/POST | `/api/internal/v1/sales/**` | `SalesAuthFilter` (X-Sales-Key-Id + X-Sales-Key) | per-route | per-route | 401/403 |
 
 Anchors: `SecurityConfig.java:56-73`, `AgentController.java:38-157`, `TargetController.java:30-77`, `CertificateController.java:19-32`, `TeamController.java:28-57`, `OrgController.java:25-59`, `MspClientController.java:27-53`, `LocationController.java:23-49`, `DevAuthController.java:38-122`, `AgentDownloadController.java:21-45`.
 
@@ -237,35 +250,93 @@ Enums (Postgres `CREATE TYPE`): `user_role(ADMIN,MEMBER,VIEWER,PLATFORM_ADMIN)`,
 
 ## 4. Critical-flow Sequence Diagrams
 
-### 4.1 Agent registration
+### 4.1 Agent enrolment (bundle-based)
 
-```mermaid
-sequenceDiagram
-  participant A as AgentMain
-  participant RS as RegistrationService
-  participant API as ServerApiClient
-  participant C as AgentController
-  participant AS as AgentService
-  participant CA as AgentCertificateAuthority
-  participant DB
-  A->>RS: register()
-  RS->>API: register(token, orgId)
-  API->>C: POST /api/v1/agent/register (X-Org-Id)
-  C->>AS: register(req, orgId)
-  AS->>DB: find+validate AgentRegistrationToken (BCrypt matches)
-  AS->>AS: generate plainAgentKey ("AGK-"+2xUUID), BCrypt hash
-  AS->>DB: save Agent(status=ACTIVE)
-  AS->>CA: issueClientCertificate(agentId, orgId)
-  CA-->>AS: PEM
-  AS->>DB: update Agent cert fields; mark token used
-  AS-->>C: AgentResponse{id, agentKey, clientCertPem}
-  C-->>API: 201
-  API-->>RS: JsonNode
-  RS->>RS: write PEM; persist id+key; clear token
-  RS->>AgentConfig: reload()
+The old mTLS-CA registration sequence has been replaced by a **two-step encrypted bundle** flow.
+
+#### 4.1.a Bundle issuance (server)
+
+```
+Admin UI / API client          AgentProvisionController    AgentBundleService        Postgres
+      |                                  |                        |                      |
+      | POST /api/v1/agents              |                        |                      |
+      | {agentName, allowedCidrs,        |                        |                      |
+      |  maxTargets, locationId?}        |                        |                      |
+      |--------------------------------->| @PreAuthorize ADMIN/   |                      |
+      |                                  |   ENGINEER/PA          |                      |
+      |                                  |----------------------->| save Agent(PENDING)  |
+      |                                  |                        | save AgentRegistrationToken (BCrypt)
+      |                                  |                        | derive Argon2id key from install key+salt
+      |                                  |                        | seal payload AES-256-GCM -> bundle.cgb
+      |                                  |                        | save AgentInstallKey:
+      |                                  |                        |   installKeyHash(BCrypt)
+      |                                  |                        |   bundleDownloadTokenHash(SHA-256)
+      |                                  |                        |   sealedPayload (bytes)
+      |                                  |                        |   expiresAt = now+TTL
+      |                                  |<-----------------------|                      |
+      |                                  | IssueBundleResult{     |                      |
+      |                                  |   agentId, installKey, |                      |
+      |                                  |   bundleDownloadUrl,   |                      |
+      |                                  |   expiresAt }          |                      |
+      | 201 Created                      |                        |                      |
+      |<---------------------------------|                        |                      |
+      |                                                                                  |
+      | GET /api/v1/agents/{id}/bundle?dlToken=...                                       |
+      |--------------------------------->|                        |                      |
+      |                                  |----------------------->| findByBundleDownloadTokenHash
+      |                                  |                        | if downloaded || expired -> BundleExpiredException -> 410
+      |                                  |                        | build ZIP: certguard-agent.jar, bundle.cgb,
+      |                                  |                        |   application.properties, run.sh, README.txt
+      |                                  |                        | markDownloadedIfUnconsumed (atomic UPDATE)
+      |                                  |<-----------------------|                      |
+      | 200 application/zip              |                        |                      |
+      |<---------------------------------|                        |                      |
 ```
 
-Anchors: `RegistrationService.java:32-78`, `ServerApiClient.java:46-67`, `AgentController.java:116-127`, `AgentService.java:74-127`, `AgentCertificateAuthority.java:122-151`.
+Anchors: `server/src/main/java/com/certguard/controller/AgentProvisionController.java:48-84`, `server/src/main/java/com/certguard/service/AgentBundleService.java:102-236`.
+
+Notes:
+- `installKey` and `bundleDownloadUrl` are returned in the 201 body and shown **once** in the admin UI. The install key is never persisted in plaintext — only its BCrypt hash sits in `agent_install_keys.install_key_hash`.
+- The bundle download URL is single-use: `markDownloadedIfUnconsumed` atomically marks the token consumed before building the ZIP; subsequent fetches return 410 via `BundleExpiredException`.
+- Expired-but-never-downloaded rows are reaped hourly by `cleanupExpiredInstallKeys` with a ShedLock guard.
+
+#### 4.1.b Agent first boot
+
+```
+Operator          AgentMain          BundleUnsealer          Filesystem      ServerApiClient     AgentController
+   |                  |                    |                      |                 |                   |
+   | ./run.sh         |                    |                      |                 |                   |
+   |----------------->|                    |                      |                 |                   |
+   |                  | new BundleUnsealer |                      |                 |                   |
+   |                  |------------------->|                      |                 |                   |
+   |                  |                    | resolveBundlePath    |                 |                   |
+   |                  |                    | readInstallKey (CLI/env/console)        |                   |
+   |                  |                    | parse frame: MAGIC=CGBV, VERSION=0x01, |                   |
+   |                  |                    |   salt, IV, ciphertext+tag             |                   |
+   |                  |                    | Argon2id(installKey, salt) -> 32B key  |                   |
+   |                  |                    | AES-GCM-256 decrypt                    |                   |
+   |                  |                    |   bad tag -> exit(1)                   |                   |
+   |                  |                    | parse JSON: {agentId, orgId, serverUrl,|                   |
+   |                  |                    |   registrationToken, agentName, ...}   |                   |
+   |                  |<-------------------|                      |                 |                   |
+   |                  | merge into application.properties         |                 |                   |
+   |                  |                                                             |                   |
+   |                  | RegistrationService.register()                              |                   |
+   |                  |   POST /api/v1/agent/register (X-Org-Id)                   |                   |
+   |                  |------------------------------------------------------------>|                   |
+   |                  |                                                                                 |
+   |                  |   AgentService.register: BCrypt match token, flip PENDING->ACTIVE,             |
+   |                  |     generate agentKey ("AGK-"+2xUUID), mark token used                         |
+   |                  |   response: {id, agentKey, ...}                                                 |
+   |                  |<------------------------------------------------------------|                   |
+   |                  | persist agentKey to application.properties                                      |
+   |                  | delete bundle.cgb from disk                                                     |
+   |                  | start PollLoop: heartbeat / jobs / scan / results (HMAC-signed)                 |
+```
+
+Anchors: `agent/src/main/java/com/certguard/agent/security/BundleUnsealer.java:69-266`; `server/src/main/java/com/certguard/service/AgentBundleService.java:124-138` (pre-creates the registration token bound to the agent id).
+
+**Risk**: `serverUrl` is embedded in the bundle at issuance time from `app.base-url`. If that value points at the bare app port instead of the public gateway URL, the agent will pin its talk-back to the wrong host on first boot. Operationally, `app.base-url` must be the public gateway origin.
 
 ### 4.2 Result submission with HMAC
 
@@ -349,8 +420,12 @@ Anchors: `HmacSigner.java:20-30`, `AgentAuthFilter.java:57-109`, `AgentControlle
 | `SecurityException` | 403 | `ProblemDetail` (logged warn) |
 | `NoResourceFoundException` | 404 | `ProblemDetail` |
 | `Exception` | 500 | Generic "unexpected" |
+| `BundleExpiredException` | 410 | `ProblemDetail` — used for both expired-by-time and already-downloaded bundles. `GlobalExceptionHandler.java:43-46`. |
+| `SubscriptionSuspendedException` | 403 | `ProblemDetail` with `type = https://certguard.dev/problems/subscription-suspended` and `title = "Subscription Suspended"`. `GlobalExceptionHandler.java:53-59`. |
 
-Notes: not all controllers consistently flow through — e.g., `AgentAuthFilter` writes a raw JSON `{"error":...}` with 401 (`AgentAuthFilter.java:112-117`); `DevAuthController` returns ad-hoc `Map.of("error", …)` with 400/403 rather than `ProblemDetail`. Recommend unification.
+**Typed problem URIs.** `SubscriptionSuspendedException` is the first handler that sets a typed `ProblemDetail.type` URI; future domain-specific errors should follow the same pattern: `https://certguard.dev/problems/<kebab-case-name>` plus a human-readable `title`. See `server/src/main/java/com/certguard/exception/GlobalExceptionHandler.java:53-59` for the canonical example.
+
+Notes: `AgentAuthFilter` now writes a proper `application/problem+json` 401 body (`AgentAuthFilter.java:111-122`). `DevAuthController` is dev-only and returns ad-hoc `Map.of("error", …)` — low impact but tracked as D8 in GAPS.md.
 
 ## 7. Agent ↔ Server Protocol
 

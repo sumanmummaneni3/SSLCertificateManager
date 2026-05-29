@@ -23,6 +23,16 @@ public interface AgentInstallKeyRepository extends JpaRepository<AgentInstallKey
     Optional<AgentInstallKey> findFirstByAgentIdAndBundleDownloadedAtIsNull(UUID agentId);
 
     /**
+     * Atomically marks the install-key row as consumed by setting bundle_downloaded_at
+     * to the provided timestamp, but only if it has not already been consumed
+     * (bundle_downloaded_at IS NULL). Returns the number of rows updated (0 or 1).
+     * A return value of 0 means the token was already consumed and should be rejected.
+     */
+    @Modifying
+    @Query("UPDATE AgentInstallKey k SET k.bundleDownloadedAt = :downloadedAt WHERE k.id = :id AND k.bundleDownloadedAt IS NULL")
+    int markDownloadedIfUnconsumed(UUID id, Instant downloadedAt);
+
+    /**
      * Cleanup query: removes expired rows that were never downloaded.
      * Rows that were downloaded are retained for audit purposes.
      */
