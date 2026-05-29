@@ -58,6 +58,14 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    @ExceptionHandler(RenewalNotSupportedException.class)
+    public ProblemDetail handleRenewalNotSupported(RenewalNotSupportedException ex, HttpServletRequest request) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        pd.setType(URI.create("https://certguard.dev/problems/renewal-not-supported"));
+        pd.setTitle("Renewal Not Supported");
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleAll(Exception ex) {
         log.error("Unhandled exception", ex);

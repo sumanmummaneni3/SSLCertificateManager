@@ -1,0 +1,12 @@
+CertGuard Cloud — Certificate Successfully Installed
+
+Your renewed certificate has been successfully installed by your CertGuard agent.
+
+Renewal ID:   [(${renewalId})]
+Install Path: [(${targetInstallPath != null ? targetInstallPath : 'N/A'})]
+
+No further action is required. The certificate is now active on your server.
+
+Log in to CertGuard Cloud to view details: [(${baseUrl})]
+
+— CertGuard Cloud

@@ -1,6 +1,7 @@
 package com.certguard.config;
 
 import com.certguard.security.AgentAuthFilter;
+import com.certguard.security.InternalServiceAuthFilter;
 import com.certguard.security.JwtAuthenticationFilter;
 import com.certguard.security.SalesAuthFilter;
 import com.certguard.service.OAuth2UserService;
@@ -35,6 +36,7 @@ public class SecurityConfig {
     private final OAuth2AuthenticationSuccessHandler oAuth2SuccessHandler;
     private final ApplicationContext applicationContext;
     private final SalesAuthFilter salesAuthFilter;
+    private final InternalServiceAuthFilter internalServiceAuthFilter;
 
     @Value("${app.dev-mode:false}")
     private boolean devMode;
@@ -46,12 +48,14 @@ public class SecurityConfig {
                           OAuth2UserService oAuth2UserService,
                           OAuth2AuthenticationSuccessHandler oAuth2SuccessHandler,
                           ApplicationContext applicationContext,
-                          SalesAuthFilter salesAuthFilter) {
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
-        this.oAuth2UserService       = oAuth2UserService;
-        this.oAuth2SuccessHandler    = oAuth2SuccessHandler;
-        this.applicationContext      = applicationContext;
-        this.salesAuthFilter         = salesAuthFilter;
+                          SalesAuthFilter salesAuthFilter,
+                          InternalServiceAuthFilter internalServiceAuthFilter) {
+        this.jwtAuthenticationFilter     = jwtAuthenticationFilter;
+        this.oAuth2UserService           = oAuth2UserService;
+        this.oAuth2SuccessHandler        = oAuth2SuccessHandler;
+        this.applicationContext          = applicationContext;
+        this.salesAuthFilter             = salesAuthFilter;
+        this.internalServiceAuthFilter   = internalServiceAuthFilter;
     }
 
     @Bean
@@ -85,11 +89,14 @@ public class SecurityConfig {
                     .requestMatchers("/login/oauth2/**").permitAll()
                     // Internal Sales API — authenticated via SalesAuthFilter
                     .requestMatchers("/api/internal/**").authenticated()
+                    // Internal service-to-service API — authenticated via InternalServiceAuthFilter
+                    .requestMatchers("/internal/v1/**").authenticated()
                     // Protected API — role checks via @PreAuthorize
                     .requestMatchers("/api/v1/**").authenticated()
                     .anyRequest().permitAll();
             })
             .addFilterBefore(salesAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(internalServiceAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(agentAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // API requests must never be redirected to an OAuth2 login page.

@@ -1,10 +1,14 @@
 package com.certguard.service;
 
+import com.certguard.dto.internal.InternalRenewalNotificationRequest;
 import com.certguard.entity.Agent;
+import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.OrgNotificationChannel;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
 import com.certguard.repository.OrgNotificationChannelRepository;
+import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.UserRepository;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,25 +61,38 @@ public class NotificationService {
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
 
+    @Value("${app.ui-base-url:${app.base-url:http://localhost:5173}}")
+    private String uiBaseUrl;
+
+    private final OrganizationRepository orgRepository;
+    private final UserRepository userRepository;
+
     public NotificationService(JavaMailSender mailSender,
                                org.thymeleaf.TemplateEngine templateEngine,
-                               OrgNotificationChannelRepository orgChannelRepository) {
+                               OrgNotificationChannelRepository orgChannelRepository,
+                               OrganizationRepository orgRepository,
+                               UserRepository userRepository) {
         this.mailSender = mailSender;
         this.templateEngine = templateEngine;
         this.orgChannelRepository = orgChannelRepository;
+        this.orgRepository = orgRepository;
+        this.userRepository = userRepository;
     }
 
     /**
-     * Called by the expiry checker when a target crosses a threshold.
+     * Called by the expiry checker when a certificate crosses an expiry threshold.
+     * Widened signature (RFC 0004): accepts CertificateRecord so we can include the cert id
+     * in the deep-link URL and determine if the target is agent-discovered.
      *
-     * @param target     the target whose certificate is expiring
+     * @param cert       the certificate record nearing expiry
      * @param daysLeft   days until certificate expires (negative = already expired)
      * @param severity   "WARNING" (<=30 days) or "CRITICAL" (<=7 days)
      * @return true if at least one channel successfully dispatched (email sent or dev-mode logged);
      *         false if no channels are configured for this target/org
      */
     @Async
-    public boolean dispatchExpiryAlert(Target target, int daysLeft, String severity) {
+    public boolean dispatchExpiryAlert(CertificateRecord cert, int daysLeft, String severity) {
+        Target target = cert.getTarget();
         Map<String, Object> channels = resolveChannels(target);
         if (channels == null || channels.isEmpty()) {
             log.warn("No notification channels configured for target {} (org {}), skipping alert",
@@ -86,12 +103,17 @@ public class NotificationService {
         String templateName = "CRITICAL".equals(severity) ? "expiry-critical" : "expiry-warning";
         String subject = buildExpirySubject(target, daysLeft, severity);
 
+        boolean agentDiscovered = target.getAgent() != null;
+        String deepLinkUrl = uiBaseUrl + "/certificates/" + cert.getId();
+
         org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
         ctx.setVariable("host", target.getHost());
         ctx.setVariable("port", target.getPort());
         ctx.setVariable("daysLeft", daysLeft);
         ctx.setVariable("severity", severity);
         ctx.setVariable("baseUrl", baseUrl);
+        ctx.setVariable("agentDiscovered", agentDiscovered);
+        ctx.setVariable("deepLinkUrl", deepLinkUrl);
 
         dispatchEmail(channels, subject, templateName, ctx, target.getHost() + ":" + target.getPort());
 
@@ -138,6 +160,80 @@ public class NotificationService {
 
         sendMimeEmail(contactEmail, subject, "agent-offline", ctx,
                 "agent " + agent.getName());
+    }
+
+    /**
+     * Dispatched by InternalRenewalNotificationController when the renewal service signals
+     * a package is ready for download.
+     */
+    @Async
+    public void dispatchRenewalReady(InternalRenewalNotificationRequest req) {
+        String contactEmail = resolveRenewalContactEmail(req);
+        if (contactEmail == null) return;
+
+        String downloadLink = uiBaseUrl + "/renewals/" + req.renewalId() + "/package";
+        String subject = "[CertGuard] Certificate Renewed — Download Ready";
+
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+        ctx.setVariable("renewalId", req.renewalId().toString());
+        ctx.setVariable("downloadLink", downloadLink);
+        ctx.setVariable("fileName", req.fileName());
+        ctx.setVariable("checksum", req.checksumSha256());
+        ctx.setVariable("baseUrl", baseUrl);
+
+        if (devMode) {
+            log.info("[DEV] Would send renewal-ready email to {} for renewalId {}",
+                    contactEmail, req.renewalId());
+            return;
+        }
+        sendMimeEmail(contactEmail, subject, "renewal-ready", ctx, "renewal " + req.renewalId());
+    }
+
+    /**
+     * Dispatched when the agent has successfully installed the renewed certificate.
+     */
+    @Async
+    public void dispatchRenewalInstalled(InternalRenewalNotificationRequest req) {
+        String contactEmail = resolveRenewalContactEmail(req);
+        if (contactEmail == null) return;
+
+        String subject = "[CertGuard] Certificate Successfully Installed";
+
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+        ctx.setVariable("renewalId", req.renewalId().toString());
+        ctx.setVariable("targetInstallPath", req.targetInstallPath());
+        ctx.setVariable("baseUrl", baseUrl);
+
+        if (devMode) {
+            log.info("[DEV] Would send renewal-installed email to {} for renewalId {}",
+                    contactEmail, req.renewalId());
+            return;
+        }
+        sendMimeEmail(contactEmail, subject, "renewal-installed", ctx, "renewal " + req.renewalId());
+    }
+
+    /**
+     * Dispatched when certificate installation fails. Surfaces the full errorDetail (req #8).
+     */
+    @Async
+    public void dispatchRenewalFailed(InternalRenewalNotificationRequest req) {
+        String contactEmail = resolveRenewalContactEmail(req);
+        if (contactEmail == null) return;
+
+        String subject = "[CertGuard] Certificate Installation Failed";
+
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+        ctx.setVariable("renewalId", req.renewalId().toString());
+        ctx.setVariable("errorDetail", req.errorDetail() != null ? req.errorDetail() : "Unknown error");
+        ctx.setVariable("targetInstallPath", req.targetInstallPath());
+        ctx.setVariable("baseUrl", baseUrl);
+
+        if (devMode) {
+            log.info("[DEV] Would send renewal-failed email to {} for renewalId {} — error: {}",
+                    contactEmail, req.renewalId(), req.errorDetail());
+            return;
+        }
+        sendMimeEmail(contactEmail, subject, "renewal-failed", ctx, "renewal " + req.renewalId());
     }
 
     /**
@@ -234,5 +330,24 @@ public class NotificationService {
         }
         return "[CertGuard] " + severity + ": " + target.getHost() + ":" + target.getPort()
                 + " expires in " + daysLeft + " day(s)";
+    }
+
+    private String resolveRenewalContactEmail(InternalRenewalNotificationRequest req) {
+        String email = orgRepository.findById(req.orgId())
+                .map(org -> org.getContactEmail())
+                .filter(e -> e != null && !e.isBlank())
+                .orElse(null);
+
+        if (email == null && req.requestedBy() != null) {
+            email = userRepository.findById(req.requestedBy())
+                    .map(u -> u.getEmail())
+                    .filter(e -> e != null && !e.isBlank())
+                    .orElse(null);
+        }
+
+        if (email == null) {
+            log.warn("No contact email found for renewal {} (org {})", req.renewalId(), req.orgId());
+        }
+        return email;
     }
 }

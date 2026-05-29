@@ -31,12 +31,6 @@ spring:
         default_schema: public
   flyway:
     enabled: true
-  rabbitmq:
-    host: ${RABBITMQ_HOST:rabbitmq}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_DEFAULT_USER:certguard_rmq}
-    password: ${RABBITMQ_DEFAULT_PASS:certguard_rmq_pass}
-    virtual-host: ${RABBITMQ_VHOST:/certguard}
   security:
     oauth2:
       client:
@@ -97,6 +91,10 @@ app:
     # Comma-separated list of Google-authenticated emails that receive PLATFORM_ADMIN role.
     # Set via environment variable: PLATFORM_ADMIN_EMAILS=you@yourdomain.com
     emails: ${PLATFORM_ADMIN_EMAILS:}
+  renewal-service:
+    url: ${RENEWAL_SERVICE_URL:http://renewal-service:8444}
+  internal:
+    service-token: ${INTERNAL_SERVICE_TOKEN:}
   alert:
     warning-days: ${ALERT_THRESHOLD_WARNING_DAYS:30}
     critical-days: ${ALERT_THRESHOLD_CRITICAL_DAYS:7}
@@ -128,6 +126,9 @@ app:
         memory-kib: ${AGENT_BUNDLE_ARGON2_MEMORY_KIB:65536}
         iterations: ${AGENT_BUNDLE_ARGON2_ITERATIONS:3}
         parallelism: ${AGENT_BUNDLE_ARGON2_PARALLELISM:1}
+    job:
+      max-attempts: ${AGENT_JOB_MAX_ATTEMPTS:5}
+      stale-claim-minutes: ${AGENT_JOB_STALE_CLAIM_MINUTES:10}
 
 management:
   endpoints:
