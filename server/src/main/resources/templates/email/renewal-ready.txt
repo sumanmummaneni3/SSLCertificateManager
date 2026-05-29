@@ -1,0 +1,15 @@
+CertGuard Cloud — Certificate Renewed
+
+Your certificate has been renewed and is ready for download.
+
+Renewal ID: [(${renewalId})]
+File Name:  [(${fileName})]
+SHA-256:    [(${checksum})]
+
+The renewed certificate package contains only the public certificate and chain
+(no private key). Your agent will install it automatically.
+
+Download your certificate here:
+[(${downloadLink})]
+
+— CertGuard Cloud

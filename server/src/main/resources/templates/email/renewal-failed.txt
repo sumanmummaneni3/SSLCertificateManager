@@ -1,0 +1,14 @@
+CertGuard Cloud — Certificate Installation Failed
+
+Your CertGuard agent encountered an error while installing the renewed certificate.
+
+Renewal ID:   [(${renewalId})]
+Install Path: [(${targetInstallPath != null ? targetInstallPath : 'N/A'})]
+
+Error Detail:
+[(${errorDetail})]
+
+Please review the error above, correct the issue, and request a new renewal
+from the CertGuard portal: [(${baseUrl})]
+
+— CertGuard Cloud

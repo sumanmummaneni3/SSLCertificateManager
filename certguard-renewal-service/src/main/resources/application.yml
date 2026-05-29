@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: certguard-renewal-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/certguard_renewal}
+    username: ${SPRING_DATASOURCE_USERNAME:renewal_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:renewal_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: none
+    defer-datasource-initialization: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  flyway:
+    enabled: true
+
+server:
+  port: 8444
+
+app:
+  dev-mode: ${APP_DEV_MODE:false}
+  internal:
+    service-token: ${INTERNAL_SERVICE_TOKEN:}
+  core-service:
+    url: ${CORE_SERVICE_URL:https://app:8443}
+  package:
+    storage-path: ${PACKAGE_STORAGE_PATH:/opt/certguard-renewal/packages}
+  credential:
+    kek: ${RENEWAL_CREDENTIAL_KEK:}  # AES-256 key for encrypting CA credentials at rest
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.certguard.renewal: INFO
+    org.springframework.web: WARN

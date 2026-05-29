@@ -3,7 +3,7 @@ import { useTheme } from "./theme/useTheme.js";
 import { SIDEBAR_THEMES } from "./theme/tokens.js";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
 // SIDEBAR_THEMES imported from src/theme/tokens.js — see that file for palette definitions.
@@ -977,6 +977,116 @@ const styles = `
   .pagination-info {
     font-size: 0.78rem; color: var(--muted); font-family: var(--font-mono);
   }
+
+  /* ── RENEWAL UI ── */
+  .renewal-panel {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-top: 1rem;
+  }
+
+  .renewal-panel-title {
+    font-size: 0.78rem; font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.75rem;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .renewal-status-row {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 0.82rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .renewal-status-row.terminal-success { color: var(--green); }
+  .renewal-status-row.terminal-failed  { color: var(--red);   }
+  .renewal-status-row.terminal-cancel  { color: var(--muted); }
+
+  .renewal-failure-detail {
+    background: var(--surface);
+    border: 1px solid rgba(255,82,82,0.3);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin-top: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: #ff8a8a;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.6;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .renewal-history-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+  }
+
+  .renewal-history-row:first-child { border-top: none; }
+
+  .cert-detail-page {
+    padding: 2rem;
+  }
+
+  .cert-detail-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .cert-detail-section-title {
+    font-size: 0.78rem; font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.75rem;
+  }
+
+  .cert-field-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+    font-size: 0.82rem;
+  }
+
+  .cert-field-key {
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .cert-field-val {
+    color: var(--text);
+    font-weight: 500;
+    word-break: break-all;
+  }
+
+  .renewal-badge-requested     { background: rgba(90,96,112,0.15);   color: var(--muted);   border: 1px solid var(--border2); }
+  .renewal-badge-csr_pending   { background: rgba(0,212,255,0.08);   color: var(--accent);  border: 1px solid rgba(0,212,255,0.2); }
+  .renewal-badge-csr_received  { background: rgba(0,212,255,0.08);   color: var(--accent);  border: 1px solid rgba(0,212,255,0.2); }
+  .renewal-badge-ca_pending    { background: rgba(255,215,64,0.1);   color: var(--yellow);  border: 1px solid rgba(255,215,64,0.25); }
+  .renewal-badge-ca_issued     { background: rgba(255,215,64,0.1);   color: var(--yellow);  border: 1px solid rgba(255,215,64,0.25); }
+  .renewal-badge-stored        { background: rgba(255,215,64,0.1);   color: var(--yellow);  border: 1px solid rgba(255,215,64,0.25); }
+  .renewal-badge-delivery_queued { background: rgba(0,212,255,0.08); color: var(--accent);  border: 1px solid rgba(0,212,255,0.2); }
+  .renewal-badge-delivered     { background: rgba(0,230,118,0.12);   color: var(--green);   border: 1px solid rgba(0,230,118,0.25); }
+  .renewal-badge-failed        { background: rgba(255,82,82,0.12);   color: var(--red);     border: 1px solid rgba(255,82,82,0.25); }
+  .renewal-badge-cancelled     { background: rgba(90,96,112,0.15);   color: var(--muted);   border: 1px solid var(--border2); }
+
+  .cert-row-clickable {
+    cursor: pointer;
+  }
+  .cert-row-clickable:hover td {
+    background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+  }
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
@@ -1074,6 +1184,14 @@ const api = {
     getAuditLog: (token, params) => api.call("GET", `/api/v1/admin/audit?${new URLSearchParams(params)}`, null, token),
     promoteMsp:  (token, orgId) => api.call("PATCH", `/api/v1/admin/orgs/${orgId}/promote-msp`, null, token),
   },
+  // Certificate renewal endpoints
+  getCert:          (certId, token) => api.call("GET",  `/api/v1/certificates/${certId}`, null, token),
+  requestRenewal:       (certId, body, token) => api.call("POST", `/api/v1/certificates/${certId}/renewals`, body, token),
+  listRenewals:         (certId, token) => api.call("GET",  `/api/v1/certificates/${certId}/renewals`, null, token),
+  getRenewal:           (renewalId, token) => api.call("GET",  `/api/v1/renewals/${renewalId}`, null, token),
+  cancelRenewal:        (renewalId, token) => api.call("POST", `/api/v1/renewals/${renewalId}/cancel`, null, token),
+  renewalPackageUrl:    (renewalId) => `${API_BASE}/api/v1/renewals/${renewalId}/package`,
+  listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -1146,7 +1264,7 @@ function DaysBar({ days }) {
 }
 
 // ─── LAUNCH SCREEN ───────────────────────────────────────────────────────────
-function LaunchScreen({ onToken, onPostRegister, onForgotPassword }) {
+function LaunchScreen({ onToken, onPostRegister, onForgotPassword, returnToCertId }) {
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
   const [loading, setLoading]           = useState(false);
@@ -1285,6 +1403,11 @@ function LaunchScreen({ onToken, onPostRegister, onForgotPassword }) {
             ? "Start monitoring your TLS certificates."
             : "Sign in to access your certificate dashboard."}
         </p>
+        {returnToCertId && (
+          <div className="alert alert-info" role="status" style={{ marginBottom: "1rem" }}>
+            Sign in to view the certificate details you were linked to.
+          </div>
+        )}
 
         {devMode === null ? (
           <div style={{ textAlign: "center", padding: "1rem" }}><Spinner /></div>
@@ -2237,7 +2360,7 @@ function FirstTarget({ token, onDone, toast }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
-function Dashboard({ token, org, me, toast, onLogout }) {
+function Dashboard({ token, org, me, toast, onLogout, initialCertId }) {
   const [dash, setDash]           = useState(null);
   const [targets, setTargets]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -2245,7 +2368,8 @@ function Dashboard({ token, org, me, toast, onLogout }) {
   const [showAdd, setShowAdd]     = useState(false);
   const [deleteId, setDeleteId]   = useState(null);
   const [editTarget, setEditTarget] = useState(null);
-  const [view, setView]           = useState("dashboard");
+  const [view, setView]           = useState(initialCertId ? "cert-detail" : "dashboard");
+  const [selectedCertId, setSelectedCertId] = useState(initialCertId || null);
   const [certs, setCerts]         = useState([]);
   const [certsLoading, setCertsLoading] = useState(false);
   const [agents, setAgents]       = useState([]);
@@ -2423,7 +2547,26 @@ function Dashboard({ token, org, me, toast, onLogout }) {
             onEdit={setEditTarget} onRefresh={load} me={me} org={org} />
         )}
         {view === "certs" && (
-          <CertsView certs={certs} loading={certsLoading} onRefresh={loadCerts} />
+          <CertsView
+            certs={certs}
+            loading={certsLoading}
+            onRefresh={loadCerts}
+            onSelectCert={(certId) => {
+              setSelectedCertId(certId);
+              setView("cert-detail");
+            }}
+          />
+        )}
+        {view === "cert-detail" && selectedCertId && (
+          <CertificateDetailView
+            certId={selectedCertId}
+            token={token}
+            toast={toast}
+            onBack={() => {
+              setView("certs");
+              loadCerts();
+            }}
+          />
         )}
         {view === "agents" && (
           <AgentsView agents={agents} loading={agentsLoading} token={token}
@@ -2850,7 +2993,438 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
   );
 }
 
-function CertsView({ certs, loading, onRefresh }) {
+// ─── RENEWAL STATUS LABELS ───────────────────────────────────────────────────
+const RENEWAL_STATUS_LABELS = {
+  REQUESTED:       "Initializing renewal...",
+  CSR_PENDING:     "Waiting for agent to generate CSR...",
+  CSR_RECEIVED:    "CSR received, submitting to CA...",
+  CA_PENDING:      "Certificate request submitted to CA...",
+  CA_ISSUED:       "Certificate issued, preparing delivery...",
+  STORED:          "Certificate stored, queuing delivery...",
+  DELIVERY_QUEUED: "Waiting for agent to install certificate...",
+  DELIVERED:       "Certificate successfully installed!",
+  FAILED:          "Renewal failed",
+  CANCELLED:       "Renewal cancelled",
+};
+const RENEWAL_TERMINAL = new Set(["DELIVERED", "FAILED", "CANCELLED"]);
+const RENEWAL_HAS_PACKAGE = new Set(["STORED", "DELIVERY_QUEUED", "DELIVERED"]);
+
+function renewalBadgeClass(status) {
+  return `badge renewal-badge-${(status || "unknown").toLowerCase()}`;
+}
+
+// ─── REQUEST RENEWAL MODAL ───────────────────────────────────────────────────
+function RequestRenewalModal({ certId, token, onClose, onRequested, toast }) {
+  const [installPath, setInstallPath] = useState("");
+  const [caProvider, setCaProvider]   = useState("");
+  const [providers, setProviders]     = useState([]);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState("");
+
+  useEffect(() => {
+    api.listRenewalProviders(token)
+      .then(list => setProviders(list || []))
+      .catch(() => setProviders([]));
+  }, [token]);
+
+  const handleSubmit = async () => {
+    setError(""); setLoading(true);
+    try {
+      const body = {
+        targetInstallPath: installPath.trim() || undefined,
+        caProvider: caProvider || undefined,
+      };
+      const renewal = await api.requestRenewal(certId, body, token);
+      toast("Renewal requested — agent will generate CSR shortly", "success");
+      onRequested(renewal);
+    } catch (e) {
+      if (e.status === 409) {
+        setError("A renewal is already in progress for this certificate.");
+      } else if (e.status === 422) {
+        setError("Automatic renewal requires an agent-managed target.");
+      } else {
+        setError(e.message || "Failed to request renewal");
+      }
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-bg"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="renew-modal-title"
+    >
+      <div className="modal">
+        <div className="modal-title" id="renew-modal-title">Request Certificate Renewal</div>
+        <p className="modal-sub">
+          The agent will generate a fresh CSR on the target host. The private key
+          never leaves the host — only the signed certificate is returned.
+        </p>
+
+        {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+        {providers.length > 0 && (
+          <div className="field">
+            <label htmlFor="ca-provider">CA Provider</label>
+            <select
+              id="ca-provider"
+              value={caProvider}
+              onChange={(e) => setCaProvider(e.target.value)}
+            >
+              <option value="">Platform default</option>
+              {providers.map(p => (
+                <option key={p.type} value={p.type}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="field">
+          <label htmlFor="install-path">
+            Install path on agent host{" "}
+            <span style={{ color: "var(--muted)", fontWeight: 400 }}>(optional)</span>
+          </label>
+          <input
+            id="install-path"
+            value={installPath}
+            onChange={(e) => setInstallPath(e.target.value)}
+            placeholder="e.g. /etc/ssl/certs/example.pem"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && !loading && handleSubmit()}
+          />
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+            {loading ? <><Spinner /> Requesting...</> : "Request Renewal"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RENEWAL STATUS PANEL ────────────────────────────────────────────────────
+function RenewalStatusPanel({ renewal: initialRenewal, token }) {
+  const [renewal, setRenewal]   = useState(initialRenewal);
+  const renewalId               = renewal?.id;
+  const status                  = renewal?.status;
+  const isTerminal              = RENEWAL_TERMINAL.has(status);
+
+  // Poll every 5 s while non-terminal
+  useEffect(() => {
+    if (!renewalId || isTerminal) return;
+    const id = setInterval(async () => {
+      try {
+        const updated = await api.getRenewal(renewalId, token);
+        setRenewal(updated);
+      } catch {
+        // Non-fatal — keep polling
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [renewalId, isTerminal, token]);
+
+  if (!renewal) return null;
+
+  const label       = RENEWAL_STATUS_LABELS[status] || status;
+  const hasPackage  = RENEWAL_HAS_PACKAGE.has(status);
+  const isFailed    = status === "FAILED";
+  const isDelivered = status === "DELIVERED";
+  const isCancelled = status === "CANCELLED";
+
+  return (
+    <div className="renewal-panel" aria-live="polite">
+      <div className="renewal-panel-title">
+        <span aria-hidden="true" style={{ color: isDelivered ? "var(--green)" : isFailed ? "var(--red)" : "var(--accent)" }}>
+          {isDelivered ? "✓" : isFailed ? "✕" : isCancelled ? "◌" : "◎"}
+        </span>
+        Current Renewal
+        <span className={renewalBadgeClass(status)}>{status}</span>
+      </div>
+
+      <div
+        className={`renewal-status-row${isDelivered ? " terminal-success" : isFailed ? " terminal-failed" : isCancelled ? " terminal-cancel" : ""}`}
+      >
+        {!isTerminal && <Spinner />}
+        <span>{label}</span>
+      </div>
+
+      {isFailed && renewal.failureReason && (
+        <pre className="renewal-failure-detail" aria-label="Failure detail">{renewal.failureReason}</pre>
+      )}
+
+      {hasPackage && (
+        <a
+          href={api.renewalPackageUrl(renewalId)}
+          download
+          className="btn btn-secondary btn-sm"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: "0.75rem", textDecoration: "none", width: "auto" }}
+          aria-label="Download renewed certificate package"
+        >
+          ↓ Download Certificate
+        </a>
+      )}
+
+      {renewal.createdAt && (
+        <div style={{ marginTop: "0.5rem", fontSize: "0.72rem", color: "var(--muted)" }}>
+          Started {fmtDate(renewal.createdAt)}
+          {renewal.caProvider && renewal.caProvider !== "NONE" && ` · CA: ${renewal.caProvider}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── RENEWAL HISTORY LIST ────────────────────────────────────────────────────
+function RenewalHistoryList({ certId, token }) {
+  const [renewals, setRenewals]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listRenewals(certId, token)
+      .then((data) => { if (!cancelled) setRenewals(Array.isArray(data) ? data : []); })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [certId, token]);
+
+  if (loading) return <div style={{ padding: "0.75rem 0", color: "var(--muted)", fontSize: "0.78rem" }}><Spinner /> Loading renewal history...</div>;
+  if (error)   return <div className="alert alert-error" style={{ marginTop: "0.5rem" }}>Failed to load renewal history: {error}</div>;
+  if (renewals.length === 0) return (
+    <p style={{ color: "var(--muted)", fontSize: "0.78rem", marginTop: "0.5rem" }}>
+      No renewal history for this certificate.
+    </p>
+  );
+
+  return (
+    <div style={{ marginTop: "0.5rem" }}>
+      {renewals.map((r) => (
+        <div key={r.id} className="renewal-history-row">
+          <span className={renewalBadgeClass(r.status)}>{r.status}</span>
+          <span className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+            {fmtDate(r.createdAt)}
+            {r.caProvider && r.caProvider !== "NONE" && ` · ${r.caProvider}`}
+          </span>
+          <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+            {r.requestedByEmail || ""}
+          </span>
+          <span>
+            {RENEWAL_HAS_PACKAGE.has(r.status) && (
+              <a
+                href={api.renewalPackageUrl(r.id)}
+                download
+                style={{ fontSize: "0.72rem", color: "var(--accent)", textDecoration: "none" }}
+                aria-label={`Download certificate package for renewal ${r.id}`}
+              >
+                ↓ Download
+              </a>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── CERTIFICATE DETAIL VIEW ─────────────────────────────────────────────────
+function CertificateDetailView({ certId, token, toast, onBack }) {
+  const [cert, setCert]             = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState("");
+  const [showRenewModal, setShowRenewModal] = useState(false);
+  const [activeRenewal, setActiveRenewal]   = useState(null);
+
+  useEffect(() => {
+    if (!certId) return;
+    let cancelled = false;
+    async function fetchCert() {
+      try {
+        const data = await api.getCert(certId, token);
+        if (!cancelled) {
+          setCert(data);
+          if (data?.activeRenewal) setActiveRenewal(data.activeRenewal);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e.message || "Failed to load certificate");
+          setLoading(false);
+        }
+      }
+    }
+    fetchCert();
+    return () => { cancelled = true; };
+  }, [certId, token]);
+
+  const isAgentManaged = !!(cert?.target?.agentId || cert?.target?.agent);
+  const canRequestRenewal = isAgentManaged && !activeRenewal;
+
+  const handleRenewalRequested = (renewal) => {
+    setShowRenewModal(false);
+    setActiveRenewal(renewal);
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <div>
+          <button
+            className="btn-ghost"
+            style={{ padding: 0, fontSize: "0.78rem", marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}
+            onClick={onBack}
+            aria-label="Back to Certificates"
+          >
+            &#8592; Back to Certificates
+          </button>
+          <div className="page-title">{cert ? cert.commonName : "Certificate Detail"}</div>
+          <div className="page-sub">Certificate details and renewal management</div>
+        </div>
+        {isAgentManaged && (
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => setShowRenewModal(true)}
+            disabled={!canRequestRenewal}
+            title={activeRenewal ? "A renewal is already in progress" : "Request certificate renewal via agent"}
+          >
+            {activeRenewal ? "Renewal In Progress" : "Request Renewal"}
+          </button>
+        )}
+      </div>
+
+      <div className="cert-detail-page">
+        {loading && (
+          <div className="loading-center"><Spinner lg /><span>Loading certificate...</span></div>
+        )}
+
+        {error && (
+          <div className="alert alert-error" role="alert">{error}</div>
+        )}
+
+        {cert && (
+          <>
+            {/* Certificate fields */}
+            <div className="cert-detail-section">
+              <div className="cert-detail-section-title">Certificate Info</div>
+              <div className="cert-field-grid">
+                <span className="cert-field-key">Common Name</span>
+                <span className="cert-field-val">{cert.commonName || "—"}</span>
+
+                <span className="cert-field-key">Status</span>
+                <span className="cert-field-val">
+                  <Badge type={statusColor(cert.status)}>{cert.status || "—"}</Badge>
+                </span>
+
+                <span className="cert-field-key">Issuer</span>
+                <span className="cert-field-val">{cert.issuer || "—"}</span>
+
+                <span className="cert-field-key">Valid From</span>
+                <span className="cert-field-val">{fmtDate(cert.notBefore)}</span>
+
+                <span className="cert-field-key">Expires</span>
+                <span className="cert-field-val">{fmtDate(cert.expiryDate)}</span>
+
+                <span className="cert-field-key">Days Left</span>
+                <span className="cert-field-val">
+                  <DaysBar days={cert.daysRemaining} />
+                </span>
+
+                {cert.subjectAltNames?.length > 0 && (
+                  <>
+                    <span className="cert-field-key">SANs</span>
+                    <span className="cert-field-val" style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}>
+                      {cert.subjectAltNames.join(", ")}
+                    </span>
+                  </>
+                )}
+
+                <span className="cert-field-key">Serial</span>
+                <span className="cert-field-val mono" style={{ fontSize: "0.72rem" }}>{cert.serialNumber || "—"}</span>
+
+                <span className="cert-field-key">Last Scanned</span>
+                <span className="cert-field-val">{fmtDate(cert.scannedAt)}</span>
+              </div>
+            </div>
+
+            {/* Target info */}
+            {cert.target && (
+              <div className="cert-detail-section">
+                <div className="cert-detail-section-title">Target</div>
+                <div className="cert-field-grid">
+                  <span className="cert-field-key">Host</span>
+                  <span className="cert-field-val">{cert.target.host || "—"}</span>
+
+                  <span className="cert-field-key">Port</span>
+                  <span className="cert-field-val">{cert.target.port || 443}</span>
+
+                  <span className="cert-field-key">Type</span>
+                  <span className="cert-field-val">
+                    <Badge type={hostTypeColor(cert.target.hostType)}>{cert.target.hostType || "—"}</Badge>
+                  </span>
+
+                  <span className="cert-field-key">Visibility</span>
+                  <span className="cert-field-val">
+                    <Badge type={cert.target.isPrivate ? "private" : "public"}>
+                      {cert.target.isPrivate ? "Private" : "Public"}
+                    </Badge>
+                  </span>
+
+                  {isAgentManaged && (
+                    <>
+                      <span className="cert-field-key">Agent</span>
+                      <span className="cert-field-val">
+                        {cert.target.agentName || cert.target.agentId || "Agent-managed"}
+                        <Badge type="active" style={{ marginLeft: 8 }}>Agent</Badge>
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {!isAgentManaged && (
+                  <div className="alert alert-info" style={{ marginTop: "0.75rem" }}>
+                    Automatic renewal is only available for agent-managed targets. Assign an agent to enable renewal.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Active renewal status */}
+            {activeRenewal && (
+              <div className="cert-detail-section">
+                <div className="cert-detail-section-title">Active Renewal</div>
+                <RenewalStatusPanel renewal={activeRenewal} token={token} />
+              </div>
+            )}
+
+            {/* Renewal history */}
+            <div className="cert-detail-section">
+              <div className="cert-detail-section-title">Renewal History</div>
+              <RenewalHistoryList certId={certId} token={token} />
+            </div>
+          </>
+        )}
+      </div>
+
+      {showRenewModal && (
+        <RequestRenewalModal
+          certId={certId}
+          token={token}
+          onClose={() => setShowRenewModal(false)}
+          onRequested={handleRenewalRequested}
+          toast={toast}
+        />
+      )}
+    </>
+  );
+}
+
+function CertsView({ certs, loading, onRefresh, onSelectCert }) {
   const [filter, setFilter] = useState("ALL");
   const filtered = filter === "ALL" ? certs : certs.filter((c) => c.status === filter);
 
@@ -2859,7 +3433,7 @@ function CertsView({ certs, loading, onRefresh }) {
       <div className="page-header">
         <div>
           <div className="page-title">Certificates</div>
-          <div className="page-sub">Full certificate inventory</div>
+          <div className="page-sub">Full certificate inventory — click a row to view details and manage renewal</div>
         </div>
         <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
       </div>
@@ -2899,7 +3473,15 @@ function CertsView({ certs, loading, onRefresh }) {
               </thead>
               <tbody>
                 {filtered.map((c) => (
-                  <tr key={c.id}>
+                  <tr
+                    key={c.id}
+                    className={onSelectCert ? "cert-row-clickable" : ""}
+                    onClick={() => onSelectCert && onSelectCert(c.id)}
+                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelectCert && onSelectCert(c.id)}
+                    tabIndex={onSelectCert ? 0 : undefined}
+                    role={onSelectCert ? "button" : undefined}
+                    aria-label={onSelectCert ? `View details for ${c.commonName}` : undefined}
+                  >
                     <td className="host-cell">{c.commonName}</td>
                     <td className="mono" style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {c.issuer?.split(",")[0]?.replace("CN=", "") || c.issuer}
@@ -4493,6 +5075,8 @@ export default function App() {
   const [pendingEmail, setPendingEmail] = useState("");
   // Token read from URL for verify-email and reset-password pages
   const [authUrlToken, setAuthUrlToken] = useState("");
+  // Deep-link returnTo certId (from /certificates/{certId} path or ?certId= param)
+  const [returnToCertId, setReturnToCertId] = useState(null);
   const { toasts, add: toast } = useToasts();
 
   const handleToken = async (t, ctx = {}) => {
@@ -4540,9 +5124,19 @@ export default function App() {
     }
   };
 
+  // Parse deep-link cert ID from URL: /certificates/{certId} or ?certId={certId}
+  const parseCertIdFromUrl = () => {
+    const params = new URLSearchParams(window.location.search);
+    const fromParam = params.get("certId");
+    if (fromParam) return fromParam;
+    const pathMatch = window.location.pathname.match(/^\/certificates\/([^/]+)$/);
+    return pathMatch ? pathMatch[1] : null;
+  };
+
   // Pick up the JWT after OAuth redirect (?token= on non-invite paths) or start invite
   // flow (?invite= anywhere, or ?token= when the path is /invite).
-  // Also handles deep-link paths: /auth/verify-email and /auth/reset-password.
+  // Also handles deep-link paths: /auth/verify-email, /auth/reset-password, and
+  // /certificates/{certId} (returnTo deep-link from expiry notification emails).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
@@ -4565,6 +5159,20 @@ export default function App() {
       window.history.replaceState({}, "", "/");
       setAuthUrlToken(resetTok || "");
       setPhase("reset-password");
+      return;
+    }
+
+    // ── Certificate deep-link (/certificates/{certId} or ?certId=xxx) ────────
+    // Capture the certId before clearing the URL; it will be passed to Dashboard
+    // so the user lands directly on the cert detail page.
+    const deepLinkCertId = parseCertIdFromUrl();
+    if (deepLinkCertId) {
+      setReturnToCertId(deepLinkCertId);
+      window.history.replaceState({}, "", "/");
+      // If a JWT token is present in the URL (OAuth callback to this path), consume it.
+      if (urlToken) { handleToken(urlToken); return; }
+      // Otherwise, the user either is (or isn't) logged in — handled by the app phase.
+      // The returnToCertId will be passed to Dashboard once auth completes.
       return;
     }
 
@@ -4641,6 +5249,7 @@ export default function App() {
           onToken={handleToken}
           onPostRegister={(email) => { setPendingEmail(email); setPhase("post-register"); }}
           onForgotPassword={() => setPhase("forgot-password")}
+          returnToCertId={returnToCertId}
         />
       )}
       {phase === "post-register"  && <PostRegistrationScreen email={pendingEmail} onBack={goToLaunch} />}
@@ -4649,7 +5258,7 @@ export default function App() {
       {phase === "reset-password" && <ResetPasswordScreen resetToken={authUrlToken} onGoToSignIn={goToLaunch} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
-      {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} />}
+      {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
       <Toast toasts={toasts} />
     </>

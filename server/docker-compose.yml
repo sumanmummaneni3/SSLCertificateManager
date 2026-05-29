@@ -4,7 +4,7 @@ services:
   # PostgreSQL Database
   # ─────────────────────────────────────────
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: certguard-postgres
     restart: unless-stopped
     environment:
@@ -26,31 +26,6 @@ services:
       - certguard-net
 
   # ─────────────────────────────────────────
-  # RabbitMQ Message Broker (Phase 3 ready)
-  # ─────────────────────────────────────────
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: certguard-rabbitmq
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER:  ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS:  ${RABBITMQ_DEFAULT_PASS}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    ports:
-      - "127.0.0.1:5672:5672"    # AMQP — localhost only
-      - "127.0.0.1:15672:15672"  # Management UI — localhost only
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-    networks:
-      - certguard-net
-
-  # ─────────────────────────────────────────
   # CertGuard Spring Boot Application
   # ─────────────────────────────────────────
   app:
@@ -62,8 +37,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL:      jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
@@ -71,10 +44,6 @@ services:
       JWT_SECRET:                 ${JWT_SECRET:-local-dev-secret-key-change-this-in-production-must-be-at-least-64-chars!!}
       GOOGLE_CLIENT_ID:           ${GOOGLE_CLIENT_ID:-mock-client-id}
       GOOGLE_CLIENT_SECRET:       ${GOOGLE_CLIENT_SECRET:-mock-client-secret}
-      RABBITMQ_HOST:              rabbitmq
-      RABBITMQ_DEFAULT_USER:      ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS:      ${RABBITMQ_DEFAULT_PASS}
-      RABBITMQ_VHOST:             ${RABBITMQ_VHOST}
       APP_BASE_URL:               ${APP_BASE_URL}
       SSL_KEYSTORE_PASSWORD:      ${SSL_KEYSTORE_PASSWORD:-localdevpassword}
       ALERT_THRESHOLD_WARNING_DAYS:  ${ALERT_THRESHOLD_WARNING_DAYS:-30}
@@ -83,6 +52,8 @@ services:
       MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
       APP_DEV_MODE:               ${APP_DEV_MODE:-false}
       PLATFORM_ADMIN_EMAILS:      ${PLATFORM_ADMIN_EMAILS:-}
+      RENEWAL_SERVICE_URL:        http://renewal-service:8444
+      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:-changeme-set-in-production}
       MAIL_HOST:                  ${MAIL_HOST:-smtp.gmail.com}
       MAIL_PORT:                  ${MAIL_PORT:-587}
       MAIL_USERNAME:              ${MAIL_USERNAME:-}
@@ -138,6 +109,63 @@ services:
       - auth_certs:/opt/certguard-auth/certs
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8090/actuator/health | grep -q UP || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
+  # Renewal Service PostgreSQL (separate DB)
+  # ─────────────────────────────────────────
+  renewal-postgres:
+    image: postgres:16-alpine
+    container_name: certguard-renewal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${RENEWAL_POSTGRES_DB:-certguard_renewal}
+      POSTGRES_USER:     ${RENEWAL_POSTGRES_USER:-renewal_user}
+      POSTGRES_PASSWORD: ${RENEWAL_POSTGRES_PASSWORD}
+    volumes:
+      - renewal_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RENEWAL_POSTGRES_USER:-renewal_user} -d ${RENEWAL_POSTGRES_DB:-certguard_renewal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
+  # CertGuard Renewal Service
+  # ─────────────────────────────────────────
+  renewal-service:
+    build:
+      context: ../certguard-renewal-service
+      dockerfile: Dockerfile
+    container_name: certguard-renewal-service
+    restart: unless-stopped
+    depends_on:
+      renewal-postgres:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL:      jdbc:postgresql://renewal-postgres:5432/${RENEWAL_POSTGRES_DB:-certguard_renewal}
+      SPRING_DATASOURCE_USERNAME: ${RENEWAL_POSTGRES_USER:-renewal_user}
+      SPRING_DATASOURCE_PASSWORD: ${RENEWAL_POSTGRES_PASSWORD}
+      CORE_SERVICE_URL:           https://app:8443
+      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:changeme-set-in-production}
+      PACKAGE_STORAGE_PATH:       /opt/certguard-renewal/packages
+      JAVA_OPTS:                  "-Xms256m -Xmx512m -XX:+UseContainerSupport"
+      APP_DEV_MODE:               ${APP_DEV_MODE:-false}
+    volumes:
+      - renewal_packages:/opt/certguard-renewal/packages
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8444/actuator/health | grep -q UP || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -247,7 +275,8 @@ services:
 # ─────────────────────────────────────────
 volumes:
   postgres_data:
-  rabbitmq_data:
+  renewal_postgres_data:
+  renewal_packages:
   prometheus_data:
   grafana_data:
   auth_certs:
