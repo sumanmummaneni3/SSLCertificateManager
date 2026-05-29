@@ -21,6 +21,8 @@ public interface CertificateRecordRepository extends JpaRepository<CertificateRe
 
     List<CertificateRecord> findAllByTargetId(UUID targetId);
 
+    Optional<CertificateRecord> findByIdAndOrgId(UUID id, UUID orgId);
+
     Optional<CertificateRecord> findByTargetIdAndSerialNumber(UUID targetId, String serialNumber);
 
     Optional<CertificateRecord> findTopByTargetIdOrderByScannedAtDesc(UUID targetId);

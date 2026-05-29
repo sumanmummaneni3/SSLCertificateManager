@@ -206,11 +206,13 @@ class AgentBundleServiceTest {
                     .sealedPayload(sealedPayload)
                     .expiresAt(Instant.now().plusSeconds(3600))
                     .build();
+            ReflectionTestUtils.setField(key, "id", UUID.randomUUID());
 
             // The service SHA-256 hashes the token; mock the lookup by hash
             when(installKeyRepository.findByBundleDownloadTokenHash(anyString()))
                     .thenReturn(Optional.of(key));
-            when(installKeyRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            // Atomic consume succeeds: 1 row updated
+            when(installKeyRepository.markDownloadedIfUnconsumed(any(), any())).thenReturn(1);
 
             byte[] zip = service.buildBundleZip(agentId, dlToken);
 
@@ -228,10 +230,8 @@ class AgentBundleServiceTest {
                         "run.sh", "run.bat", "README.txt");
             }
 
-            // Verify downloaded timestamp was set
-            ArgumentCaptor<AgentInstallKey> captor = ArgumentCaptor.forClass(AgentInstallKey.class);
-            verify(installKeyRepository).save(captor.capture());
-            assertThat(captor.getValue().getBundleDownloadedAt()).isNotNull();
+            // Verify the atomic mark was called once
+            verify(installKeyRepository).markDownloadedIfUnconsumed(eq(key.getId()), any(Instant.class));
         }
 
         @Test
@@ -251,12 +251,14 @@ class AgentBundleServiceTest {
                     .kdfIterations(3).kdfParallelism(1)
                     .installKeyHash("hash").bundleDownloadTokenHash("hash")
                     .sealedPayload(new byte[32])
-                    .bundleDownloadedAt(Instant.now().minusSeconds(60)) // already downloaded
                     .expiresAt(Instant.now().plusSeconds(3600))
                     .build();
+            ReflectionTestUtils.setField(key, "id", UUID.randomUUID());
 
             when(installKeyRepository.findByBundleDownloadTokenHash(anyString()))
                     .thenReturn(Optional.of(key));
+            // Atomic consume fails: 0 rows updated (already consumed)
+            when(installKeyRepository.markDownloadedIfUnconsumed(any(), any())).thenReturn(0);
 
             assertThatThrownBy(() -> service.buildBundleZip(agentId, dlToken))
                     .isInstanceOf(BundleExpiredException.class)

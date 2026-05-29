@@ -200,6 +200,10 @@ public class AgentBundleService {
 
     /**
      * Builds the agent install bundle ZIP and marks the download token as consumed.
+     * The token is atomically consumed BEFORE the ZIP is built: a single UPDATE
+     * sets bundle_downloaded_at only when it is currently NULL. If 0 rows are updated
+     * the token has already been consumed (concurrent request or replay attack) and
+     * a BundleExpiredException is thrown immediately, with no bundle data returned.
      * The returned bytes should be streamed directly to the HTTP response.
      */
     @Transactional
@@ -209,11 +213,7 @@ public class AgentBundleService {
         AgentInstallKey installKey = installKeyRepository.findByBundleDownloadTokenHash(tokenHash)
                 .orElseThrow(() -> new ResourceNotFoundException("Bundle not found — token invalid"));
 
-        // 2. Guard: already downloaded or expired
-        if (installKey.getBundleDownloadedAt() != null) {
-            throw new BundleExpiredException(
-                    "Bundle has already been downloaded. Re-issue a new agent to get a fresh bundle.");
-        }
+        // 2. Guard: expired (check before the atomic consume so the message is accurate)
         if (installKey.getExpiresAt().isBefore(Instant.now())) {
             throw new BundleExpiredException(
                     "Bundle download token has expired. Re-issue a new agent to get a fresh bundle.");
@@ -224,12 +224,18 @@ public class AgentBundleService {
             throw new ResourceNotFoundException("Bundle not found — token invalid");
         }
 
-        // 4. Build ZIP in memory
-        byte[] zipBytes = buildZip(installKey, agentId);
+        // 4. Atomically mark consumed BEFORE building the ZIP.
+        //    Uses UPDATE ... WHERE bundle_downloaded_at IS NULL so only one concurrent
+        //    caller wins; any other caller (including a replay) gets 0 rows updated.
+        Instant downloadedAt = Instant.now();
+        int updated = installKeyRepository.markDownloadedIfUnconsumed(installKey.getId(), downloadedAt);
+        if (updated == 0) {
+            throw new BundleExpiredException(
+                    "Bundle has already been downloaded. Re-issue a new agent to get a fresh bundle.");
+        }
 
-        // 5. Mark downloaded
-        installKey.setBundleDownloadedAt(Instant.now());
-        installKeyRepository.save(installKey);
+        // 5. Build ZIP in memory (token is already consumed — safe to build now)
+        byte[] zipBytes = buildZip(installKey, agentId);
 
         log.info("Bundle downloaded — agent: {}, org: {}", agentId, installKey.getOrgId());
         return zipBytes;

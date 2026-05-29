@@ -85,7 +85,7 @@ public class CertificateExpiryScheduler {
             log.debug("Cert expiry alert -- target {}:{} daysLeft={} severity={}",
                     target.getHost(), target.getPort(), daysLeft, severity);
 
-            boolean dispatched = notificationService.dispatchExpiryAlert(target, (int) daysLeft, severity);
+            boolean dispatched = notificationService.dispatchExpiryAlert(cert, (int) daysLeft, severity);
             if (dispatched) {
                 certRepository.stampAlertSentAt(cert.getId(), now);
                 alertsSent++;

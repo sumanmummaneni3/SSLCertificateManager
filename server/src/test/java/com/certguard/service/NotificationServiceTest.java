@@ -1,10 +1,13 @@
 package com.certguard.service;
 
 import com.certguard.entity.Agent;
+import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.OrgNotificationChannel;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
 import com.certguard.repository.OrgNotificationChannelRepository;
+import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.UserRepository;
 import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -19,6 +22,7 @@ import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.IContext;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,21 +38,28 @@ class NotificationServiceTest {
     @Mock JavaMailSender mailSender;
     @Mock TemplateEngine templateEngine;
     @Mock OrgNotificationChannelRepository orgChannelRepository;
+    @Mock OrganizationRepository orgRepository;
+    @Mock UserRepository userRepository;
 
     NotificationService notificationService;
 
     @BeforeEach
     void setUp() {
-        notificationService = new NotificationService(mailSender, templateEngine, orgChannelRepository);
+        notificationService = new NotificationService(
+                mailSender, templateEngine, orgChannelRepository, orgRepository, userRepository);
         ReflectionTestUtils.setField(notificationService, "fromAddress", "noreply@certguard.cloud");
         ReflectionTestUtils.setField(notificationService, "baseUrl", "http://localhost");
+        ReflectionTestUtils.setField(notificationService, "uiBaseUrl", "http://localhost:5173");
         ReflectionTestUtils.setField(notificationService, "devMode", false);
     }
 
-    private Target targetWithEmailChannel(String... addresses) {
+    private Organization buildOrg() {
         Organization org = Organization.builder().name("TestOrg").build();
         ReflectionTestUtils.setField(org, "id", UUID.randomUUID());
+        return org;
+    }
 
+    private Target targetWithEmailChannel(Organization org, String... addresses) {
         Map<String, Object> emailCfg = new HashMap<>();
         emailCfg.put("enabled", true);
         emailCfg.put("addresses", List.of(addresses));
@@ -64,71 +75,91 @@ class NotificationServiceTest {
                 .build();
     }
 
+    private CertificateRecord certForTarget(Target target) {
+        CertificateRecord cert = CertificateRecord.builder()
+                .target(target)
+                .orgId(target.getOrganization().getId())
+                .commonName("example.com")
+                .issuer("Test CA")
+                .serialNumber("123")
+                .expiryDate(Instant.now().plus(20, ChronoUnit.DAYS))
+                .notBefore(Instant.now().minus(30, ChronoUnit.DAYS))
+                .build();
+        ReflectionTestUtils.setField(cert, "id", UUID.randomUUID());
+        return cert;
+    }
+
     @Nested
     class DispatchExpiryAlert {
 
         @Test
         void devModeSkipsSend() {
             ReflectionTestUtils.setField(notificationService, "devMode", true);
-            Target target = targetWithEmailChannel("ops@example.com");
+            Organization org = buildOrg();
+            Target target = targetWithEmailChannel(org, "ops@example.com");
+            CertificateRecord cert = certForTarget(target);
 
-            notificationService.dispatchExpiryAlert(target, 10, "WARNING");
+            notificationService.dispatchExpiryAlert(cert, 10, "WARNING");
 
             verifyNoInteractions(mailSender);
         }
 
         @Test
         void emptyChannelsSkips() {
-            Organization org = Organization.builder().name("Org").build();
-            ReflectionTestUtils.setField(org, "id", UUID.randomUUID());
+            Organization org = buildOrg();
             when(orgChannelRepository.findByOrganizationIdAndEnabledTrue(any())).thenReturn(List.of());
 
             Target target = Target.builder()
                     .organization(org).host("x.com").port(443)
                     .notificationChannels(Map.of())
                     .build();
+            CertificateRecord cert = certForTarget(target);
 
-            notificationService.dispatchExpiryAlert(target, 5, "CRITICAL");
+            notificationService.dispatchExpiryAlert(cert, 5, "CRITICAL");
 
             verifyNoInteractions(mailSender);
         }
 
         @Test
         void emptyRecipientsSkipsSend() {
-            Organization org = Organization.builder().name("Org").build();
-            ReflectionTestUtils.setField(org, "id", UUID.randomUUID());
+            Organization org = buildOrg();
 
             Map<String, Object> emailCfg = Map.of("enabled", true, "addresses", List.of());
             Target target = Target.builder()
                     .organization(org).host("x.com").port(443)
                     .notificationChannels(Map.of("email", emailCfg))
                     .build();
+            CertificateRecord cert = certForTarget(target);
 
-            notificationService.dispatchExpiryAlert(target, 5, "CRITICAL");
+            notificationService.dispatchExpiryAlert(cert, 5, "CRITICAL");
 
             verifyNoInteractions(mailSender);
         }
 
         @Test
         void smtpExceptionIsSwallowed() {
-            Target target = targetWithEmailChannel("ops@example.com");
+            Organization org = buildOrg();
+            Target target = targetWithEmailChannel(org, "ops@example.com");
+            CertificateRecord cert = certForTarget(target);
             when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("body");
             MimeMessage mime = mock(MimeMessage.class);
             when(mailSender.createMimeMessage()).thenReturn(mime);
             doThrow(new RuntimeException("SMTP down")).when(mailSender).send(any(MimeMessage.class));
 
-            notificationService.dispatchExpiryAlert(target, 3, "CRITICAL");
+            notificationService.dispatchExpiryAlert(cert, 3, "CRITICAL");
             // no exception propagates
         }
 
         @Test
         void warningUsesWarningTemplate() {
-            Target target = targetWithEmailChannel("ops@example.com");
+            Organization org = buildOrg();
+            Target target = targetWithEmailChannel(org, "ops@example.com");
+            CertificateRecord cert = certForTarget(target);
             when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("body");
             MimeMessage mime = mock(MimeMessage.class);
             when(mailSender.createMimeMessage()).thenReturn(mime);
 
-            notificationService.dispatchExpiryAlert(target, 20, "WARNING");
+            notificationService.dispatchExpiryAlert(cert, 20, "WARNING");
 
             ArgumentCaptor<String> templateCaptor = ArgumentCaptor.forClass(String.class);
             verify(templateEngine, atLeastOnce()).process(templateCaptor.capture(), any(IContext.class));
@@ -137,12 +168,14 @@ class NotificationServiceTest {
 
         @Test
         void criticalUsesCriticalTemplate() {
-            Target target = targetWithEmailChannel("ops@example.com");
+            Organization org = buildOrg();
+            Target target = targetWithEmailChannel(org, "ops@example.com");
+            CertificateRecord cert = certForTarget(target);
             when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("body");
             MimeMessage mime = mock(MimeMessage.class);
             when(mailSender.createMimeMessage()).thenReturn(mime);
 
-            notificationService.dispatchExpiryAlert(target, 2, "CRITICAL");
+            notificationService.dispatchExpiryAlert(cert, 2, "CRITICAL");
 
             ArgumentCaptor<String> templateCaptor = ArgumentCaptor.forClass(String.class);
             verify(templateEngine, atLeastOnce()).process(templateCaptor.capture(), any(IContext.class));
@@ -151,8 +184,7 @@ class NotificationServiceTest {
 
         @Test
         void comingSoonChannelIsOnlyLogged() {
-            Organization org = Organization.builder().name("Org").build();
-            ReflectionTestUtils.setField(org, "id", UUID.randomUUID());
+            Organization org = buildOrg();
 
             Map<String, Object> slackCfg = Map.of("enabled", true);
             Map<String, Object> emailCfg = new HashMap<>();
@@ -162,22 +194,23 @@ class NotificationServiceTest {
                     .organization(org).host("x.com").port(443)
                     .notificationChannels(Map.of("slack", slackCfg, "email", emailCfg))
                     .build();
+            CertificateRecord cert = certForTarget(target);
 
-            notificationService.dispatchExpiryAlert(target, 5, "WARNING");
+            notificationService.dispatchExpiryAlert(cert, 5, "WARNING");
 
             verifyNoInteractions(mailSender);
         }
 
         @Test
         void orgFallbackChannelUsedWhenTargetEmpty() {
-            Organization org = Organization.builder().name("Org").build();
-            UUID orgId = UUID.randomUUID();
-            ReflectionTestUtils.setField(org, "id", orgId);
+            Organization org = buildOrg();
+            UUID orgId = org.getId();
 
             Target target = Target.builder()
                     .organization(org).host("x.com").port(443)
                     .notificationChannels(Map.of())
                     .build();
+            CertificateRecord cert = certForTarget(target);
 
             OrgNotificationChannel orgChannel = OrgNotificationChannel.builder()
                     .organization(org)
@@ -192,7 +225,7 @@ class NotificationServiceTest {
             MimeMessage mime = mock(MimeMessage.class);
             when(mailSender.createMimeMessage()).thenReturn(mime);
 
-            notificationService.dispatchExpiryAlert(target, 5, "WARNING");
+            notificationService.dispatchExpiryAlert(cert, 5, "WARNING");
 
             verify(mailSender).send(any(MimeMessage.class));
         }

@@ -10,7 +10,13 @@
     <tr><td style="padding:8px;border:1px solid #eee;font-weight:bold;">Days Left</td><td style="padding:8px;border:1px solid #eee;" th:text="${daysLeft}">30</td></tr>
     <tr><td style="padding:8px;border:1px solid #eee;font-weight:bold;">Severity</td><td style="padding:8px;border:1px solid #eee;color:#f59e0b;" th:text="${severity}">WARNING</td></tr>
   </table>
-  <p style="text-align:center;margin:32px 0;">
+  <p th:if="${agentDiscovered}" style="text-align:center;margin:32px 0;">
+    <a th:href="${deepLinkUrl}" style="background:#1a73e8;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">View Certificate &amp; Renew</a>
+  </p>
+  <p th:unless="${agentDiscovered}" style="background:#f3f4f6;border-left:4px solid #9ca3af;padding:12px 16px;border-radius:4px;font-size:14px;">
+    For automatic renewal please use the agent and configure it.
+  </p>
+  <p th:unless="${agentDiscovered}" style="text-align:center;margin:32px 0;">
     <a th:href="${baseUrl}" style="background:#1a73e8;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">View in CertGuard</a>
   </p>
   <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">

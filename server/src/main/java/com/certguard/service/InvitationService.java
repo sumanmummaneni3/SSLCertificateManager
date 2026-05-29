@@ -8,19 +8,19 @@ import com.certguard.enums.UserRole;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.JwtTokenProvider;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import org.springframework.scheduling.annotation.Scheduled;
 
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Transactional(readOnly = true)
@@ -34,32 +34,29 @@ public class InvitationService {
     private final JwtTokenProvider jwtTokenProvider;
     private final EmailDispatchService emailDispatchService;
     private final TokenRevocationService tokenRevocationService;
+    private final InvitationOtpRepository otpRepository;
+    private final BCryptPasswordEncoder passwordEncoder;
 
     private static final int MAX_OTP_ATTEMPTS  = 5;
     private static final int MAX_OTP_RESENDS   = 3;
     private static final long OTP_COOLDOWN_SECONDS = 60;
-
-    /**
-     * In-memory OTP store: tokenHash -> {otp, expiresAt, attempts, sentAt, resendCount}
-     * In production this should be Redis. For now a ConcurrentHashMap is
-     * sufficient since the OTP window is 10 minutes.
-     */
-    private final Map<String, OtpEntry> otpStore = new ConcurrentHashMap<>();
-
-    private record OtpEntry(String otp, Instant expiresAt, int attempts, Instant sentAt, int resendCount) {}
 
     public InvitationService(InvitationRepository invitationRepository,
                              OrgMemberRepository memberRepository,
                              UserRepository userRepository,
                              JwtTokenProvider jwtTokenProvider,
                              EmailDispatchService emailDispatchService,
-                             TokenRevocationService tokenRevocationService) {
+                             TokenRevocationService tokenRevocationService,
+                             InvitationOtpRepository otpRepository,
+                             BCryptPasswordEncoder passwordEncoder) {
         this.invitationRepository   = invitationRepository;
         this.memberRepository       = memberRepository;
         this.userRepository         = userRepository;
         this.jwtTokenProvider       = jwtTokenProvider;
         this.emailDispatchService   = emailDispatchService;
         this.tokenRevocationService = tokenRevocationService;
+        this.otpRepository          = otpRepository;
+        this.passwordEncoder        = passwordEncoder;
     }
 
     // -- Step 1: validate invite token and send OTP ----------------------------
@@ -82,35 +79,40 @@ public class InvitationService {
             throw new IllegalArgumentException("This invitation link has expired");
         }
 
-        OtpEntry existing = otpStore.get(hash);
-        if (existing != null && !existing.expiresAt().isBefore(Instant.now())) {
-            // An unexpired OTP already exists — enforce cool-down and resend cap to
-            // prevent unlimited email-bombing of the invitee.
-            long secondsSinceSent = ChronoUnit.SECONDS.between(existing.sentAt(), Instant.now());
+        String email  = inv.getEmail();
+        UUID   orgId  = inv.getOrganization().getId();
+
+        InvitationOtp existing = otpRepository
+                .findFirstByEmailAndOrgIdAndExpiresAtAfterOrderByCreatedAtDesc(email, orgId, Instant.now())
+                .orElse(null);
+
+        if (existing != null) {
+            // Unexpired OTP exists — enforce cool-down and resend cap
+            long secondsSinceSent = ChronoUnit.SECONDS.between(existing.getSentAt(), Instant.now());
             if (secondsSinceSent < OTP_COOLDOWN_SECONDS) {
                 throw new IllegalArgumentException(
                         "Please wait " + (OTP_COOLDOWN_SECONDS - secondsSinceSent) + " seconds before requesting another code");
             }
-            if (existing.resendCount() >= MAX_OTP_RESENDS) {
+            if (existing.getResendCount() >= MAX_OTP_RESENDS) {
                 throw new IllegalArgumentException(
                         "Too many codes requested — please ask the admin to send a new invitation");
             }
-            // Resend allowed: generate a fresh code with a fresh 10-min window
+            // Resend: delete old entry, issue a fresh one
+            otpRepository.deleteByEmailAndOrgId(email, orgId);
             String otp = generateOtp();
-            otpStore.put(hash, new OtpEntry(otp, Instant.now().plus(10, ChronoUnit.MINUTES),
-                    0, Instant.now(), existing.resendCount() + 1));
-            emailDispatchService.sendOtpEmail(inv.getEmail(), otp, inv.getOrganization().getName());
+            saveOtp(email, orgId, otp, existing.getResendCount() + 1);
+            emailDispatchService.sendOtpEmail(email, otp, inv.getOrganization().getName());
             log.info("OTP resent ({}/{}) for invite {} to {}",
-                    existing.resendCount() + 1, MAX_OTP_RESENDS, inv.getId(), inv.getEmail());
+                    existing.getResendCount() + 1, MAX_OTP_RESENDS, inv.getId(), email);
         } else {
-            // No unexpired OTP — generate fresh one
+            // No unexpired OTP — generate a fresh one
+            otpRepository.deleteByEmailAndOrgId(email, orgId); // remove any expired leftovers
             String otp = generateOtp();
-            otpStore.put(hash, new OtpEntry(otp, Instant.now().plus(10, ChronoUnit.MINUTES),
-                    0, Instant.now(), 0));
-            emailDispatchService.sendOtpEmail(inv.getEmail(), otp, inv.getOrganization().getName());
-            log.info("OTP sent for invite {} to {}", inv.getId(), inv.getEmail());
+            saveOtp(email, orgId, otp, 0);
+            emailDispatchService.sendOtpEmail(email, otp, inv.getOrganization().getName());
+            log.info("OTP sent for invite {} to {}", inv.getId(), email);
         }
-        return inv.getEmail();
+        return email;
     }
 
     // -- Step 2: verify OTP, create user + membership, issue JWT ---------------
@@ -127,35 +129,38 @@ public class InvitationService {
         if (!inv.getEmail().equalsIgnoreCase(submittedEmail.trim()))
             throw new IllegalArgumentException("Email does not match invitation");
 
-        OtpEntry entry = otpStore.get(hash);
-        if (entry == null || entry.expiresAt().isBefore(Instant.now())) {
-            otpStore.remove(hash);
+        UUID   orgId = inv.getOrganization().getId();
+        String email = inv.getEmail();
+
+        InvitationOtp entry = otpRepository
+                .findFirstByEmailAndOrgIdAndExpiresAtAfterOrderByCreatedAtDesc(email, orgId, Instant.now())
+                .orElse(null);
+
+        if (entry == null) {
             throw new IllegalArgumentException("OTP has expired — please request a new one");
         }
-        if (!entry.otp().equals(submittedOtp.trim())) {
-            int attempts = entry.attempts() + 1;
+
+        if (!passwordEncoder.matches(submittedOtp.trim(), entry.getOtpHash())) {
+            int attempts = entry.getAttempts() + 1;
             if (attempts >= MAX_OTP_ATTEMPTS) {
-                otpStore.remove(hash);
+                otpRepository.deleteByEmailAndOrgId(email, orgId);
                 throw new IllegalArgumentException("Too many incorrect attempts — please request a new OTP");
             }
-            otpStore.put(hash, new OtpEntry(entry.otp(), entry.expiresAt(), attempts, entry.sentAt(), entry.resendCount()));
+            entry.setAttempts(attempts);
+            otpRepository.save(entry);
             throw new IllegalArgumentException("Incorrect OTP code");
         }
 
-        // Clean up OTP
-        otpStore.remove(hash);
+        // OTP verified — delete the entry before creating the user session
+        otpRepository.deleteByEmailAndOrgId(email, orgId);
 
-        // Find or create user.  ON CONFLICT DO NOTHING makes this safe if a concurrent
-        // Google OAuth provisioning races this accept — whichever writer wins, the
-        // re-fetch below returns the committed row with no exception thrown.
-        // users.org_id points at the invited org so AuthProvisioningService resolves
-        // the correct org context on subsequent logins without needing a placeholder.
+        // Find or create user.
         Organization org = inv.getOrganization();
         userRepository.insertIfAbsent(
                 UUID.randomUUID(), org.getId(),
-                inv.getEmail(), inv.getEmail().split("@")[0],
+                email, email.split("@")[0],
                 UserRole.MEMBER.name(), Instant.now());
-        User user = userRepository.findByEmail(inv.getEmail())
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalStateException("User row missing after conflict-safe insert"));
 
         // Create or reactivate org membership
@@ -204,9 +209,17 @@ public class InvitationService {
         emailDispatchService.sendInviteEmail(toEmail, orgName, inviterName, inviteLink, role);
     }
 
+    /**
+     * Scheduled cleanup: delete expired OTP rows every 5 minutes.
+     * ShedLock ensures only one replica runs this at a time.
+     */
     @Scheduled(fixedDelay = 300_000)
-    public void evictExpiredOtps() {
-        otpStore.entrySet().removeIf(e -> e.getValue().expiresAt().isBefore(Instant.now()));
+    @SchedulerLock(name = "InvitationService_cleanupExpiredOtps",
+                   lockAtMostFor = "PT4M", lockAtLeastFor = "PT1M")
+    @Transactional
+    public void cleanupExpiredOtps() {
+        otpRepository.deleteExpired(Instant.now());
+        log.debug("Expired invitation OTP rows cleaned up");
     }
 
     @Scheduled(fixedDelay = 86_400_000)
@@ -214,6 +227,21 @@ public class InvitationService {
     public void purgeExpiredInvitations() {
         invitationRepository.deleteByExpiresAtBeforeAndUsedAtIsNull(Instant.now());
         log.debug("Purged expired unused invitations");
+    }
+
+    // -- Private helpers -------------------------------------------------------
+
+    private void saveOtp(String email, UUID orgId, String plainOtp, int resendCount) {
+        InvitationOtp otp = InvitationOtp.builder()
+                .email(email)
+                .orgId(orgId)
+                .otpHash(passwordEncoder.encode(plainOtp))
+                .expiresAt(Instant.now().plus(10, ChronoUnit.MINUTES))
+                .sentAt(Instant.now())
+                .resendCount(resendCount)
+                .attempts(0)
+                .build();
+        otpRepository.save(otp);
     }
 
     private String generateOtp() {

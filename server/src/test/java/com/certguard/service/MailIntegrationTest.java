@@ -1,10 +1,13 @@
 package com.certguard.service;
 
 import com.certguard.entity.Agent;
+import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
 import com.certguard.enums.OrgMemberRole;
 import com.certguard.repository.OrgNotificationChannelRepository;
+import com.certguard.repository.OrganizationRepository;
+import com.certguard.repository.UserRepository;
 import com.icegreen.greenmail.junit5.GreenMailExtension;
 import com.icegreen.greenmail.util.ServerSetupTest;
 import jakarta.mail.internet.MimeMessage;
@@ -23,6 +26,7 @@ import org.springframework.boot.thymeleaf.autoconfigure.ThymeleafAutoConfigurati
 import org.thymeleaf.TemplateEngine;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +70,12 @@ class MailIntegrationTest {
     @MockitoBean
     OrgNotificationChannelRepository orgChannelRepository;
 
+    @MockitoBean
+    OrganizationRepository orgRepository;
+
+    @MockitoBean
+    UserRepository userRepository;
+
     @Autowired
     JavaMailSender mailSender;
 
@@ -77,6 +87,7 @@ class MailIntegrationTest {
 
     Organization org;
     Target target;
+    CertificateRecord cert;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -84,9 +95,11 @@ class MailIntegrationTest {
 
         when(orgChannelRepository.findByOrganizationIdAndEnabledTrue(any())).thenReturn(List.of());
 
-        notificationService = new NotificationService(mailSender, templateEngine, orgChannelRepository);
+        notificationService = new NotificationService(
+                mailSender, templateEngine, orgChannelRepository, orgRepository, userRepository);
         ReflectionTestUtils.setField(notificationService, "fromAddress", "noreply@certguard.cloud");
         ReflectionTestUtils.setField(notificationService, "baseUrl", "http://localhost");
+        ReflectionTestUtils.setField(notificationService, "uiBaseUrl", "http://localhost:5173");
         ReflectionTestUtils.setField(notificationService, "devMode", false);
 
         emailDispatchService = new EmailDispatchService(mailSender, templateEngine);
@@ -109,13 +122,24 @@ class MailIntegrationTest {
                 .port(443)
                 .notificationChannels(channels)
                 .build();
+
+        cert = CertificateRecord.builder()
+                .target(target)
+                .orgId(org.getId())
+                .commonName("example.com")
+                .issuer("Test CA")
+                .serialNumber("SN-001")
+                .expiryDate(Instant.now().plus(20, ChronoUnit.DAYS))
+                .notBefore(Instant.now().minus(30, ChronoUnit.DAYS))
+                .build();
+        ReflectionTestUtils.setField(cert, "id", UUID.randomUUID());
     }
 
     // ── NotificationService tests ──────────────────────────────────────────
 
     @Test
     void expiryWarning_sendsEmailWithCorrectSubjectAndRecipient() throws Exception {
-        notificationService.dispatchExpiryAlert(target, 20, "WARNING");
+        notificationService.dispatchExpiryAlert(cert, 20, "WARNING");
 
         greenMail.waitForIncomingEmail(5000, 1);
         MimeMessage[] messages = greenMail.getReceivedMessages();
@@ -130,7 +154,7 @@ class MailIntegrationTest {
 
     @Test
     void expiryCritical_sendsEmailWithCriticalSubject() throws Exception {
-        notificationService.dispatchExpiryAlert(target, 3, "CRITICAL");
+        notificationService.dispatchExpiryAlert(cert, 3, "CRITICAL");
 
         greenMail.waitForIncomingEmail(5000, 1);
         MimeMessage[] messages = greenMail.getReceivedMessages();
@@ -140,7 +164,19 @@ class MailIntegrationTest {
 
     @Test
     void expiredCert_subjectContainsExpired() throws Exception {
-        notificationService.dispatchExpiryAlert(target, -3, "CRITICAL");
+        // Rebuild cert with past expiry
+        CertificateRecord expiredCert = CertificateRecord.builder()
+                .target(target)
+                .orgId(org.getId())
+                .commonName("example.com")
+                .issuer("Test CA")
+                .serialNumber("SN-002")
+                .expiryDate(Instant.now().minus(3, ChronoUnit.DAYS))
+                .notBefore(Instant.now().minus(395, ChronoUnit.DAYS))
+                .build();
+        ReflectionTestUtils.setField(expiredCert, "id", UUID.randomUUID());
+
+        notificationService.dispatchExpiryAlert(expiredCert, -3, "CRITICAL");
 
         greenMail.waitForIncomingEmail(5000, 1);
         MimeMessage[] messages = greenMail.getReceivedMessages();

@@ -6,6 +6,14 @@ Severity:  [(${severity})]
 
 [(${daysLeft < 0 ? 'The certificate has EXPIRED ' + (-daysLeft) + ' day(s) ago.' : 'The certificate will expire in ' + daysLeft + ' day(s).'})]
 
+[# th:if="${agentDiscovered}"]
+View your certificate and request renewal immediately:
+[(${deepLinkUrl})]
+[/]
+[# th:unless="${agentDiscovered}"]
+For automatic renewal please use the agent and configure it.
+
 Log in to CertGuard Cloud immediately to take action: [(${baseUrl})]
+[/]
 
 — CertGuard Cloud

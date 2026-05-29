@@ -1,30 +1,101 @@
 # CertGuard — High-Level Design
 
+> **Note — source paths.** Earlier revisions of this document reference
+> `certguard-server-source-20260419-0737/...` and
+> `certguard-agent-source-20260419-0737/...`. The live source tree is now at
+> `server/...` and `agent/...` respectively. When following a citation, resolve
+> the old prefix to the new one (e.g. `certguard-server-source-20260419-0737/src/main/java/...`
+> → `server/src/main/java/...`).
+
 ## 1. System Context
+
+CertGuard now runs as a three-process control plane behind a single nginx-fronted gateway, plus N self-hosted scanning agents.
 
 ```mermaid
 C4Context
-  title CertGuard — System Context
-  Person(user, "Org User / Admin", "Uses web UI")
+  title CertGuard — System Context (gateway + auth-service)
+  Person(user, "Org User / Admin / Platform Admin", "Browser + SPA")
   Person(invitee, "Invited Member", "Accepts invite via email OTP")
   System_Boundary(cg, "CertGuard Platform") {
-    System(server, "CertGuard Cloud Server", "Spring Boot 4.0.3")
-    System(agent, "CertGuard Agent", "Plain Java, private network")
-    SystemDb(pg, "PostgreSQL 15", "Tenanted data")
+    System(gw, "CertGuard Gateway", "Spring Cloud Gateway behind nginx; validates RS256 JWT against auth-service JWKS, strips client-supplied X-CG-* headers, injects trusted X-CG-* headers, proxies to upstreams")
+    System(auth, "CertGuard Auth Service", "Spring Boot — OIDC (Google/Microsoft), local OTP invites, RS256 JWT issuance, JWKS endpoint")
+    System(server, "CertGuard Core Server", "Spring Boot 4.0.x — domain logic; trusts gateway-injected X-CG-* headers, falls back to HS256 JWT in dev only")
+    System(agent, "CertGuard Agent", "Plain Java, on customer LAN — bundle-installed, polls server")
+    SystemDb(pg, "PostgreSQL", "certguard_auth + certguard databases")
   }
-  System_Ext(google, "Google OAuth2", "OIDC login")
-  System_Ext(smtp, "SMTP (Gmail)", "Email delivery")
+  System_Ext(google, "Google OIDC", "OAuth2 login")
+  System_Ext(ms, "Microsoft Entra ID", "OAuth2 login")
+  System_Ext(smtp, "SMTP", "Email delivery")
   System_Ext(public, "Public TLS targets", "Internet endpoints")
   System_Ext(private, "Private TLS targets", "Customer LAN")
 
-  Rel(user, server, "HTTPS 8443 / 443", "Browser + REST")
-  Rel(server, google, "OIDC")
-  Rel(server, smtp, "SMTP 587 STARTTLS")
+  Rel(user, gw, "HTTPS 443", "Browser + REST")
+  Rel(gw, auth, "HTTP 8090 (login, JWKS)")
+  Rel(gw, server, "HTTPS 8443 + X-CG-* headers")
+  Rel(auth, google, "OIDC")
+  Rel(auth, ms, "OIDC")
+  Rel(server, smtp, "SMTP STARTTLS")
   Rel(server, public, "TLS handshake (direct scan)")
-  Rel(agent, server, "HTTPS poll + mTLS")
+  Rel(agent, gw, "HTTPS poll (bundle-bootstrapped)")
   Rel(agent, private, "TLS handshake (agent scan)")
   Rel(server, pg, "JDBC")
+  Rel(auth, pg, "JDBC")
 ```
+
+**Process roles** (anchored in `server/docker-compose.yml:107-210`):
+
+- **nginx** — TLS termination on :443; reverse-proxies to the `gateway` container.
+- **gateway** (`certguard-gateway` image, lines 185-210) — Spring Cloud Gateway. Validates RS256 JWTs against auth-service JWKS, strips all client-supplied `X-CG-*` headers, injects trusted `X-CG-User-Id / X-CG-Org-Id / X-CG-Role / X-CG-Email / X-CG-Platform-Admin` headers, then proxies to the core server.
+- **auth-service** (`certguard-auth-service` image, lines 107-146) — owns user identity, OAuth callbacks, JWT minting. Signs JWTs with RS256 private key; exposes public half at `/api/auth/.well-known/jwks.json`.
+- **app** (the certguard-server) — domain logic server. `JwtAuthenticationFilter` trusts the gateway-injected `X-CG-*` headers; only falls back to local HS256 parsing in dev/direct-access paths.
+- **agent** — self-hosted, talks to the gateway origin only (bundle pins the URL at install time).
+
+### Security note — header trust boundary (MUST READ)
+
+The `X-CG-*` headers are trust tokens between the gateway and the core server. The contract is:
+
+1. **The gateway MUST unconditionally strip every `X-CG-*` header on every inbound request** before its JWT-validation filter runs, regardless of method, route, or upstream. Failing to strip allows any unauthenticated caller to impersonate any user by sending forged headers through nginx → gateway.
+2. After successful RS256 validation, the gateway injects the five trusted headers. The core server reads them in `server/src/main/java/com/certguard/security/JwtAuthenticationFilter.java:69-75`.
+3. **The core server's port 8443 MUST NOT be reachable from outside the Docker network.** The compose `app` service binds to `127.0.0.1` only — if that leaks publicly, a direct connection bypasses both nginx and the gateway.
+4. Dev fallback: when `APP_DEV_MODE=true`, the server falls back to local HS256 `Authorization: Bearer` parsing. This path must be disabled in production.
+5. `X-Acting-As-Org` and `X-Acting-As-Reason` are forwarded by the gateway unchanged. The server gates them to `PLATFORM_ADMIN` only and requires `X-Acting-As-Reason` on write methods (`JwtAuthenticationFilter.java:131-175`). See ADR-0007.
+
+### Gateway-authenticated API request — sequence
+
+```
+Browser         nginx        gateway               auth-service       core-server (app)      Postgres
+   |              |             |                       |                    |                   |
+   | HTTPS /api   |             |                       |                   |                   |
+   | Bearer RS256 |             |                       |                   |                   |
+   |------------->|             |                       |                   |                   |
+   |              | proxy_pass  |                       |                   |                   |
+   |              |------------>|                       |                   |                   |
+   |              |             | 1. STRIP X-CG-* hdrs  |                   |                   |
+   |              |             | 2. fetch JWKS (cached)|                   |                   |
+   |              |             |---------------------->|                   |                   |
+   |              |             |<----------------------|                   |                   |
+   |              |             | 3. verify RS256       |                   |                   |
+   |              |             | 4. INJECT trusted:    |                   |                   |
+   |              |             |    X-CG-User-Id       |                   |                   |
+   |              |             |    X-CG-Org-Id        |                   |                   |
+   |              |             |    X-CG-Role          |                   |                   |
+   |              |             |    X-CG-Email         |                   |                   |
+   |              |             |    X-CG-Platform-Admin|                   |                   |
+   |              |             | 5. proxy upstream     |                   |                   |
+   |              |             |------------------------------------------------->|            |
+   |              |             |                       |    JwtAuthenticationFilter:            |
+   |              |             |                       |      read X-CG-* headers              |
+   |              |             |                       |      TokenRevocationService.isRevoked? |
+   |              |             |                       |      revoked? -> 401                  |
+   |              |             |                       |    controller -> service -> repository |
+   |              |             |                       |                            |---------->|
+   |              |             |                       |                            |<----------|
+   |              |             |<-------------------------------------------------|            |
+   |              |<------------|                       |                   |                   |
+   |<-------------|             |                       |                   |                   |
+```
+
+Anchors: gateway env vars `server/docker-compose.yml:185-210`; header trust + revocation `server/src/main/java/com/certguard/security/JwtAuthenticationFilter.java:66-175`; PA audit `JwtAuthenticationFilter.java:207-214`.
 
 ## 2. Component Diagram
 
@@ -33,40 +104,49 @@ graph TB
   subgraph Browser
     UI[React SPA]
   end
-  subgraph Server["CertGuard Server (Spring Boot)"]
-    SEC[SecurityFilterChain<br/>JwtAuthFilter + AgentAuthFilter]
-    CTRL[Controllers:<br/>Target/Agent/Certificate/Team/<br/>MspClient/Org/Location/DevAuth]
-    SVC[Services:<br/>TargetService, AgentService,<br/>SslScannerService, NotificationService,<br/>InvitationService, CertificateService]
-    SCHED[Schedulers:<br/>ScheduledPublicScan,<br/>CertificateExpiryScheduler,<br/>AgentOfflineScheduler,<br/>resetStaleClaimedJobs]
-    CA[AgentCertificateAuthority<br/>BouncyCastle]
+  subgraph EdgeLayer["Edge / Control Plane"]
+    NGX[nginx :443<br/>TLS termination]
+    GW[CertGuard Gateway<br/>Spring Cloud Gateway<br/>strips X-CG-*, validates RS256,<br/>injects X-CG-User-Id/Org-Id/Role/Email/Platform-Admin]
+    AUTH[CertGuard Auth Service<br/>:8090<br/>OAuth2 OIDC Google/Microsoft<br/>RS256 mint + JWKS<br/>Invitation OTP]
+  end
+  subgraph CoreServer["CertGuard Core Server (Spring Boot)"]
+    SEC[SecurityFilterChain<br/>JwtAuthFilter trusts X-CG-* + HS256 fallback dev only<br/>AgentAuthFilter for /agent/*<br/>SalesAuthFilter for /api/internal/v1/sales/*]
+    REVOKE[TokenRevocationService<br/>Caffeine + RevokedToken table]
+    PA_AUDIT[PlatformAdminAuditService<br/>async write per acting-as request]
+    CTRL[Controllers:<br/>Agent/AgentProvision/Target/Certificate/<br/>Team/Org/MspClient/Location/Admin/Sales]
+    SVC[Services:<br/>TargetService, AgentService, AgentBundleService,<br/>SslScannerService, NotificationService, InvitationService,<br/>CertificateService, TeamService, OrgAuditService,<br/>SubscriptionGuard]
+    SCHED[Schedulers ShedLock:<br/>ScheduledPublicScan, CertificateExpiryScheduler,<br/>AgentOfflineScheduler, resetStaleClaimedJobs,<br/>cleanupExpiredInstallKeys, TokenRevocationService.cleanupExpired]
     REPO[(JPA Repositories)]
   end
-  subgraph Agent["CertGuard Agent (JAR)"]
+  subgraph Agent["CertGuard Agent (JAR, bundle-installed)"]
+    BU[BundleUnsealer<br/>Argon2id + AES-GCM]
     AM[AgentMain]
     PL[PollLoop]
     API[ServerApiClient]
-    HTTP[SecureHttpClient<br/>TLS1.3 + pin + mTLS]
+    HTTP[SecureHttpClient TLS1.3 + pin]
     SC[SslScanner]
     SIG[HmacSigner]
     CFG[(application.properties)]
   end
-  PG[(PostgreSQL 15)]
-  RMQ[RabbitMQ]
+  PG[(PostgreSQL 16<br/>certguard + certguard_auth)]
   SMTP[SMTP]
-  G[Google OIDC]
 
-  UI -->|JWT Bearer| SEC --> CTRL --> SVC --> REPO --> PG
-  SVC --> CA
+  UI -->|HTTPS + RS256 Bearer| NGX --> GW
+  GW -- "login/callback" --> AUTH
+  GW -- "X-CG-* headers + body" --> SEC
+  AUTH --> PG
+  SEC --> REVOKE
+  SEC --> PA_AUDIT
+  SEC --> CTRL --> SVC --> REPO --> PG
   SVC --> SMTP
-  SEC -->|OAuth2 login| G
+  BU --> CFG
   AM --> PL --> API --> HTTP
   PL --> SC
   PL --> SIG
-  API -->|X-Agent-Id / X-Agent-Key + mTLS| SEC
-  SVC -.->|amqp wired, unused in code read| RMQ
+  API -->|X-Agent-Id/Key + HMAC| GW --> SEC
 ```
 
-References: `SecurityConfig.java:46-86`, `CertGuardApplication.java:8-11`, `docker-compose.yml:1-173`, `pom.xml:86-88` (amqp dependency present).
+Anchors: filter wiring `server/src/main/java/com/certguard/security/JwtAuthenticationFilter.java:42-202`; bundle flow `server/src/main/java/com/certguard/service/AgentBundleService.java:102-236` and `server/src/main/java/com/certguard/controller/AgentProvisionController.java:48-84`; bundle decrypt `agent/src/main/java/com/certguard/agent/security/BundleUnsealer.java:69-266`.
 
 ## 3. Sequence Diagrams
 
