@@ -82,6 +82,9 @@ services:
       MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
       APP_DEV_MODE:               ${APP_DEV_MODE:-false}
       PLATFORM_ADMIN_EMAILS:      ${PLATFORM_ADMIN_EMAILS:-}
+      RENEWAL_SERVICE_URL:        http://renewal-service:8444
+      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:-changeme-set-in-production}
+      SPRING_FLYWAY_VALIDATE_ON_MIGRATE: "false"
       MAIL_HOST:                  ${MAIL_HOST:-smtp.gmail.com}
       MAIL_PORT:                  ${MAIL_PORT:-587}
       MAIL_USERNAME:              ${MAIL_USERNAME:-}
@@ -95,6 +98,61 @@ services:
       - ./server/certs:/opt/certguard/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q --no-check-certificate -O- https://localhost:8443/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
+  # Renewal Service PostgreSQL (separate DB)
+  # ─────────────────────────────────────────
+  renewal-postgres:
+    image: postgres:16-alpine
+    container_name: certguard-renewal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${RENEWAL_POSTGRES_DB:-certguard_renewal}
+      POSTGRES_USER:     ${RENEWAL_POSTGRES_USER:-renewal_user}
+      POSTGRES_PASSWORD: ${RENEWAL_POSTGRES_PASSWORD}
+    volumes:
+      - renewal_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RENEWAL_POSTGRES_USER:-renewal_user} -d ${RENEWAL_POSTGRES_DB:-certguard_renewal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - certguard-net
+
+  # ─────────────────────────────────────────
+  # CertGuard Renewal Service
+  # ─────────────────────────────────────────
+  renewal-service:
+    build:
+      context: ./certguard-renewal-service
+      dockerfile: Dockerfile
+    container_name: certguard-renewal-service
+    restart: unless-stopped
+    depends_on:
+      renewal-postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL:      jdbc:postgresql://renewal-postgres:5432/${RENEWAL_POSTGRES_DB:-certguard_renewal}
+      SPRING_DATASOURCE_USERNAME: ${RENEWAL_POSTGRES_USER:-renewal_user}
+      SPRING_DATASOURCE_PASSWORD: ${RENEWAL_POSTGRES_PASSWORD}
+      CORE_SERVICE_URL:           https://app:8443
+      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:-changeme-set-in-production}
+      PACKAGE_STORAGE_PATH:       /opt/certguard-renewal/packages
+      JAVA_OPTS:                  "-Xms256m -Xmx512m -XX:+UseContainerSupport"
+      APP_DEV_MODE:               ${APP_DEV_MODE:-false}
+    volumes:
+      - renewal_packages:/opt/certguard-renewal/packages
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8444/actuator/health | grep -q UP || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -217,6 +275,8 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
+  renewal_postgres_data:
+  renewal_packages:
   prometheus_data:
   grafana_data:
 
