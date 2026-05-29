@@ -158,7 +158,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${RENEWAL_POSTGRES_USER:-renewal_user}
       SPRING_DATASOURCE_PASSWORD: ${RENEWAL_POSTGRES_PASSWORD}
       CORE_SERVICE_URL:           https://app:8443
-      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:changeme-set-in-production}
+      INTERNAL_SERVICE_TOKEN:     ${INTERNAL_SERVICE_TOKEN:-changeme-set-in-production}
       PACKAGE_STORAGE_PATH:       /opt/certguard-renewal/packages
       JAVA_OPTS:                  "-Xms256m -Xmx512m -XX:+UseContainerSupport"
       APP_DEV_MODE:               ${APP_DEV_MODE:-false}
