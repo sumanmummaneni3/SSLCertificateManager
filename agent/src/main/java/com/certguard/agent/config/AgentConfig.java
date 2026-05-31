@@ -188,7 +188,11 @@ public class AgentConfig {
         if (!found) {
             updated.add(key + "=" + value);
         }
-        Path tmp = Files.createTempFile(configPath.getParent(), ".certguard-cfg-", ".tmp");
+        // configPath may be a bare relative filename (e.g. "application.properties" next
+        // to the JAR), whose getParent() is null. Resolve to absolute so the temp file
+        // lands in the same directory and the ATOMIC_MOVE stays on one filesystem.
+        Path parent = configPath.toAbsolutePath().getParent();
+        Path tmp = Files.createTempFile(parent, ".certguard-cfg-", ".tmp");
         try {
             Files.write(tmp, updated, StandardOpenOption.WRITE);
             Files.move(tmp, configPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
