@@ -97,6 +97,20 @@ public class JwtValidationFilter implements WebFilter, Ordered {
             "/*.map"
     );
 
+    /**
+     * Admin endpoints under /api/v1/agent/** that ARE driven by the UI with a user
+     * session JWT and therefore still require gateway JWT validation + X-CG injection.
+     * Every other /api/v1/agent/** path is agent runtime traffic (registration via
+     * install key, heartbeat/jobs/results via X-Agent-Key HMAC) that authenticates at
+     * the server, not via a user JWT — see isPublicPath().
+     */
+    private static final List<String> AGENT_JWT_PATHS = List.of(
+            "/api/v1/agent/tokens",
+            "/api/v1/agent/config",
+            "/api/v1/agent/list",
+            "/api/v1/agent/*/revoke"
+    );
+
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
     private final GatewayJwtProperties gwJwtProps;
 
@@ -208,7 +222,18 @@ public class JwtValidationFilter implements WebFilter, Ordered {
     // ── Private helpers ────────────────────────────────────────────────────────
 
     private boolean isPublicPath(String path) {
-        return PUBLIC_PATTERNS.stream().anyMatch(pattern -> pathMatcher.match(pattern, path));
+        if (PUBLIC_PATTERNS.stream().anyMatch(pattern -> pathMatcher.match(pattern, path))) {
+            return true;
+        }
+        // Agent runtime traffic authenticates at the server (install key on /register,
+        // X-Agent-Key HMAC on heartbeat/jobs/results/...), not via a user session JWT.
+        // Treat /api/v1/agent/** as gateway-public EXCEPT the UI-driven admin endpoints
+        // listed in AGENT_JWT_PATHS, which still need JWT validation + X-CG injection.
+        if (path.startsWith("/api/v1/agent/")
+                && AGENT_JWT_PATHS.stream().noneMatch(pattern -> pathMatcher.match(pattern, path))) {
+            return true;
+        }
+        return false;
     }
 
     private Claims parseToken(String token) {
