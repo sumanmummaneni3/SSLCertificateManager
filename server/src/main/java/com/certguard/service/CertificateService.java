@@ -2,8 +2,11 @@ package com.certguard.service;
 
 import com.certguard.dto.response.CertificateResponse;
 import com.certguard.dto.response.DashboardResponse;
+import com.certguard.dto.response.TargetResponse;
 import com.certguard.entity.CertificateRecord;
+import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
+import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +38,31 @@ public class CertificateService {
 
     public Page<CertificateResponse> listCertificates(UUID orgId, Pageable pageable) {
         return certRepository.findAllByOrgId(orgId, pageable).map(this::toResponse);
+    }
+
+    /**
+     * Single certificate with its target embedded (including agent assignment), so the
+     * UI detail page can decide whether the target is agent-managed and offer renewal.
+     */
+    public CertificateResponse getCertificate(UUID orgId, UUID certId) {
+        CertificateRecord cert = certRepository.findByIdAndOrgId(certId, orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Certificate not found"));
+        CertificateResponse resp = toResponse(cert);
+        resp.setTarget(toTargetResponse(cert.getTarget()));
+        return resp;
+    }
+
+    private TargetResponse toTargetResponse(Target target) {
+        if (target == null) return null;
+        return TargetResponse.builder()
+                .id(target.getId())
+                .host(target.getHost())
+                .port(target.getPort())
+                .hostType(target.getHostType())
+                .isPrivate(target.getIsPrivate())
+                .agentId(target.getAgent() != null ? target.getAgent().getId() : null)
+                .agentName(target.getAgent() != null ? target.getAgent().getName() : null)
+                .build();
     }
 
     public List<CertificateResponse> getExpiring(UUID orgId, int days) {

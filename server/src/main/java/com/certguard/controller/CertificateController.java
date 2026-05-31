@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -21,6 +22,11 @@ public class CertificateController {
     @GetMapping("/api/v1/certificates")
     public ResponseEntity<Page<CertificateResponse>> list(Pageable pageable) {
         return ResponseEntity.ok(certificateService.listCertificates(TenantContext.getOrgId(), pageable));
+    }
+
+    @GetMapping("/api/v1/certificates/{certId}")
+    public ResponseEntity<CertificateResponse> get(@PathVariable UUID certId) {
+        return ResponseEntity.ok(certificateService.getCertificate(TenantContext.getOrgId(), certId));
     }
 
     @GetMapping("/api/v1/certificates/expiring")

@@ -25,4 +25,7 @@ public class CertificateResponse {
     private Integer chainDepth;
     private Instant scannedAt;
     private UUID scannedByAgentId;
+    /** Populated on the single-certificate detail endpoint so the UI can tell whether
+     *  the target is agent-managed (target.agentId) and offer renewal. Null on list views. */
+    private TargetResponse target;
 }
