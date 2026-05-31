@@ -1140,6 +1140,9 @@ const api = {
   getDevToken: (email, resetOnboarding = false) =>
     api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}&resetOnboarding=${resetOnboarding}`),
   logout: (token) => api.call("POST", "/api/v1/auth/logout", null, token),
+  // Server-authoritative session check: pass token in body only — NOT as the 4th-arg bearer.
+  // This prevents api.call's reactive 401 handler from also firing; we handle the result explicitly.
+  validateSession: (token) => api.call("POST", "/api/auth/validate", { token }),
   getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
   updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
@@ -1208,41 +1211,6 @@ const api = {
   renewalPackageUrl:    (renewalId) => `${API_BASE}/api/v1/renewals/${renewalId}/package`,
   listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
 };
-
-// ─── JWT DECODER ─────────────────────────────────────────────────────────────
-// Decodes the JWT payload (no signature verification — UX-only, gateway enforces).
-// Returns { exp, platformAdmin } where:
-//   exp === null  → token omits exp; treated as non-expiring (admin tokens)
-//   exp === 0     → decode failed; treated as expired immediately
-function decodeJwtPayload(token) {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return { exp: 0, platformAdmin: false };
-    // base64url → base64 → JSON
-    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    const json = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))
-        .join("")
-    );
-    const payload = JSON.parse(json);
-    // No exp field → non-expiring admin token; we signal this as null
-    const exp = Object.prototype.hasOwnProperty.call(payload, "exp") ? payload.exp : null;
-    return { exp, platformAdmin: payload.platformAdmin === true };
-  } catch {
-    return { exp: 0, platformAdmin: false };
-  }
-}
-
-// Returns true if the token is expired RIGHT NOW (purely client-side / UX guard).
-// Admin tokens (exp === null) and tokens with a far-future exp are never considered expired here.
-function isJwtExpired(token) {
-  if (!token) return true;
-  const { exp } = decodeJwtPayload(token);
-  if (exp === null) return false; // non-expiring admin token
-  return exp * 1000 < Date.now();
-}
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const statusColor = (s) => ({ VALID: "green", EXPIRING: "yellow", EXPIRED: "red", UNREACHABLE: "orange" }[s] || "unknown");
@@ -1707,6 +1675,29 @@ function PostRegistrationScreen({ email, onBack }) {
 
         <button className="btn btn-ghost" onClick={onBack} style={{ width: "100%", textAlign: "center" }}>
           Back to sign in
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── SESSION EXPIRED SCREEN ───────────────────────────────────────────────────
+// Shown whenever expireSession() is called (reactive 401, idle timeout, or nav guard).
+// Gives the user a clear explanation before sending them back to the login screen.
+function SessionExpiredScreen({ message, onSignIn }) {
+  return (
+    <div className="launch">
+      <div className="launch-logo">
+        <div className="logo-icon" aria-hidden="true">🔐</div>
+        <div className="logo-text">OOPSSSL</div>
+      </div>
+      <div className="launch-card">
+        <div className="launch-title" style={{ color: "var(--red)" }}>Session expired</div>
+        <p className="launch-sub">
+          {message || "Your session is no longer valid. Please sign in again to continue."}
+        </p>
+        <button className="btn btn-primary" onClick={onSignIn}>
+          Sign in again
         </button>
       </div>
     </div>
@@ -2420,16 +2411,26 @@ function Dashboard({ token, org, me, toast, onLogout, initialCertId, onExpireSes
   const [editTarget, setEditTarget] = useState(null);
   const [view, setView]           = useState(initialCertId ? "cert-detail" : "dashboard");
 
-  // Proactive nav-guard: before changing view, verify the JWT has not expired
-  // locally. This is a UX-only check — the gateway remains the real enforcer.
-  // Platform admins (non-expiring tokens) are exempt.
-  const navigateTo = useCallback((viewId) => {
-    if (me?.platformAdmin !== true && isJwtExpired(token)) {
-      onExpireSession("Your session has timed out — please sign in again.");
-      return; // abort navigation
+  // Proactive nav-guard: hit the server's session record before changing view.
+  // This catches explicitly-revoked sessions in addition to token expiry.
+  // Fail-open on network / 5xx errors — the reactive 401 handler still catches
+  // real expiry on the next API call, so we never lock a user out on a blip.
+  const navigateTo = useCallback(async (viewId) => {
+    try {
+      await api.validateSession(token);
+      // 200 → session is valid; proceed.
+      setView(viewId);
+    } catch (err) {
+      if (err?.status === 401) {
+        // Server confirmed the session is invalid/expired/revoked.
+        onExpireSession("Your session has expired — please sign in again.");
+        // navigation is aborted — do not call setView.
+      } else {
+        // Transient network error or 5xx — fail open, don't lock the user out.
+        setView(viewId);
+      }
     }
-    setView(viewId);
-  }, [token, me?.platformAdmin, onExpireSession]);
+  }, [token, onExpireSession]);
   const [selectedCertId, setSelectedCertId] = useState(initialCertId || null);
   const [certs, setCerts]         = useState([]);
   const [certsLoading, setCertsLoading] = useState(false);
@@ -5143,12 +5144,16 @@ export default function App() {
   // ── Session expiry ────────────────────────────────────────────────────────
   // Single authoritative logout path used by: the reactive 401 handler, the
   // proactive nav-check, and the idle timeout. Keeps state teardown in one place.
+  // Lands on the dedicated "session-expired" panel rather than the login screen
+  // so the user sees a clear explanation before being asked to sign in again.
+  const [sessionExpiredMsg, setSessionExpiredMsg] = useState("");
   const expireSession = useCallback((message) => {
     toast(message, "error");
+    setSessionExpiredMsg(message);
     setToken(null);
     setOrgData(null);
     setMeData(null);
-    setPhase("launch");
+    setPhase("session-expired");
   }, [toast]);
 
   // Redirect to login when an authenticated request is rejected with 401 (expired or
@@ -5389,6 +5394,7 @@ export default function App() {
           returnToCertId={returnToCertId}
         />
       )}
+      {phase === "session-expired" && <SessionExpiredScreen message={sessionExpiredMsg} onSignIn={goToLaunch} />}
       {phase === "post-register"  && <PostRegistrationScreen email={pendingEmail} onBack={goToLaunch} />}
       {phase === "forgot-password" && <ForgotPasswordScreen onBack={goToLaunch} />}
       {phase === "verify-email"   && <VerifyEmailScreen verifyToken={authUrlToken} onGoToSignIn={goToLaunch} />}
