@@ -75,6 +75,11 @@ public class JwtValidationFilter implements WebFilter, Ordered {
             "/api/v1/auth/logout",
             "/api/v1/auth/dev-token",
             "/api/v1/auth/invite/**",
+            // One-time agent installer bundle download — authenticated by the dlToken
+            // query param (not a session JWT). Browser download navigations cannot send
+            // the SPA's Authorization header, so this must bypass gateway JWT validation;
+            // the server validates/consumes the dlToken (410 Gone if expired/used).
+            "/api/v1/agents/*/bundle",
             "/actuator/**",
             "/oauth2/**",
             "/login/**",
