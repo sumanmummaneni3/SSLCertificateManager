@@ -1090,7 +1090,15 @@ const styles = `
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
+// Global session-expiry handler: set by the App so api.call can redirect to the
+// login screen exactly once when an *authenticated* request is rejected with 401
+// (expired or revoked token), instead of letting callers silently retry/poll.
+let sessionExpiredHandler = null;
+let sessionExpiredFired = false;
+
 const api = {
+  setSessionExpiredHandler(fn) { sessionExpiredHandler = fn; },
+  resetSessionExpired() { sessionExpiredFired = false; },
   async call(method, path, body, token, { actingAsOrgId, reason } = {}) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -1111,6 +1119,13 @@ const api = {
         suspendedError.status = 402;
         suspendedError.problemDetail = err;
         throw suspendedError;
+      }
+      // 401 on an authenticated request → the token is expired or revoked. Fire the
+      // global session-expiry handler once so the app redirects to login rather than
+      // looping on failed polls. Token-less (public-endpoint) 401s are left to the caller.
+      if (res.status === 401 && token && sessionExpiredHandler && !sessionExpiredFired) {
+        sessionExpiredFired = true;
+        sessionExpiredHandler(err);
       }
       // ProblemDetail (RFC 9457) uses title + detail; fall back to message for older endpoints
       const msg = err.detail || err.title || err.message || `HTTP ${res.status}: ${res.statusText}`;
@@ -5079,8 +5094,22 @@ export default function App() {
   const [returnToCertId, setReturnToCertId] = useState(null);
   const { toasts, add: toast } = useToasts();
 
+  // Redirect to login when an authenticated request is rejected with 401 (expired or
+  // revoked session), instead of letting pages silently keep polling on failed calls.
+  useEffect(() => {
+    api.setSessionExpiredHandler(() => {
+      toast("Your session has expired — please sign in again.", "error");
+      setToken(null);
+      setOrgData(null);
+      setMeData(null);
+      setPhase("launch");
+    });
+    return () => api.setSessionExpiredHandler(null);
+  }, [toast]);
+
   const handleToken = async (t, ctx = {}) => {
     setToken(t);
+    api.resetSessionExpired();
     setLoading(true);
     try {
       // Fetch org data and /me in parallel
