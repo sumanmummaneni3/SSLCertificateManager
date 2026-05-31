@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTheme } from "./theme/useTheme.js";
 import { SIDEBAR_THEMES } from "./theme/tokens.js";
 
@@ -1209,6 +1209,41 @@ const api = {
   listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
 };
 
+// ─── JWT DECODER ─────────────────────────────────────────────────────────────
+// Decodes the JWT payload (no signature verification — UX-only, gateway enforces).
+// Returns { exp, platformAdmin } where:
+//   exp === null  → token omits exp; treated as non-expiring (admin tokens)
+//   exp === 0     → decode failed; treated as expired immediately
+function decodeJwtPayload(token) {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return { exp: 0, platformAdmin: false };
+    // base64url → base64 → JSON
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+        .join("")
+    );
+    const payload = JSON.parse(json);
+    // No exp field → non-expiring admin token; we signal this as null
+    const exp = Object.prototype.hasOwnProperty.call(payload, "exp") ? payload.exp : null;
+    return { exp, platformAdmin: payload.platformAdmin === true };
+  } catch {
+    return { exp: 0, platformAdmin: false };
+  }
+}
+
+// Returns true if the token is expired RIGHT NOW (purely client-side / UX guard).
+// Admin tokens (exp === null) and tokens with a far-future exp are never considered expired here.
+function isJwtExpired(token) {
+  if (!token) return true;
+  const { exp } = decodeJwtPayload(token);
+  if (exp === null) return false; // non-expiring admin token
+  return exp * 1000 < Date.now();
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const statusColor = (s) => ({ VALID: "green", EXPIRING: "yellow", EXPIRED: "red", UNREACHABLE: "orange" }[s] || "unknown");
 const hostTypeColor = (t) => t?.toLowerCase() || "unknown";
@@ -2375,7 +2410,7 @@ function FirstTarget({ token, onDone, toast }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
-function Dashboard({ token, org, me, toast, onLogout, initialCertId }) {
+function Dashboard({ token, org, me, toast, onLogout, initialCertId, onExpireSession }) {
   const [dash, setDash]           = useState(null);
   const [targets, setTargets]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -2384,6 +2419,17 @@ function Dashboard({ token, org, me, toast, onLogout, initialCertId }) {
   const [deleteId, setDeleteId]   = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [view, setView]           = useState(initialCertId ? "cert-detail" : "dashboard");
+
+  // Proactive nav-guard: before changing view, verify the JWT has not expired
+  // locally. This is a UX-only check — the gateway remains the real enforcer.
+  // Platform admins (non-expiring tokens) are exempt.
+  const navigateTo = useCallback((viewId) => {
+    if (me?.platformAdmin !== true && isJwtExpired(token)) {
+      onExpireSession("Your session has timed out — please sign in again.");
+      return; // abort navigation
+    }
+    setView(viewId);
+  }, [token, me?.platformAdmin, onExpireSession]);
   const [selectedCertId, setSelectedCertId] = useState(initialCertId || null);
   const [certs, setCerts]         = useState([]);
   const [certsLoading, setCertsLoading] = useState(false);
@@ -2502,7 +2548,7 @@ function Dashboard({ token, org, me, toast, onLogout, initialCertId }) {
   if (loading) {
     return (
       <div className="app">
-        <Sidebar view={view} onView={setView} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+        <Sidebar view={view} onView={navigateTo} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
         <div className="main"><div className="loading-center"><Spinner lg /><span>Loading dashboard...</span></div></div>
       </div>
     );
@@ -2510,7 +2556,7 @@ function Dashboard({ token, org, me, toast, onLogout, initialCertId }) {
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={setView} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+      <Sidebar view={view} onView={navigateTo} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
       <div className="main">
         {actingAsOrgId && (
           <div className="impersonation-banner" role="alert">
@@ -5094,18 +5140,80 @@ export default function App() {
   const [returnToCertId, setReturnToCertId] = useState(null);
   const { toasts, add: toast } = useToasts();
 
+  // ── Session expiry ────────────────────────────────────────────────────────
+  // Single authoritative logout path used by: the reactive 401 handler, the
+  // proactive nav-check, and the idle timeout. Keeps state teardown in one place.
+  const expireSession = useCallback((message) => {
+    toast(message, "error");
+    setToken(null);
+    setOrgData(null);
+    setMeData(null);
+    setPhase("launch");
+  }, [toast]);
+
   // Redirect to login when an authenticated request is rejected with 401 (expired or
   // revoked session), instead of letting pages silently keep polling on failed calls.
   useEffect(() => {
-    api.setSessionExpiredHandler(() => {
-      toast("Your session has expired — please sign in again.", "error");
-      setToken(null);
-      setOrgData(null);
-      setMeData(null);
-      setPhase("launch");
-    });
+    api.setSessionExpiredHandler(() =>
+      expireSession("Your session has expired — please sign in again.")
+    );
     return () => api.setSessionExpiredHandler(null);
-  }, [toast]);
+  }, [expireSession]);
+
+  // ── Idle timeout (normal users only; platform admins are exempt) ──────────
+  const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+  const IDLE_WARN_MS    = 29 * 60 * 1000; // show warning at 29 minutes
+
+  const lastActivityRef  = useRef(Date.now());
+  const warnShownRef     = useRef(false);
+
+  useEffect(() => {
+    // Only active while the user is in the authenticated "app" phase and is
+    // NOT a platform admin (admins have non-expiring tokens and are exempt).
+    if (phase !== "app" || meData?.platformAdmin === true) return;
+
+    // Reset tracking state on each (re)entry into the app phase.
+    lastActivityRef.current = Date.now();
+    warnShownRef.current    = false;
+
+    const resetActivity = () => {
+      lastActivityRef.current = Date.now();
+      // If the warning toast is currently showing, dismiss the warning state so
+      // it can be re-shown next time idle reaches 29 min (activity cancels it).
+      warnShownRef.current = false;
+    };
+
+    const EVENTS = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    // Throttle: only update the timestamp at most once per second to avoid
+    // excessive state churn on frequent mousemove events.
+    let throttleTimer = null;
+    const throttledReset = () => {
+      if (throttleTimer) return;
+      throttleTimer = setTimeout(() => {
+        throttleTimer = null;
+        resetActivity();
+      }, 1000);
+    };
+
+    EVENTS.forEach((ev) => window.addEventListener(ev, throttledReset, { passive: true }));
+
+    const interval = setInterval(() => {
+      const idle = Date.now() - lastActivityRef.current;
+      if (idle >= IDLE_TIMEOUT_MS) {
+        expireSession("You were signed out due to inactivity.");
+      } else if (idle >= IDLE_WARN_MS && !warnShownRef.current) {
+        warnShownRef.current = true;
+        toast("You'll be signed out in 1 minute due to inactivity.", "error");
+      }
+    }, 12000); // check every 12 seconds
+
+    return () => {
+      EVENTS.forEach((ev) => window.removeEventListener(ev, throttledReset));
+      if (throttleTimer) clearTimeout(throttleTimer);
+      clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- IDLE_TIMEOUT_MS/IDLE_WARN_MS are named constants
+  }, [phase, meData?.platformAdmin, expireSession, toast]);
 
   const handleToken = async (t, ctx = {}) => {
     setToken(t);
@@ -5287,7 +5395,7 @@ export default function App() {
       {phase === "reset-password" && <ResetPasswordScreen resetToken={authUrlToken} onGoToSignIn={goToLaunch} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
-      {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} />}
+      {phase === "app"          && <Dashboard token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} onExpireSession={expireSession} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
       <Toast toasts={toasts} />
     </>
