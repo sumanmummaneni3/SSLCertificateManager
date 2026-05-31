@@ -58,6 +58,11 @@ The platform's async needs are met by (a) the DB-as-durable-queue pattern for `a
 
 **Action:** Add class-level `@Transactional(readOnly = true)` to both; override write methods with `readOnly = false`.
 
+### Admin-configurable session timeout — planned (low)
+Session/JWT timeouts are currently fixed in config + code, not adjustable by org admins. Normal users get a 24h absolute TTL (`auth.jwt.expiration-ms` / `AUTH_JWT_EXPIRATION_MS`), platform admins get a non-expiring token (far-future exp, `UnifiedTokenProvider`), and the UI enforces a hard-coded 30-min idle timeout (`IDLE_TIMEOUT_MS`, warn at 29m) plus a server-validated on-navigation check (`POST /api/auth/validate`). See `project_session_timeout_policy` and HLD §7.9. Product intent (deferred, confirmed 2026-05-31) is to let an admin user configure the session/idle timeout — most naturally a per-org setting that the auth-service reads at token-mint time and the UI reads (e.g. via `/me` or org profile) for the idle timer.
+
+**Action (future):** Decide scope (per-org vs platform-wide), add a persisted setting + admin UI, have `UnifiedTokenProvider` resolve TTL from it at mint time, and surface the idle-timeout value to the UI. Keep platform-admin exemption configurable. No work scheduled yet.
+
 ---
 
 ## 3. New Gaps — Architecture Drift Not Captured in HLD/LLD
