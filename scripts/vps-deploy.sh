@@ -147,7 +147,22 @@ wait_healthy "certguard-gateway"                      "${HEALTH_GATEWAY_TIMEOUT}
 wait_healthy "certguard-ui"                           "${HEALTH_UI_TIMEOUT}"
 wait_healthy "certguard-auth-service-auth-service-1"  "${HEALTH_AUTH_TIMEOUT}"
 
-# ── 12. Cleanup ──────────────────────────────────────────────────────────────
+# ── 12. Restart nginx ─────────────────────────────────────────────────────────
+# The app/gateway/ui containers were just recreated with new IPs. nginx now uses
+# Docker's DNS resolver + variable proxy_pass to re-resolve dynamically, but we
+# still restart it here to (a) pick up any nginx.conf changes pulled in step 5 and
+# (b) guarantee a clean re-resolution. nginx has no healthcheck, so verify via a
+# request through it instead of wait_healthy.
+log "Restarting nginx to pick up new upstream IPs / config..."
+docker restart certguard-nginx >/dev/null
+sleep 3
+if docker exec certguard-nginx wget -q --spider --no-check-certificate https://localhost/ 2>/dev/null; then
+  log "nginx restarted and serving."
+else
+  log "WARNING: nginx restarted but a probe through it failed — check: docker logs certguard-nginx"
+fi
+
+# ── 13. Cleanup ──────────────────────────────────────────────────────────────
 log "Cleaning up ${ENV_DEPLOY}..."
 rm -f "${ENV_DEPLOY}"
 
