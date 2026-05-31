@@ -62,7 +62,7 @@ auth:
   jwt:
     private-key-path: ${AUTH_JWT_PRIVATE_KEY_PATH:/opt/certguard-auth/certs/jwt-private.pem}
     public-key-path: ${AUTH_JWT_PUBLIC_KEY_PATH:/opt/certguard-auth/certs/jwt-public.pem}
-    expiration-ms: ${AUTH_JWT_EXPIRATION_MS:3600000}
+    expiration-ms: ${AUTH_JWT_EXPIRATION_MS:86400000}
     issuer: certguard-cloud
     audience:
       - certguard-ui

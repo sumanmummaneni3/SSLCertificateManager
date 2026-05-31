@@ -49,7 +49,6 @@ public class TokenService {
     @Transactional
     public TokenResponse createSession(User user, String provider, String clientIp) {
         UUID sessionId = UUID.randomUUID();
-        Instant expiry = Instant.now().plusSeconds(tokenProvider.expirationSeconds());
 
         OrgContextRecord ctx = null;
         try {
@@ -58,6 +57,11 @@ public class TokenService {
             log.error("Failed to resolve org context for {} — JWT will have empty org claims: {}",
                     user.getEmail(), ex.getMessage());
         }
+
+        // Derive the effective TTL from the resolved context so that the minted token,
+        // the session row, and the TokenResponse.expires_in all agree.
+        long effectiveTtlSeconds = tokenProvider.expirationSeconds(ctx);
+        Instant expiry = Instant.now().plusSeconds(effectiveTtlSeconds);
 
         String jwt = tokenProvider.issue(
                 user.getId(), provider, user.getEmail(), user.getName(),
@@ -74,7 +78,7 @@ public class TokenService {
                 .build();
         sessionRepository.save(session);
 
-        return TokenResponse.of(jwt, tokenProvider.expirationSeconds(),
+        return TokenResponse.of(jwt, effectiveTtlSeconds,
                 user.getId().toString(), provider, user.getEmail(), user.getName());
     }
 

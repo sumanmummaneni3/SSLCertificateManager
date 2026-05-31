@@ -31,8 +31,13 @@ import java.util.*;
  *   platformAdmin — boolean
  *   iss           — certguard-cloud
  *   aud           — [certguard-ui, certguard-apps]
- *   iat / exp     — standard
+ *   iat / exp     — standard; platform-admin tokens carry a far-future exp (~100 years)
  *   jti           — session UUID (enables revocation via session table lookup)
+ *
+ * TTL policy (confirmed by product owner):
+ *   - Normal users:      absolute TTL = configurable (default 24 h, {@code auth.jwt.expiration-ms}).
+ *   - Platform admins:   non-expiring — exp is set 100 years in the future so the token and
+ *                        session row remain structurally identical; no schema change required.
  */
 @Slf4j
 @Component
@@ -41,13 +46,20 @@ public class UnifiedTokenProvider {
     public static final String ISSUER = "certguard-cloud";
     public static final List<String> AUDIENCE = List.of("certguard-ui", "certguard-apps");
 
+    /**
+     * Sentinel TTL used for platform-admin tokens: 100 years expressed in milliseconds.
+     * Chosen over omitting {@code exp} to keep {@link #toValidateResponse} and the session
+     * expiry check in TokenService NPE-free without a DB schema change.
+     */
+    public static final long ADMIN_NON_EXPIRING_TTL_MS = 100L * 365 * 24 * 60 * 60 * 1000;
+
     @Value("${auth.jwt.private-key-path:/opt/certguard-auth/certs/jwt-private.pem}")
     private String privateKeyPath;
 
     @Value("${auth.jwt.public-key-path:/opt/certguard-auth/certs/jwt-public.pem}")
     private String publicKeyPath;
 
-    @Value("${auth.jwt.expiration-ms:3600000}")
+    @Value("${auth.jwt.expiration-ms:86400000}")
     private long expirationMs;
 
     private PrivateKey privateKey;
@@ -77,8 +89,10 @@ public class UnifiedTokenProvider {
 
     public String issue(UUID userId, String provider, String email, String name,
                         String providerUserId, UUID sessionId, OrgContextRecord ctx) {
-        Instant now    = Instant.now();
-        Instant expiry = now.plusMillis(expirationMs);
+        Instant now           = Instant.now();
+        boolean isPlatformAdmin = ctx != null && ctx.platformAdmin();
+        long    ttlMs         = isPlatformAdmin ? ADMIN_NON_EXPIRING_TTL_MS : expirationMs;
+        Instant expiry        = now.plusMillis(ttlMs);
 
         return Jwts.builder()
                 .id(sessionId.toString())
@@ -90,7 +104,7 @@ public class UnifiedTokenProvider {
                 .claim("name", name)
                 .claim("orgId",         ctx != null && ctx.orgId() != null ? ctx.orgId().toString() : "")
                 .claim("orgRole",       ctx != null && ctx.orgRole() != null ? ctx.orgRole() : "")
-                .claim("platformAdmin", ctx != null && ctx.platformAdmin())
+                .claim("platformAdmin", isPlatformAdmin)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(privateKey, Jwts.SIG.RS256)
@@ -131,7 +145,20 @@ public class UnifiedTokenProvider {
         );
     }
 
+    /** Returns the normal-user token TTL in seconds (24 h by default). */
     public long expirationSeconds() {
+        return expirationMs / 1000;
+    }
+
+    /**
+     * Returns the effective token TTL in seconds for the given org context.
+     * Platform-admin contexts yield {@link #ADMIN_NON_EXPIRING_TTL_MS} / 1000;
+     * all others yield the configured normal-user TTL.
+     */
+    public long expirationSeconds(OrgContextRecord ctx) {
+        if (ctx != null && ctx.platformAdmin()) {
+            return ADMIN_NON_EXPIRING_TTL_MS / 1000;
+        }
         return expirationMs / 1000;
     }
 
