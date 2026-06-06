@@ -1,205 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTheme } from "./theme/useTheme.js";
 import { SIDEBAR_THEMES } from "./theme/tokens.js";
-
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE ?? "";
-const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
+import { api, API_BASE } from "./lib/api.js";
+import { statusColor, hostTypeColor, fmtDate, fmtRelative } from "./lib/helpers.js";
+import { useToasts } from "./lib/useToasts.js";
+import { isRfc1918, validateCidrs, AGENT_NAME_RE } from "./lib/validation.js";
+import { Toast, Spinner, Badge, DaysBar, Accordion } from "./components/index.js";
 
 // SIDEBAR_THEMES imported from src/theme/tokens.js — see that file for palette definitions.
 // All application styles live in src/styles/global.css (imported in main.jsx).
+// API client → src/lib/api.js | Helpers → src/lib/helpers.js | Validation → src/lib/validation.js
 
-// ─── API CLIENT ──────────────────────────────────────────────────────────────
-// Global session-expiry handler: set by the App so api.call can redirect to the
-// login screen exactly once when an *authenticated* request is rejected with 401
-// (expired or revoked token), instead of letting callers silently retry/poll.
-let sessionExpiredHandler = null;
-let sessionExpiredFired = false;
-
-const api = {
-  setSessionExpiredHandler(fn) { sessionExpiredHandler = fn; },
-  resetSessionExpired() { sessionExpiredFired = false; },
-  async call(method, path, body, token, { actingAsOrgId, reason } = {}) {
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (actingAsOrgId) {
-      headers["X-Acting-As-Org"] = actingAsOrgId;
-      if (reason) headers["X-Acting-As-Reason"] = reason;
-    }
-    const res = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      // 402 subscription-suspended — surface a user-friendly message
-      if (res.status === 402 && (err.type || "").includes("subscription-suspended")) {
-        const suspendedError = new Error("Scans are blocked — subscription is suspended. Contact support to reactivate.");
-        suspendedError.status = 402;
-        suspendedError.problemDetail = err;
-        throw suspendedError;
-      }
-      // 401 on an authenticated request → the token is expired or revoked. Fire the
-      // global session-expiry handler once so the app redirects to login rather than
-      // looping on failed polls. Token-less (public-endpoint) 401s are left to the caller.
-      if (res.status === 401 && token && sessionExpiredHandler && !sessionExpiredFired) {
-        sessionExpiredFired = true;
-        sessionExpiredHandler(err);
-      }
-      // ProblemDetail (RFC 9457) uses title + detail; fall back to message for older endpoints
-      const msg = err.detail || err.title || err.message || `HTTP ${res.status}: ${res.statusText}`;
-      const error = new Error(msg);
-      error.status = res.status;
-      error.problemDetail = err; // preserve full object for callers that want it
-      throw error;
-    }
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
-  },
-  getDevToken: (email, resetOnboarding = false) =>
-    api.call("POST", `/api/v1/auth/dev-token?email=${encodeURIComponent(email)}&resetOnboarding=${resetOnboarding}`),
-  logout: (token) => api.call("POST", "/api/v1/auth/logout", null, token),
-  // Server-authoritative session check: pass token in body only — NOT as the 4th-arg bearer.
-  // This prevents api.call's reactive 401 handler from also firing; we handle the result explicitly.
-  validateSession: (token) => api.call("POST", "/api/auth/validate", { token }),
-  getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
-  getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
-  updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
-  completeOnboarding: (data, token) => api.call("POST", "/api/v1/onboarding", data, token),
-  // MSP endpoints
-  msp: {
-    getDashboard: (token) => api.call("GET", "/api/v1/msp/dashboard", null, token),
-    getTargets:   (token, page = 0, size = 20) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}`, null, token),
-    listClients:  (token) => api.call("GET", "/api/v1/msp/clients", null, token),
-    createClient: (data, token) => api.call("POST", "/api/v1/msp/clients", data, token),
-    updateClient: (id, data, token) => api.call("PUT", `/api/v1/msp/clients/${id}`, data, token),
-  },
-  getTargets:    (token, opts) => api.call("GET",  "/api/v1/targets?size=100", null, token, opts),
-  createTarget:  (data, token, opts) => api.call("POST", "/api/v1/targets",    data, token, opts),
-  createTargetForOrg: (orgId, data, token) => api.call("POST", `/api/v1/organizations/${orgId}/targets`, data, token),
-  updateTarget:  (id, data, token, opts) => api.call("PUT", `/api/v1/targets/${id}`, data, token, opts),
-  deleteTarget:  (id, token, opts) => api.call("DELETE", `/api/v1/targets/${id}`, null, token, opts),
-  scanTarget:    (id, token, opts) => api.call("POST", `/api/v1/targets/${id}/scan`, null, token, opts),
-  getDashboard:  (token) => api.call("GET",  "/api/v1/dashboard",        null, token),
-  getCerts:      (token) => api.call("GET",  "/api/v1/certificates?size=100", null, token),
-  getExpiring:   (days, token) => api.call("GET", `/api/v1/certificates/expiring?days=${days}`, null, token),
-  // Agent endpoints
-  listAgents:    (token, opts) => api.call("GET",  "/api/v1/agent/list",                    null,   token, opts),
-  genAgentToken: (name, token) => api.call("POST", `/api/v1/agent/tokens?agentName=${encodeURIComponent(name)}`, null, token),
-  revokeAgent:   (id, token, opts) => api.call("POST", `/api/v1/agent/${id}/revoke`,        null,   token, opts),
-  createAgent:   (data, token, opts) => api.call("POST", "/api/v1/agents",                  data,   token, opts),
-  queueScan:     (targetId, token) => api.call("POST", `/api/v1/targets/${targetId}/scan`, null, token),
-  // Location endpoints
-  listLocations:   (token, opts) => api.call("GET",  "/api/v1/locations",        null, token, opts),
-  createLocation:  (data, token, opts) => api.call("POST", "/api/v1/locations",  data, token, opts),
-  updateLocation:  (id, data, token, opts) => api.call("PUT", `/api/v1/locations/${id}`, data, token, opts),
-  deleteLocation:  (id, token, opts) => api.call("DELETE", `/api/v1/locations/${id}`, null, token, opts),
-  // Team endpoints
-  listMembers:   (token, opts) => api.call("GET",  "/api/v1/org/members",                    null, token, opts),
-  inviteMember:  (data, token, opts) => api.call("POST", "/api/v1/org/invitations",           data, token, opts),
-  changeRole:    (userId, role, token, opts) => api.call("PUT", `/api/v1/org/members/${userId}/role?role=${role}`, null, token, opts),
-  revokeMember:  (userId, token, opts) => api.call("DELETE", `/api/v1/org/members/${userId}`, null, token, opts),
-  // Org profile endpoints
-  getOrgProfile:    (token) => api.call("GET", "/api/v1/org/profile",       null, token),
-  updateOrgProfile: (data, token) => api.call("PUT", "/api/v1/org/profile", data, token),
-  // Invite acceptance endpoints
-  validateInvite: (token) => api.call("POST", `/api/v1/auth/invite/validate?token=${encodeURIComponent(token)}`),
-  acceptInvite:   (data) => api.call("POST", "/api/v1/auth/invite/accept", data),
-  // Email auth — registration & password reset
-  registerEmail:        (data) => api.call("POST", "/api/auth/register", data),
-  verifyEmail:          (token) => api.call("GET", `/api/auth/verify-email?token=${encodeURIComponent(token)}`),
-  resendVerification:   (email) => api.call("POST", "/api/auth/resend-verification", { email }),
-  forgotPassword:       (email) => api.call("POST", "/api/auth/forgot-password", { email }),
-  resetPassword:        (data)  => api.call("POST", "/api/auth/reset-password", data),
-  // Platform admin endpoints
-  admin: {
-    listOrgs:    (token) => api.call("GET", "/api/v1/admin/orgs", null, token),
-    getOrgTree:  (token) => api.call("GET", "/api/v1/admin/orgs/tree", null, token),
-    getMsps:     (token) => api.call("GET", "/api/v1/admin/msps", null, token),
-    getOrgDetail:(token, orgId) => api.call("GET", `/api/v1/admin/orgs/${orgId}`, null, token),
-    updateQuota: (token, orgId, body) => api.call("PUT", `/api/v1/admin/orgs/${orgId}/quota`, body, token),
-    getAuditLog: (token, params) => api.call("GET", `/api/v1/admin/audit?${new URLSearchParams(params)}`, null, token),
-    promoteMsp:  (token, orgId) => api.call("PATCH", `/api/v1/admin/orgs/${orgId}/promote-msp`, null, token),
-  },
-  // Certificate renewal endpoints
-  getCert:          (certId, token) => api.call("GET",  `/api/v1/certificates/${certId}`, null, token),
-  requestRenewal:       (certId, body, token) => api.call("POST", `/api/v1/certificates/${certId}/renewals`, body, token),
-  listRenewals:         (certId, token) => api.call("GET",  `/api/v1/certificates/${certId}/renewals`, null, token),
-  getRenewal:           (renewalId, token) => api.call("GET",  `/api/v1/renewals/${renewalId}`, null, token),
-  cancelRenewal:        (renewalId, token) => api.call("POST", `/api/v1/renewals/${renewalId}/cancel`, null, token),
-  renewalPackageUrl:    (renewalId) => `${API_BASE}/api/v1/renewals/${renewalId}/package`,
-  listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
-};
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-const statusColor = (s) => ({ VALID: "green", EXPIRING: "yellow", EXPIRED: "red", UNREACHABLE: "orange" }[s] || "unknown");
-const hostTypeColor = (t) => t?.toLowerCase() || "unknown";
-const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-const daysColor = (d) => d < 0 ? "var(--red)" : d <= 7 ? "var(--red)" : d <= 30 ? "var(--yellow)" : "var(--green)";
-const daysWidth = (d) => `${Math.min(100, Math.max(0, (d / 365) * 100))}%`;
-const fmtRelative = (iso) => {
-  if (!iso) return "Never";
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-};
-
-// ─── TOAST SYSTEM ────────────────────────────────────────────────────────────
-let toastId = 0;
-function useToasts() {
-  const [toasts, setToasts] = useState([]);
-  const add = useCallback((msg, type = "info") => {
-    const id = ++toastId;
-    setToasts((t) => [...t, { id, msg, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
-  }, []);
-  return { toasts, add };
-}
-
-// ─── COMPONENTS ──────────────────────────────────────────────────────────────
-
-function Toast({ toasts }) {
-  const icons = { success: "✓", error: "✕", info: "ℹ" };
-  return (
-    <div className="toast-wrap" role="status" aria-live="polite" aria-atomic="false">
-      {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.type}`}>
-          <span aria-hidden="true" style={{ color: t.type === "success" ? "var(--green)" : t.type === "error" ? "var(--red)" : "var(--accent)" }}>
-            {icons[t.type]}
-          </span>
-          {t.msg}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Spinner({ lg }) {
-  return <div className={`spinner${lg ? " spinner-lg" : ""}`} role="status" aria-label="Loading" />;
-}
-
-function Badge({ type, children }) {
-  return <span className={`badge badge-${type}`}>{children}</span>;
-}
-
-function DaysBar({ days }) {
-  if (days === undefined || days === null) return <span className="text-muted">—</span>;
-  return (
-    <div className="days-bar">
-      <span style={{ color: daysColor(days), fontSize: "0.8rem", fontWeight: 600, minWidth: 36 }}>
-        {days < 0 ? "Expired" : `${days}d`}
-      </span>
-      <div className="days-track" style={{ width: 60 }}>
-        <div className="days-fill" style={{ width: daysWidth(days), background: daysColor(days) }} />
-      </div>
-    </div>
-  );
-}
 
 // ─── LAUNCH SCREEN ───────────────────────────────────────────────────────────
 function LaunchScreen({ onToken, onPostRegister, onForgotPassword, returnToCertId }) {
@@ -1059,12 +870,6 @@ function EditTargetModal({ token, target, onClose, onSaved, toast }) {
       </div>
     </div>
   );
-}
-
-function isRfc1918(h) {
-  const s = h.trim();
-  return s.startsWith("192.168.") || s.startsWith("10.") || s.startsWith("127.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(s);
 }
 
 // ─── ADD TARGET MODAL ─────────────────────────────────────────────────────────
@@ -2486,22 +2291,6 @@ function CertsView({ certs, loading, onRefresh, onSelectCert }) {
   );
 }
 
-// ─── VALIDATION HELPERS ──────────────────────────────────────────────────────
-// Hyphen at end of character class — no escape needed
-const AGENT_NAME_RE = /^[A-Za-z0-9 _.-]{3,64}$/;
-const CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/([0-9]|[1-2]\d|3[0-2])$/;
-
-function validateCidrs(raw) {
-  if (!raw.trim()) return "At least one CIDR is required";
-  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    if (!CIDR_RE.test(p)) return `Invalid CIDR: "${p}" — use format 192.168.1.0/24`;
-    const octets = p.split("/")[0].split(".");
-    if (octets.some((o) => parseInt(o) > 255)) return `Invalid IP in CIDR: "${p}"`;
-  }
-  return null;
-}
-
 // ─── COUNTDOWN HOOK ───────────────────────────────────────────────────────────
 function useCountdown(expiresAt) {
   const calcRemaining = useCallback(() => {
@@ -2521,31 +2310,6 @@ function useCountdown(expiresAt) {
   return { secs, label: `${mins}:${String(s).padStart(2, "0")} remaining`, urgent: secs < 120 };
 }
 
-// ─── ACCORDION ───────────────────────────────────────────────────────────────
-function Accordion({ title, children }) {
-  const [open, setOpen] = useState(false);
-  const headId = `acc-${title.replace(/\s/g, "-").toLowerCase()}`;
-  const bodyId = `acc-body-${title.replace(/\s/g, "-").toLowerCase()}`;
-  return (
-    <div className="accordion">
-      <button
-        className="accordion-header"
-        id={headId}
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {title}
-        <span className={`accordion-chevron ${open ? "open" : ""}`} aria-hidden="true">▼</span>
-      </button>
-      {open && (
-        <div className="accordion-body" id={bodyId} role="region" aria-labelledby={headId}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── CLOSE GUARD DIALOG ───────────────────────────────────────────────────────
 function CloseGuardDialog({ onConfirm, onCancel }) {
