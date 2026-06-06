@@ -1,13 +1,13 @@
 /*
- * Base reset + typography. Color tokens are applied via ThemeContext onto :root.
- * Components use var(--color-*) variables — never hardcoded hex.
+ * index.css — typography and font-rendering defaults.
+ *
+ * The box-sizing reset, body background/color, and #root positioning live in
+ * src/styles/global.css (imported first in main.jsx) to guarantee the :root
+ * semantic aliases and body::before grid are available before first paint.
+ *
+ * This file retains only the font-rendering properties that are orthogonal
+ * to the theme system and do not conflict with global.css.
  */
-
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
 
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
@@ -17,17 +17,4 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  background: var(--color-bg);
-  color: var(--color-text);
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-
-#root {
-  position: relative;
-  z-index: 1;
-  min-height: 100vh;
 }
