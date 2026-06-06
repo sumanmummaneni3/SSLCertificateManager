@@ -129,15 +129,17 @@ public class SslScannerService {
                     .orElse(CertificateRecord.builder()
                             .target(target).orgId(target.getOrganization().getId()).serialNumber(serial).build());
 
+            Instant now = Instant.now();
             record.setCommonName(cn); record.setIssuer(issuer);
             record.setExpiryDate(expiry); record.setNotBefore(notBefore);
             record.setPublicCertB64(b64); record.setStatus(determineStatus(expiry));
-            record.setScannedAt(Instant.now());
+            record.setScannedAt(now);
             certRepository.save(record);
 
-            // Clear any previous scan error now that the scan succeeded
+            // Clear any previous scan error and stamp the successful scan time
             target.setLastErrorMessage(null);
             target.setLastErrorAt(null);
+            target.setLastScannedAt(now);
             targetRepository.save(target);
 
             log.info("Certificate saved — CN: {}, Expires: {}, Status: {}", cn, expiry, record.getStatus());
