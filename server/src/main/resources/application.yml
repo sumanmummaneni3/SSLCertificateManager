@@ -114,6 +114,13 @@ app:
       handshake-timeout-ms: 15000
       retry-max-attempts: 3
       schedule-cron: "0 0 2 * * *"
+    private:
+      # Cron for the daily private-target sweep (RFC 0008 §6.1).
+      # Offset from the public scan (02:00) and expiry sweep (08:00) to avoid
+      # contention on the ShedLock window.
+      schedule-cron: ${PRIVATE_SCAN_SCHEDULE_CRON:0 0 3 * * *}
+      # Number of targets enqueued per transaction to bound transaction size (RFC 0008 §6.4).
+      enqueue-batch-size: ${PRIVATE_SCAN_ENQUEUE_BATCH_SIZE:500}
   agent:
     offline-threshold-minutes: ${AGENT_OFFLINE_THRESHOLD_MINUTES:10}
     offline-check-interval-ms: ${AGENT_OFFLINE_CHECK_INTERVAL_MS:300000}
