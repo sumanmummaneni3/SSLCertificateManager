@@ -1,23 +1,26 @@
 package com.certguard.service;
 
 import com.certguard.entity.CertificateRecord;
+import com.certguard.entity.NotificationSettings;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Target;
+import com.certguard.enums.CertStatus;
 import com.certguard.repository.CertificateRecordRepository;
+import com.certguard.repository.NotificationSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import org.mockito.ArgumentCaptor;
-
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,29 +28,41 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for ExpiryEvaluationService (RFC 0008 §2).
+ * Unit tests for ExpiryEvaluationService (RFC 0008 §2 + §3).
  *
  * Transaction synchronisation: TransactionSynchronizationManager is static and
  * thread-local. In tests there is no active transaction, so the service falls
  * through to a direct dispatchExpiryAlert call (the fallback branch) rather than
  * registering an AFTER_COMMIT listener. This lets us verify dispatch with plain
  * Mockito without spinning up a full Spring context.
+ *
+ * Settings resolution: by default the settingsRepository mocks return empty
+ * Optionals/Lists, so the app-yml fallback values (set via ReflectionTestUtils)
+ * apply. Individual tests wire specific mocked rows to verify the resolution chain.
  */
 @ExtendWith(MockitoExtension.class)
 class ExpiryEvaluationServiceTest {
 
     @Mock NotificationService notificationService;
     @Mock CertificateRecordRepository certRepository;
+    @Mock NotificationSettingsRepository settingsRepository;
 
     ExpiryEvaluationService service;
 
     @BeforeEach
     void setUp() {
-        service = new ExpiryEvaluationService(notificationService, certRepository);
+        service = new ExpiryEvaluationService(notificationService, certRepository, settingsRepository);
         ReflectionTestUtils.setField(service, "warningDays", 30);
         ReflectionTestUtils.setField(service, "criticalDays", 7);
         ReflectionTestUtils.setField(service, "dedupHours", 23);
         ReflectionTestUtils.setField(service, "forceScanDebounceSeconds", 120);
+
+        // Default: no persisted settings rows — fallback to app-yml values.
+        lenient().when(settingsRepository.findByTargetId(any())).thenReturn(Optional.empty());
+        lenient().when(settingsRepository.findByOrganizationIdAndTargetIsNull(any())).thenReturn(Optional.empty());
+        lenient().when(settingsRepository.findByTargetIdIn(anyCollection())).thenReturn(List.of());
+        lenient().when(settingsRepository.findByOrgIdInAndTargetIsNull(anyCollection())).thenReturn(List.of());
+        lenient().when(settingsRepository.findMaxWarningDays()).thenReturn(Optional.empty());
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -59,8 +74,10 @@ class ExpiryEvaluationServiceTest {
     }
 
     private Target enabledTarget(Organization org) {
-        return Target.builder()
+        Target t = Target.builder()
                 .organization(org).host("example.com").port(443).enabled(true).build();
+        ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
+        return t;
     }
 
     private CertificateRecord certExpiring(Target target, int daysFromNow) {
@@ -82,6 +99,142 @@ class ExpiryEvaluationServiceTest {
         return cert;
     }
 
+    private NotificationSettings buildSettings(Organization org, Target target,
+                                               boolean enabled, int warning, int critical, int dedup) {
+        NotificationSettings ns = NotificationSettings.builder()
+                .organization(org)
+                .target(target)
+                .enabled(enabled)
+                .warningDays(warning)
+                .criticalDays(critical)
+                .dedupHours(dedup)
+                .build();
+        ReflectionTestUtils.setField(ns, "id", UUID.randomUUID());
+        return ns;
+    }
+
+    // ── Settings resolution chain (RFC 0008 §3.2) ─────────────────────────────
+
+    @Nested
+    class ResolutionChain {
+
+        @Test
+        void perTargetOverride_usedWhenPresent() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 20, null);
+            // Override has warningDays=45 — if used, cert (20 days) is in-window.
+            // App fallback has warningDays=30 — cert is also in-window, but we verify
+            // the override's dedupHours (1h) is used by checking it doesn't dedup.
+            // For isolation, give the override a very short dedup window (1h) and pre-alert 2h ago.
+            Instant alertedLong = Instant.now().minus(2, ChronoUnit.HOURS);
+            cert.setLastAlertSentAt(alertedLong);
+
+            NotificationSettings override = buildSettings(org, target, true, 45, 7, 1);
+            when(settingsRepository.findByTargetId(target.getId())).thenReturn(Optional.of(override));
+
+            // 2h ago > 1h dedup → should dispatch (override's dedupHours=1 applies)
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+        }
+
+        @Test
+        void orgDefaultUsed_whenNoPerTargetOverride() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 20, null);
+            // Org default has enabled=false → no dispatch.
+            NotificationSettings orgDefault = buildSettings(org, null, false, 30, 7, 23);
+            when(settingsRepository.findByOrganizationIdAndTargetIsNull(org.getId()))
+                    .thenReturn(Optional.of(orgDefault));
+
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            verifyNoInteractions(notificationService);
+            verify(certRepository, never()).stampAlertSentAt(any(), any());
+        }
+
+        @Test
+        void perTargetBeatsOrgDefault() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 20, null);
+
+            // Org default is disabled — per-target override is enabled.
+            NotificationSettings override = buildSettings(org, target, true, 30, 7, 23);
+            NotificationSettings orgDefault = buildSettings(org, null, false, 30, 7, 23);
+
+            when(settingsRepository.findByTargetId(target.getId())).thenReturn(Optional.of(override));
+            // Lenient: per-target is found first so this org-default stub will not be called.
+            // It's wired here to document the intended test invariant, not to be exercised.
+            lenient().when(settingsRepository.findByOrganizationIdAndTargetIsNull(org.getId()))
+                    .thenReturn(Optional.of(orgDefault));
+
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            // Per-target wins → enabled=true → dispatches.
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+        }
+
+        @Test
+        void appYmlFallback_whenNoRows() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 20, null);
+            // Both repo calls return empty — fallback (warningDays=30) applies.
+            // 20 days < 30 → in-window → dispatches.
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+        }
+
+        @Test
+        void batchForm_usesPreloadedMapsNotPerCertQueries() {
+            Organization org = buildOrg();
+            Target t1 = enabledTarget(org);
+            Target t2 = enabledTarget(org);
+            CertificateRecord c1 = certExpiring(t1, 10, null);
+            CertificateRecord c2 = certExpiring(t2, 15, null);
+
+            // Pre-loaded maps return empty → fallback applies to all certs.
+            when(settingsRepository.findByTargetIdIn(anyCollection())).thenReturn(List.of());
+            when(settingsRepository.findByOrgIdInAndTargetIsNull(anyCollection())).thenReturn(List.of());
+
+            service.evaluateAndNotify(List.of(c1, c2), ExpiryEvaluationService.EvaluationMode.SCHEDULED);
+
+            // Two batch queries — NOT per-cert findByTargetId / findByOrganizationId calls.
+            verify(settingsRepository, times(1)).findByTargetIdIn(anyCollection());
+            verify(settingsRepository, times(1)).findByOrgIdInAndTargetIsNull(anyCollection());
+            verify(settingsRepository, never()).findByTargetId(any());
+            verify(settingsRepository, never()).findByOrganizationIdAndTargetIsNull(any());
+        }
+    }
+
+    // ── resolveMaxWarningDays ─────────────────────────────────────────────────
+
+    @Nested
+    class ResolveMaxWarningDays {
+
+        @Test
+        void noRows_returnsAppYmlDefault() {
+            when(settingsRepository.findMaxWarningDays()).thenReturn(Optional.empty());
+            assertThat(service.resolveMaxWarningDays()).isEqualTo(30);
+        }
+
+        @Test
+        void rowsPresent_returnsMaxOfDbAndAppYml() {
+            when(settingsRepository.findMaxWarningDays()).thenReturn(Optional.of(60));
+            assertThat(service.resolveMaxWarningDays()).isEqualTo(60);
+        }
+
+        @Test
+        void rowsPresent_butSmallerThanAppYml_returnsAppYml() {
+            when(settingsRepository.findMaxWarningDays()).thenReturn(Optional.of(10));
+            assertThat(service.resolveMaxWarningDays()).isEqualTo(30); // max(10,30)=30
+        }
+    }
+
     // ── Not-in-window ─────────────────────────────────────────────────────────
 
     @Nested
@@ -90,13 +243,11 @@ class ExpiryEvaluationServiceTest {
         @Test
         void certExpiringBeyondWarningDays_noStampNoDispatch() {
             Target target = enabledTarget(buildOrg());
-            // Use 60 days — well beyond warningDays=30 so DAYS.between always gives > 30
-            // even accounting for sub-second elapsed time between cert creation and evaluation.
-            CertificateRecord cert = certExpiring(target, 60);
+            CertificateRecord cert = certExpiring(target, 60); // well beyond warningDays=30
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verifyNoInteractions(certRepository);
+            verify(certRepository, never()).stampAlertSentAt(any(), any());
             verifyNoInteractions(notificationService);
         }
 
@@ -110,7 +261,7 @@ class ExpiryEvaluationServiceTest {
                     List.of(c1, c2), ExpiryEvaluationService.EvaluationMode.SCHEDULED);
 
             assertThat(count).isZero();
-            verifyNoInteractions(certRepository);
+            verify(certRepository, never()).stampAlertSentAt(any(), any());
             verifyNoInteractions(notificationService);
         }
     }
@@ -190,7 +341,6 @@ class ExpiryEvaluationServiceTest {
             Target target = enabledTarget(buildOrg());
             CertificateRecord inWindow  = certExpiring(target, 20, null);
             CertificateRecord outWindow = certExpiring(target, 60, null);
-            // dedup-suppressed
             Instant recent = Instant.now().minus(2, ChronoUnit.HOURS);
             CertificateRecord deduped = certExpiring(target, 15, recent);
 
@@ -226,11 +376,8 @@ class ExpiryEvaluationServiceTest {
         @Test
         void force_bypassesDedupGate_alertedWithinWindow_stillDispatches() {
             Target target = enabledTarget(buildOrg());
-            // cert was alerted 1 hour ago — SCHEDULED would skip this
             Instant recentAlert = Instant.now().minus(1, ChronoUnit.HOURS);
             CertificateRecord cert = certExpiring(target, 20, recentAlert);
-
-            // previousLastScannedAt is old enough that debounce doesn't fire
             Instant oldScan = Instant.now().minus(300, ChronoUnit.SECONDS);
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
@@ -241,8 +388,6 @@ class ExpiryEvaluationServiceTest {
 
         @Test
         void force_stampsEvenWhenDedupWouldHaveSkipped() {
-            // Confirm the stamp is always written in FORCE mode (so a later SCHEDULED
-            // sweep correctly sees the fresh lastAlertSentAt and dedups against it).
             Target target = enabledTarget(buildOrg());
             Instant veryRecentAlert = Instant.now().minus(30, ChronoUnit.MINUTES);
             CertificateRecord cert = certExpiring(target, 10, veryRecentAlert);
@@ -257,8 +402,7 @@ class ExpiryEvaluationServiceTest {
         void force_debounce_suppressesWhenTargetScannedRecently() {
             Target target = enabledTarget(buildOrg());
             CertificateRecord cert = certExpiring(target, 20, null);
-            // previous scan was only 30 seconds ago — within 120s debounce window
-            Instant recentScan = Instant.now().minus(30, ChronoUnit.SECONDS);
+            Instant recentScan = Instant.now().minus(30, ChronoUnit.SECONDS); // within 120s
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, recentScan);
 
@@ -270,8 +414,7 @@ class ExpiryEvaluationServiceTest {
         void force_debounce_firesWhenTargetScannedBeyondDebounceWindow() {
             Target target = enabledTarget(buildOrg());
             CertificateRecord cert = certExpiring(target, 20, null);
-            // previous scan was 300 seconds ago — beyond 120s debounce
-            Instant oldScan = Instant.now().minus(300, ChronoUnit.SECONDS);
+            Instant oldScan = Instant.now().minus(300, ChronoUnit.SECONDS); // beyond 120s
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
 
@@ -296,14 +439,6 @@ class ExpiryEvaluationServiceTest {
     @Nested
     class AfterCommitDispatch {
 
-        /**
-         * Verifies that when a real Spring transaction synchronisation is active,
-         * the service registers an AFTER_COMMIT callback rather than dispatching
-         * inline. The callback, when invoked, calls dispatchExpiryAlert.
-         *
-         * We simulate an active synchronisation context manually (TransactionSynchronizationManager
-         * is just a ThreadLocal) and verify the synchronization is registered.
-         */
         @Test
         void withActiveSynchronization_registersAfterCommitCallback() {
             TransactionSynchronizationManager.initSynchronization();
@@ -313,12 +448,9 @@ class ExpiryEvaluationServiceTest {
 
                 service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-                // A synchronization should have been registered (dispatch is deferred).
                 assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
-                // NotificationService should NOT have been called yet (deferred to after-commit).
                 verifyNoInteractions(notificationService);
 
-                // Simulate commit — invoke the registered after-commit callback.
                 TransactionSynchronizationManager.getSynchronizations()
                         .forEach(s -> s.afterCommit());
 
@@ -330,7 +462,6 @@ class ExpiryEvaluationServiceTest {
 
         @Test
         void withoutActiveSynchronization_dispatchesDirectly() {
-            // Default test context: no active synchronization → direct dispatch fallback.
             assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
 
             Target target = enabledTarget(buildOrg());
@@ -338,7 +469,6 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            // Immediate dispatch because no transaction is active.
             verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
         }
     }
@@ -346,27 +476,46 @@ class ExpiryEvaluationServiceTest {
     // ── determineCertStatus ───────────────────────────────────────────────────
 
     @Nested
-    class DetermineCertStatus {
+    class DetermineCertStatusTests {
 
         @Test
         void expired_returnsExpired() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
             Instant past = Instant.now().minus(1, ChronoUnit.DAYS);
-            assertThat(service.determineCertStatus(past))
-                    .isEqualTo(com.certguard.enums.CertStatus.EXPIRED);
+            assertThat(service.determineCertStatus(past, target, org.getId()))
+                    .isEqualTo(CertStatus.EXPIRED);
         }
 
         @Test
         void withinWarningDays_returnsExpiring() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
             Instant soon = Instant.now().plus(15, ChronoUnit.DAYS); // <= warningDays=30
-            assertThat(service.determineCertStatus(soon))
-                    .isEqualTo(com.certguard.enums.CertStatus.EXPIRING);
+            assertThat(service.determineCertStatus(soon, target, org.getId()))
+                    .isEqualTo(CertStatus.EXPIRING);
         }
 
         @Test
         void beyondWarningDays_returnsValid() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
             Instant far = Instant.now().plus(60, ChronoUnit.DAYS); // > warningDays=30
-            assertThat(service.determineCertStatus(far))
-                    .isEqualTo(com.certguard.enums.CertStatus.VALID);
+            assertThat(service.determineCertStatus(far, target, org.getId()))
+                    .isEqualTo(CertStatus.VALID);
+        }
+
+        @Test
+        void perTargetOverrideWarningDays_usedForStatusDerivation() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            // Override has warningDays=60 — a cert expiring in 45 days should be EXPIRING.
+            NotificationSettings override = buildSettings(org, target, true, 60, 7, 23);
+            when(settingsRepository.findByTargetId(target.getId())).thenReturn(Optional.of(override));
+
+            Instant in45Days = Instant.now().plus(45, ChronoUnit.DAYS);
+            assertThat(service.determineCertStatus(in45Days, target, org.getId()))
+                    .isEqualTo(CertStatus.EXPIRING);
         }
     }
 }

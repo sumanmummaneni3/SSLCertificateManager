@@ -1,8 +1,11 @@
 package com.certguard.controller;
 
+import com.certguard.dto.request.NotificationSettingsRequest;
 import com.certguard.dto.request.UpdateOrgProfileRequest;
+import com.certguard.dto.response.NotificationSettingsResponse;
 import com.certguard.dto.response.OrgResponse;
 import com.certguard.security.TenantContext;
+import com.certguard.service.NotificationSettingsService;
 import com.certguard.service.OrgService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -22,6 +25,7 @@ import java.util.UUID;
 public class OrgController {
 
     private final OrgService orgService;
+    private final NotificationSettingsService notificationSettingsService;
 
     // ── Org-user endpoints ─────────────────────────────────────────────────
 
@@ -49,6 +53,31 @@ public class OrgController {
     @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> updateName(@RequestParam String name) {
         return ResponseEntity.ok(orgService.updateName(TenantContext.getOrgId(), name));
+    }
+
+    // ── Notification settings (RFC 0008 §3.4) ─────────────────────────────
+
+    /**
+     * GET /api/v1/org/notification-settings
+     * Returns the org-default notification policy (falls back to app.yml defaults if no row exists).
+     */
+    @GetMapping("/notification-settings")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
+    public ResponseEntity<NotificationSettingsResponse> getOrgNotificationSettings() {
+        return ResponseEntity.ok(
+                notificationSettingsService.getOrgSettings(TenantContext.getOrgId()));
+    }
+
+    /**
+     * PUT /api/v1/org/notification-settings
+     * Upserts the org-default notification policy (creates on first call, updates on subsequent calls).
+     */
+    @PutMapping("/notification-settings")
+    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
+    public ResponseEntity<NotificationSettingsResponse> putOrgNotificationSettings(
+            @Valid @RequestBody NotificationSettingsRequest req) {
+        return ResponseEntity.ok(
+                notificationSettingsService.upsertOrgSettings(TenantContext.getOrgId(), req));
     }
 
     // ── Platform Admin endpoints ───────────────────────────────────────────

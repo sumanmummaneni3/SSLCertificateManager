@@ -37,8 +37,6 @@ public class SslScannerService {
     private final CertificateRecordRepository certRepository;
     private final ExpiryEvaluationService expiryEvaluationService;
 
-    @Value("${app.alert.warning-days:30}")  private int warningDays;
-    @Value("${app.alert.critical-days:7}") private int criticalDays;
     @Value("${app.scanning.public.thread-pool-size:20}") private int threadPoolSize;
     @Value("${app.scanning.public.connect-timeout-ms:10000}") private int connectTimeoutMs;
     @Value("${app.scanning.public.retry-max-attempts:3}") private int maxRetries;
@@ -149,7 +147,7 @@ public class SslScannerService {
             record.setCommonName(cn); record.setIssuer(issuer);
             record.setExpiryDate(expiry); record.setNotBefore(notBefore);
             record.setPublicCertB64(b64);
-            record.setStatus(expiryEvaluationService.determineCertStatus(expiry));
+            record.setStatus(expiryEvaluationService.determineCertStatus(expiry, target, target.getOrganization().getId()));
             record.setScannedAt(now);
             certRepository.save(record);
 

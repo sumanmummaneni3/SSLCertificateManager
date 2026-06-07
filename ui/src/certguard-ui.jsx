@@ -1087,6 +1087,158 @@ const styles = `
   .cert-row-clickable:hover td {
     background: color-mix(in srgb, var(--color-primary) 5%, transparent);
   }
+
+  /* ── NOTIFICATION SETTINGS ── */
+  .ns-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .ns-panel-title {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .ns-inherited-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: color-mix(in srgb, var(--color-primary) 6%, var(--surface2));
+    border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    color: var(--accent);
+    margin-bottom: 1rem;
+  }
+
+  .ns-inherited-banner .ns-inherited-label {
+    flex: 1;
+    color: var(--text);
+  }
+
+  .ns-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 1.1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ns-toggle-label {
+    flex: 1;
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+
+  .ns-toggle-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* Accessible toggle switch */
+  .ns-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .ns-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+
+  .ns-switch-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border2);
+    border-radius: 11px;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+
+  .ns-switch input:checked + .ns-switch-track {
+    background: var(--accent);
+  }
+
+  .ns-switch input:focus-visible + .ns-switch-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .ns-switch-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+    pointer-events: none;
+  }
+
+  .ns-switch input:checked ~ .ns-switch-thumb {
+    transform: translateX(18px);
+  }
+
+  .ns-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  @media (max-width: 540px) {
+    .ns-fields-grid { grid-template-columns: 1fr; }
+  }
+
+  .ns-field-error {
+    font-size: 0.7rem;
+    color: var(--red);
+    margin-top: 3px;
+  }
+
+  .ns-field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+  }
+
+  .ns-field input[aria-invalid="true"] {
+    border-color: var(--red);
+  }
+
+  .ns-readonly-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 5px 16px;
+    font-size: 0.82rem;
+    margin-bottom: 1rem;
+  }
+
+  .ns-readonly-key { color: var(--muted); white-space: nowrap; }
+  .ns-readonly-val { color: var(--text); font-weight: 500; font-family: var(--font-mono); }
+
+  .ns-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
 `;
 
 // ─── API CLIENT ──────────────────────────────────────────────────────────────
@@ -1210,6 +1362,12 @@ const api = {
   cancelRenewal:        (renewalId, token) => api.call("POST", `/api/v1/renewals/${renewalId}/cancel`, null, token),
   renewalPackageUrl:    (renewalId) => `${API_BASE}/api/v1/renewals/${renewalId}/package`,
   listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
+  // Notification settings endpoints (RFC 0008 §3.4)
+  getOrgNotificationSettings:    (token) => api.call("GET",  "/api/v1/org/notification-settings", null, token),
+  putOrgNotificationSettings:    (body, token) => api.call("PUT", "/api/v1/org/notification-settings", body, token),
+  getTargetNotificationSettings: (targetId, token) => api.call("GET",  `/api/v1/targets/${targetId}/notification-settings`, null, token),
+  putTargetNotificationSettings: (targetId, body, token) => api.call("PUT",  `/api/v1/targets/${targetId}/notification-settings`, body, token),
+  deleteTargetNotificationSettings: (targetId, token) => api.call("DELETE", `/api/v1/targets/${targetId}/notification-settings`, null, token),
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -2606,7 +2764,8 @@ function Dashboard({ token, org, me, toast, onLogout, initialCertId, onExpireSes
         {view === "targets" && (
           <TargetsView targets={targets} onScan={triggerScan} scanning={scanning}
             onAdd={() => setShowAdd(true)} onDelete={setDeleteId}
-            onEdit={setEditTarget} onRefresh={load} me={me} org={org} />
+            onEdit={setEditTarget} onRefresh={load} me={me} org={org}
+            token={token} toast={toast} />
         )}
         {view === "certs" && (
           <CertsView
@@ -2934,10 +3093,11 @@ function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me, org }
   );
 }
 
-function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org }) {
+function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org, token, toast }) {
   const canWrite = me == null || me?.permissions?.canWriteTargets;
   const scansBlocked = me?.permissions?.scansBlocked === true;
   const showOrgCol = org?.orgType === "MSP" || me?.platformAdmin === true;
+  const [notifTarget, setNotifTarget] = useState(null);
   return (
     <>
       <div className="page-header">
@@ -3033,6 +3193,16 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
                               {scanning[t.id] ? <Spinner /> : "⟳"}
                             </button>
                           )}
+                          {/* Notification settings — visible to all roles with read access */}
+                          <button
+                            className="scan-btn"
+                            style={{ color: "var(--accent)", borderColor: "rgba(0,212,255,0.3)" }}
+                            onClick={() => setNotifTarget(t)}
+                            title="Notification settings"
+                            aria-label={`Notification settings for ${t.host}:${t.port}`}
+                          >
+                            ⚬
+                          </button>
                           {canWrite && (
                             <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
                               onClick={() => onEdit(t)} title="Edit target">✎</button>
@@ -3051,6 +3221,16 @@ function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRef
           </div>
         )}
       </div>
+
+      {notifTarget && (
+        <TargetNotificationModal
+          target={notifTarget}
+          token={token}
+          me={me}
+          toast={toast}
+          onClose={() => setNotifTarget(null)}
+        />
+      )}
     </>
   );
 }
@@ -4329,6 +4509,598 @@ function InviteMemberModal({ token, onClose, onInvited }) {
   );
 }
 
+// ─── NOTIFICATION SETTINGS — VALIDATION ──────────────────────────────────────
+/**
+ * Validates notification settings form values.
+ * Mirrors the server-side CHECK constraint from RFC 0008 §3.1:
+ *   critical_days > 0
+ *   warning_days > critical_days
+ *   dedup_hours >= 1
+ *
+ * Returns an errors object (empty = valid).
+ */
+function validateNotificationSettings({ warningDays, criticalDays, dedupHours }) {
+  const errs = {};
+  const w = parseInt(warningDays, 10);
+  const c = parseInt(criticalDays, 10);
+  const d = parseInt(dedupHours, 10);
+
+  if (isNaN(w) || w < 1) {
+    errs.warningDays = "Warning days must be a positive number";
+  }
+  if (isNaN(c) || c < 1) {
+    errs.criticalDays = "Critical days must be a positive number";
+  }
+  if (!isNaN(w) && !isNaN(c) && c >= w) {
+    errs.criticalDays = "Critical days must be less than warning days";
+  }
+  if (isNaN(d) || d < 1) {
+    errs.dedupHours = "Dedup hours must be at least 1";
+  }
+  return errs;
+}
+
+// ─── NS SWITCH — ACCESSIBLE TOGGLE ───────────────────────────────────────────
+function NsSwitch({ id, checked, onChange, disabled }) {
+  return (
+    <label className="ns-switch" aria-label={checked ? "Notifications enabled" : "Notifications disabled"}>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+      />
+      <span className="ns-switch-track" aria-hidden="true" />
+      <span className="ns-switch-thumb" aria-hidden="true" />
+    </label>
+  );
+}
+
+// ─── NS NUMBER FIELD ──────────────────────────────────────────────────────────
+function NsNumberField({ id, label, helpText, value, onChange, error, disabled }) {
+  return (
+    <div className="field ns-field">
+      <label htmlFor={id} style={{ display: "block", fontSize: "0.72rem", color: "var(--muted)", marginBottom: 6, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="number"
+        min="1"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        aria-invalid={!!error}
+        aria-describedby={error ? `${id}-err` : helpText ? `${id}-help` : undefined}
+        style={{
+          width: "100%",
+          background: "var(--surface2)",
+          border: `1px solid ${error ? "var(--red)" : "var(--border2)"}`,
+          borderRadius: "var(--radius)",
+          color: "var(--text)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "0.85rem",
+          padding: "10px 14px",
+          outline: "none",
+          opacity: disabled ? 0.5 : 1,
+        }}
+      />
+      {helpText && !error && (
+        <div id={`${id}-help`} style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: 3 }}>{helpText}</div>
+      )}
+      {error && (
+        <div id={`${id}-err`} className="ns-field-error" role="alert">{error}</div>
+      )}
+    </div>
+  );
+}
+
+// ─── ORG NOTIFICATION SETTINGS PANEL ─────────────────────────────────────────
+/**
+ * Displays and allows editing of the organization-level notification settings.
+ * Consumed by SettingsView.
+ * API: GET/PUT /api/v1/org/notification-settings
+ */
+function OrgNotificationSettingsPanel({ token, me, toast }) {
+  const canWrite = me == null || me?.user?.role === "ADMIN" || me?.platformAdmin === true;
+
+  const [settings, setSettings]   = useState(null);
+  const [form, setForm]           = useState({});
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [dirty, setDirty]         = useState(false);
+  const [errors, setErrors]       = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getOrgNotificationSettings(token)
+      .then((data) => {
+        if (!cancelled) {
+          setSettings(data);
+          setForm({
+            enabled:      data.enabled,
+            warningDays:  String(data.warningDays),
+            criticalDays: String(data.criticalDays),
+            dedupHours:   String(data.dedupHours),
+          });
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) toast("Failed to load notification settings: " + e.message, "error");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [token, toast]);
+
+  const setField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setDirty(true);
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+  };
+
+  const handleSave = async (ev) => {
+    ev.preventDefault();
+    const errs = validateNotificationSettings(form);
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    setSaving(true);
+    try {
+      const updated = await api.putOrgNotificationSettings({
+        enabled:      form.enabled,
+        warningDays:  parseInt(form.warningDays, 10),
+        criticalDays: parseInt(form.criticalDays, 10),
+        dedupHours:   parseInt(form.dedupHours, 10),
+      }, token);
+      setSettings(updated);
+      setForm({
+        enabled:      updated.enabled,
+        warningDays:  String(updated.warningDays),
+        criticalDays: String(updated.criticalDays),
+        dedupHours:   String(updated.dedupHours),
+      });
+      setDirty(false);
+      setErrors({});
+      toast("Notification settings saved", "success");
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = () => {
+    if (!settings) return;
+    setForm({
+      enabled:      settings.enabled,
+      warningDays:  String(settings.warningDays),
+      criticalDays: String(settings.criticalDays),
+      dedupHours:   String(settings.dedupHours),
+    });
+    setDirty(false);
+    setErrors({});
+  };
+
+  if (loading) {
+    return (
+      <div className="ns-panel" aria-busy="true">
+        <div className="ns-panel-title">Notification Settings</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--muted)", fontSize: "0.8rem" }}>
+          <Spinner /> Loading notification settings...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSave} noValidate aria-label="Organisation notification settings">
+      <div className="ns-panel">
+        <div className="ns-panel-title">
+          <span>Notification Settings</span>
+          <span style={{ fontSize: "0.68rem", fontWeight: 400, color: "var(--muted)" }}>
+            Org default — applies to all targets unless overridden
+          </span>
+        </div>
+
+        {/* Master enable/disable */}
+        <div className="ns-toggle-row">
+          <div>
+            <div className="ns-toggle-label">Enable expiry notifications</div>
+            <div className="ns-toggle-sub">
+              When disabled, no alerts are sent for any target in this organisation.
+            </div>
+          </div>
+          <NsSwitch
+            id="org-ns-enabled"
+            checked={!!form.enabled}
+            onChange={(v) => setField("enabled", v)}
+            disabled={!canWrite}
+          />
+        </div>
+
+        {/* Threshold fields */}
+        <fieldset style={{ border: "none", padding: 0, margin: 0 }} disabled={!form.enabled || !canWrite}>
+          <legend style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.75rem" }}>
+            Thresholds
+          </legend>
+          <div className="ns-fields-grid">
+            <NsNumberField
+              id="org-ns-warning-days"
+              label="Warning days"
+              helpText="Alert when cert expires within this many days"
+              value={form.warningDays ?? ""}
+              onChange={(v) => setField("warningDays", v)}
+              error={errors.warningDays}
+              disabled={!canWrite || !form.enabled}
+            />
+            <NsNumberField
+              id="org-ns-critical-days"
+              label="Critical days"
+              helpText="Must be less than warning days"
+              value={form.criticalDays ?? ""}
+              onChange={(v) => setField("criticalDays", v)}
+              error={errors.criticalDays}
+              disabled={!canWrite || !form.enabled}
+            />
+            <NsNumberField
+              id="org-ns-dedup-hours"
+              label="Dedup hours"
+              helpText="Min hours between repeat alerts per cert"
+              value={form.dedupHours ?? ""}
+              onChange={(v) => setField("dedupHours", v)}
+              error={errors.dedupHours}
+              disabled={!canWrite || !form.enabled}
+            />
+          </div>
+        </fieldset>
+
+        {canWrite && (
+          <div className="ns-actions">
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              style={{ width: "auto" }}
+              disabled={saving || !dirty}
+            >
+              {saving ? <><Spinner /> Saving...</> : "Save"}
+            </button>
+            {dirty && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ width: "auto" }}
+                onClick={handleReset}
+                disabled={saving}
+              >
+                Discard
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </form>
+  );
+}
+
+// ─── TARGET NOTIFICATION SETTINGS PANEL ──────────────────────────────────────
+/**
+ * Shows per-target notification settings inside the target notification modal.
+ * When the target inherits org defaults, shows inherited values read-only with
+ * an "Override for this target" button. When overridden, shows editable fields
+ * with a "Reset to org default" (DELETE) affordance.
+ *
+ * API:
+ *   GET    /api/v1/targets/{id}/notification-settings
+ *   PUT    /api/v1/targets/{id}/notification-settings
+ *   DELETE /api/v1/targets/{id}/notification-settings
+ */
+function TargetNotificationSettingsPanel({ targetId, token, me, toast }) {
+  const canWrite = me == null || me?.permissions?.canWriteTargets ||
+    me?.user?.role === "ADMIN" || me?.platformAdmin === true;
+
+  const [settings, setSettings]   = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [overrideMode, setOverrideMode] = useState(false); // true = editing override fields
+  const [form, setForm]           = useState({});
+  const [dirty, setDirty]         = useState(false);
+  const [errors, setErrors]       = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.getTargetNotificationSettings(targetId, token);
+      setSettings(data);
+      // If there's already an override (inherited === false or absent), go straight to edit mode
+      const hasOverride = data.inherited === false;
+      setOverrideMode(hasOverride);
+      setForm({
+        enabled:      data.enabled,
+        warningDays:  String(data.warningDays),
+        criticalDays: String(data.criticalDays),
+        dedupHours:   String(data.dedupHours),
+      });
+      setDirty(false);
+      setErrors({});
+    } catch (e) {
+      toast("Failed to load target notification settings: " + e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [targetId, token, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setDirty(true);
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+  };
+
+  const handleActivateOverride = () => {
+    setOverrideMode(true);
+    setDirty(true);
+  };
+
+  const handleSave = async (ev) => {
+    ev.preventDefault();
+    const errs = validateNotificationSettings(form);
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    setSaving(true);
+    try {
+      const updated = await api.putTargetNotificationSettings(targetId, {
+        enabled:      form.enabled,
+        warningDays:  parseInt(form.warningDays, 10),
+        criticalDays: parseInt(form.criticalDays, 10),
+        dedupHours:   parseInt(form.dedupHours, 10),
+      }, token);
+      setSettings({ ...updated, inherited: false });
+      setForm({
+        enabled:      updated.enabled,
+        warningDays:  String(updated.warningDays),
+        criticalDays: String(updated.criticalDays),
+        dedupHours:   String(updated.dedupHours),
+      });
+      setDirty(false);
+      setErrors({});
+      toast("Target notification settings saved", "success");
+    } catch (e) {
+      toast("Save failed: " + e.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetToOrgDefault = async () => {
+    setResetting(true);
+    try {
+      await api.deleteTargetNotificationSettings(targetId, token);
+      toast("Target override cleared — reverted to org default", "success");
+      await load();
+    } catch (e) {
+      toast("Reset failed: " + e.message, "error");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleDiscardOverride = () => {
+    // Cancel new-override draft: revert UI to inherited state
+    setOverrideMode(false);
+    setDirty(false);
+    setErrors({});
+    if (settings) {
+      setForm({
+        enabled:      settings.enabled,
+        warningDays:  String(settings.warningDays),
+        criticalDays: String(settings.criticalDays),
+        dedupHours:   String(settings.dedupHours),
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "1rem 0", color: "var(--muted)", fontSize: "0.8rem" }} aria-busy="true">
+        <Spinner /> Loading notification settings...
+      </div>
+    );
+  }
+
+  const isInherited = settings?.inherited !== false && !overrideMode;
+
+  return (
+    <form onSubmit={handleSave} noValidate aria-label="Target notification settings">
+      {/* Inherited banner */}
+      {isInherited && (
+        <div className="ns-inherited-banner" role="status">
+          <span aria-hidden="true" style={{ fontSize: "1rem" }}>i</span>
+          <span className="ns-inherited-label">
+            Inherited from organization — the values below are the effective org defaults.
+          </span>
+        </div>
+      )}
+
+      {/* Effective / editable values */}
+      {isInherited ? (
+        /* Read-only inherited view */
+        <>
+          <div className="ns-readonly-grid">
+            <span className="ns-readonly-key">Notifications</span>
+            <span className="ns-readonly-val" style={{ color: settings?.enabled ? "var(--green)" : "var(--muted)" }}>
+              {settings?.enabled ? "Enabled" : "Disabled"}
+            </span>
+
+            <span className="ns-readonly-key">Warning days</span>
+            <span className="ns-readonly-val">{settings?.warningDays ?? "—"}</span>
+
+            <span className="ns-readonly-key">Critical days</span>
+            <span className="ns-readonly-val">{settings?.criticalDays ?? "—"}</span>
+
+            <span className="ns-readonly-key">Dedup hours</span>
+            <span className="ns-readonly-val">{settings?.dedupHours ?? "—"}</span>
+
+            {/* TODO: Surface last-alert timestamp once the API exposes it.
+                The CertificateRecord entity has lastAlertSentAt (RFC 0008 §2.3), but
+                /api/v1/targets/{id}/notification-settings does not currently include it
+                in the response shape. Request the backend-engineer to add
+                lastAlertSentAt (ISO-8601) to both GET responses so the UI can explain
+                why a force-scan produced no email (dedup gate). */}
+          </div>
+          {canWrite && (
+            <div className="ns-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ width: "auto" }}
+                onClick={handleActivateOverride}
+              >
+                Override for this target
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        /* Override editing view */
+        <>
+          {settings?.inherited === false && (
+            <div className="alert alert-info" role="status" style={{ marginBottom: "0.75rem", fontSize: "0.78rem" }}>
+              This target has its own notification settings — org defaults do not apply.
+            </div>
+          )}
+
+          <div className="ns-toggle-row">
+            <div>
+              <div className="ns-toggle-label">Enable notifications</div>
+              <div className="ns-toggle-sub">Override the org-level toggle for this target only.</div>
+            </div>
+            <NsSwitch
+              id="tgt-ns-enabled"
+              checked={!!form.enabled}
+              onChange={(v) => setField("enabled", v)}
+              disabled={!canWrite}
+            />
+          </div>
+
+          <fieldset style={{ border: "none", padding: 0, margin: 0 }} disabled={!form.enabled || !canWrite}>
+            <legend style={{ fontSize: "0.7rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.75rem" }}>
+              Thresholds
+            </legend>
+            <div className="ns-fields-grid">
+              <NsNumberField
+                id="tgt-ns-warning-days"
+                label="Warning days"
+                helpText="Alert when cert expires within N days"
+                value={form.warningDays ?? ""}
+                onChange={(v) => setField("warningDays", v)}
+                error={errors.warningDays}
+                disabled={!canWrite || !form.enabled}
+              />
+              <NsNumberField
+                id="tgt-ns-critical-days"
+                label="Critical days"
+                helpText="Must be less than warning days"
+                value={form.criticalDays ?? ""}
+                onChange={(v) => setField("criticalDays", v)}
+                error={errors.criticalDays}
+                disabled={!canWrite || !form.enabled}
+              />
+              <NsNumberField
+                id="tgt-ns-dedup-hours"
+                label="Dedup hours"
+                helpText="Min hours between alerts for this cert"
+                value={form.dedupHours ?? ""}
+                onChange={(v) => setField("dedupHours", v)}
+                error={errors.dedupHours}
+                disabled={!canWrite || !form.enabled}
+              />
+            </div>
+          </fieldset>
+
+          {canWrite && (
+            <div className="ns-actions" style={{ flexWrap: "wrap" }}>
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                style={{ width: "auto" }}
+                disabled={saving || !dirty}
+              >
+                {saving ? <><Spinner /> Saving...</> : "Save override"}
+              </button>
+              {/* Cancel draft — only when the override hasn't been persisted yet */}
+              {settings?.inherited !== false && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ width: "auto" }}
+                  onClick={handleDiscardOverride}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              )}
+              {/* Reset — only when there is a persisted override */}
+              {settings?.inherited === false && (
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm"
+                  style={{ width: "auto" }}
+                  onClick={handleResetToOrgDefault}
+                  disabled={resetting || saving}
+                >
+                  {resetting ? <><Spinner /> Resetting...</> : "Reset to org default"}
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </form>
+  );
+}
+
+// ─── TARGET NOTIFICATION MODAL ────────────────────────────────────────────────
+/**
+ * Modal wrapper for viewing and editing per-target notification settings.
+ * Launched from the Targets table row actions.
+ */
+function TargetNotificationModal({ target, token, me, toast, onClose }) {
+  return (
+    <div
+      className="modal-bg"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tgt-ns-modal-title"
+        style={{ maxWidth: 520 }}
+      >
+        <div className="modal-title" id="tgt-ns-modal-title">
+          Notification Settings
+        </div>
+        <p className="modal-sub">
+          {target.host}:{target.port} — configure expiry alert thresholds for this target.
+        </p>
+
+        <TargetNotificationSettingsPanel
+          targetId={target.id}
+          token={token}
+          me={me}
+          toast={toast}
+        />
+
+        <div style={{ marginTop: "1.25rem" }}>
+          <button className="btn btn-secondary" onClick={onClose} style={{ width: "100%" }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── SETTINGS VIEW ────────────────────────────────────────────────────────────
 // Hoisted outside SettingsView so React sees a stable component type across
 // renders. Defining it inside the parent caused a new type on every keystroke,
@@ -4360,6 +5132,8 @@ function SettingsView({ token, org, me, toast }) {
   const [dirty, setDirty]     = useState(false);
   const [errors, setErrors]   = useState({});
   const [showMspUpgradeModal, setShowMspUpgradeModal] = useState(false);
+  // Settings tab: "profile" | "notifications"
+  const [settingsTab, setSettingsTab] = useState("profile");
 
   useEffect(() => {
     api.getOrgProfile(token)
@@ -4420,6 +5194,49 @@ function SettingsView({ token, org, me, toast }) {
         </div>
       </div>
       <div className="page-content">
+        {/* Tab switcher */}
+        <div className="admin-tabs" role="tablist" aria-label="Settings sections" style={{ marginBottom: "1.5rem" }}>
+          <button
+            role="tab"
+            aria-selected={settingsTab === "profile"}
+            aria-controls="settings-profile-panel"
+            id="settings-profile-tab"
+            className={`admin-tab${settingsTab === "profile" ? " active" : ""}`}
+            onClick={() => setSettingsTab("profile")}
+          >
+            Organisation Profile
+          </button>
+          <button
+            role="tab"
+            aria-selected={settingsTab === "notifications"}
+            aria-controls="settings-notifications-panel"
+            id="settings-notifications-tab"
+            className={`admin-tab${settingsTab === "notifications" ? " active" : ""}`}
+            onClick={() => setSettingsTab("notifications")}
+          >
+            Notifications
+          </button>
+        </div>
+
+        {/* Notifications tab */}
+        {settingsTab === "notifications" && (
+          <div
+            id="settings-notifications-panel"
+            role="tabpanel"
+            aria-labelledby="settings-notifications-tab"
+            style={{ maxWidth: 640 }}
+          >
+            <OrgNotificationSettingsPanel token={token} me={me} toast={toast} />
+          </div>
+        )}
+
+        {/* Profile tab */}
+        {settingsTab === "profile" && (
+        <div
+          id="settings-profile-panel"
+          role="tabpanel"
+          aria-labelledby="settings-profile-tab"
+        >
         {loading ? (
           <div className="loading-center"><Spinner lg /><span>Loading settings...</span></div>
         ) : (
@@ -4492,6 +5309,8 @@ function SettingsView({ token, org, me, toast }) {
               )}
             </div>
           </form>
+        )}
+        </div>
         )}
       </div>
       {showMspUpgradeModal && (
