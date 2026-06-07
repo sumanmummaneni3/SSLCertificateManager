@@ -35,6 +35,7 @@ public class SslScannerService {
 
     private final TargetRepository targetRepository;
     private final CertificateRecordRepository certRepository;
+    private final ExpiryEvaluationService expiryEvaluationService;
 
     @Value("${app.alert.warning-days:30}")  private int warningDays;
     @Value("${app.alert.critical-days:7}") private int criticalDays;
@@ -49,26 +50,34 @@ public class SslScannerService {
         log.info("Starting scheduled public certificate scan");
         List<Target> targets = targetRepository.findAllByIsPrivateFalseAndEnabledTrue();
         log.info("Found {} public targets to scan", targets.size());
-        scanTargets(targets);
+        scanTargets(targets, ExpiryEvaluationService.EvaluationMode.SCHEDULED);
     }
 
+    /**
+     * User-triggered (FORCE) scan of a single public target.
+     * Captures the target's prior lastScannedAt for the force-scan debounce check.
+     */
     @Transactional
     public void scanTarget(Target target) {
-        scanSingleTarget(target);
+        Instant previousLastScannedAt = target.getLastScannedAt();
+        scanSingleTarget(target, ExpiryEvaluationService.EvaluationMode.FORCE, previousLastScannedAt);
     }
 
     public void scanTargetAsync(Target target) {
         CompletableFuture.runAsync(() -> {
-            try { scanSingleTarget(target); }
+            try {
+                // Initial scan on new-target creation — treat as SCHEDULED (no prior lastScannedAt).
+                scanSingleTarget(target, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+            }
             catch (Exception e) { log.error("Async scan failed for {}: {}", target.getHost(), e.getMessage()); }
         });
     }
 
-    private void scanTargets(List<Target> targets) {
+    private void scanTargets(List<Target> targets, ExpiryEvaluationService.EvaluationMode mode) {
         ExecutorService executor = Executors.newFixedThreadPool(threadPoolSize);
         for (Target target : targets) {
             executor.submit(() -> {
-                try { scanSingleTarget(target); }
+                try { scanSingleTarget(target, mode, null); }
                 catch (Exception e) { log.error("Error scanning {}: {}", target.getHost(), e.getMessage()); }
             });
         }
@@ -78,11 +87,16 @@ public class SslScannerService {
     }
 
     @Transactional
-    protected void scanSingleTarget(Target target) {
+    protected void scanSingleTarget(Target target,
+                                    ExpiryEvaluationService.EvaluationMode mode,
+                                    Instant previousLastScannedAt) {
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 X509Certificate[] chain = fetchCertificateChain(target.getHost(), target.getPort());
-                if (chain != null && chain.length > 0) { persistCertificates(target, chain); return; }
+                if (chain != null && chain.length > 0) {
+                    persistCertificates(target, chain, mode, previousLastScannedAt);
+                    return;
+                }
             } catch (Exception e) {
                 log.warn("Scan attempt {}/{} failed for {}:{} — {}", attempt, maxRetries, target.getHost(), target.getPort(), e.getMessage());
                 if (attempt == maxRetries) markTargetUnreachable(target, e.getMessage());
@@ -114,15 +128,17 @@ public class SslScannerService {
         }
     }
 
-    private void persistCertificates(Target target, X509Certificate[] chain) {
+    private void persistCertificates(Target target, X509Certificate[] chain,
+                                     ExpiryEvaluationService.EvaluationMode mode,
+                                     Instant previousLastScannedAt) {
         X509Certificate leaf = chain[0];
         try {
-            Instant expiry   = leaf.getNotAfter().toInstant();
+            Instant expiry    = leaf.getNotAfter().toInstant();
             Instant notBefore = leaf.getNotBefore().toInstant();
-            String serial    = leaf.getSerialNumber().toString(16);
-            String cn        = extractCN(leaf.getSubjectX500Principal().getName());
-            String issuer    = leaf.getIssuerX500Principal().getName();
-            String b64       = Base64.getEncoder().encodeToString(leaf.getEncoded());
+            String serial     = leaf.getSerialNumber().toString(16);
+            String cn         = extractCN(leaf.getSubjectX500Principal().getName());
+            String issuer     = leaf.getIssuerX500Principal().getName();
+            String b64        = Base64.getEncoder().encodeToString(leaf.getEncoded());
 
             CertificateRecord record = certRepository
                     .findByTargetIdAndSerialNumber(target.getId(), serial)
@@ -132,11 +148,15 @@ public class SslScannerService {
             Instant now = Instant.now();
             record.setCommonName(cn); record.setIssuer(issuer);
             record.setExpiryDate(expiry); record.setNotBefore(notBefore);
-            record.setPublicCertB64(b64); record.setStatus(determineStatus(expiry));
+            record.setPublicCertB64(b64);
+            record.setStatus(expiryEvaluationService.determineCertStatus(expiry));
             record.setScannedAt(now);
             certRepository.save(record);
 
-            // Clear any previous scan error and stamp the successful scan time
+            // Post-scan expiry evaluation (RFC 0008 §7).
+            expiryEvaluationService.evaluateAndNotify(record, mode, previousLastScannedAt);
+
+            // Clear any previous scan error and stamp the successful scan time.
             target.setLastErrorMessage(null);
             target.setLastErrorAt(null);
             target.setLastScannedAt(now);
@@ -157,13 +177,6 @@ public class SslScannerService {
         target.setLastErrorAt(Instant.now());
         targetRepository.save(target);
         log.warn("Target UNREACHABLE: {}:{} — {}", target.getHost(), target.getPort(), errorMessage);
-    }
-
-    private CertStatus determineStatus(Instant expiry) {
-        long days = ChronoUnit.DAYS.between(Instant.now(), expiry);
-        if (days < 0) return CertStatus.EXPIRED;
-        if (days <= criticalDays || days <= warningDays) return CertStatus.EXPIRING;
-        return CertStatus.VALID;
     }
 
     private String extractCN(String dn) {
