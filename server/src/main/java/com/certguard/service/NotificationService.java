@@ -84,20 +84,23 @@ public class NotificationService {
      * Widened signature (RFC 0004): accepts CertificateRecord so we can include the cert id
      * in the deep-link URL and determine if the target is agent-discovered.
      *
+     * Fire-and-forget: returns void. The dedup stamp (last_alert_sent_at) is written
+     * by the caller (CertificateExpiryScheduler) unconditionally in its own transaction,
+     * immediately after enqueuing this async dispatch. This matches the AgentOfflineScheduler
+     * pattern and fixes the @Async+boolean dedup bug (RFC 0008 §4 / GAPS N11).
+     *
      * @param cert       the certificate record nearing expiry
      * @param daysLeft   days until certificate expires (negative = already expired)
      * @param severity   "WARNING" (<=30 days) or "CRITICAL" (<=7 days)
-     * @return true if at least one channel successfully dispatched (email sent or dev-mode logged);
-     *         false if no channels are configured for this target/org
      */
     @Async
-    public boolean dispatchExpiryAlert(CertificateRecord cert, int daysLeft, String severity) {
+    public void dispatchExpiryAlert(CertificateRecord cert, int daysLeft, String severity) {
         Target target = cert.getTarget();
         Map<String, Object> channels = resolveChannels(target);
         if (channels == null || channels.isEmpty()) {
             log.warn("No notification channels configured for target {} (org {}), skipping alert",
                     target.getId(), target.getOrganization().getId());
-            return false;
+            return;
         }
 
         String templateName = "CRITICAL".equals(severity) ? "expiry-critical" : "expiry-warning";
@@ -123,7 +126,6 @@ public class NotificationService {
         logComingSoon("teams",        channels, target.getHost() + ":" + target.getPort());
         logComingSoon("psa",          channels, target.getHost() + ":" + target.getPort());
         logComingSoon("service_desk", channels, target.getHost() + ":" + target.getPort());
-        return true;
     }
 
     /**

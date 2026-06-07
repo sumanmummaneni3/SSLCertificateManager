@@ -41,6 +41,12 @@ public class AgentService {
     private final AgentHmacService hmacService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final SubscriptionGuard subscriptionGuard;
+    private final ExpiryEvaluationService expiryEvaluationService;
+
+    /** Trigger-source constant used when a job is queued by the user (force/manual scan). */
+    public static final String TRIGGER_USER      = "USER";
+    /** Trigger-source constant used for all system/sweep-originated jobs. */
+    public static final String TRIGGER_SCHEDULED = "SCHEDULED";
 
     @Transactional
     public RegistrationTokenResponse generateRegistrationToken(UUID orgId, String agentName, UUID createdBy) {
@@ -140,8 +146,8 @@ public class AgentService {
 
     @Transactional
     public List<ScanJobResponse> pollJobs(Agent agent) {
-        // Use FOR UPDATE SKIP LOCKED to atomically claim jobs without races
-        // Cap at max-targets to bound the work per poll cycle
+        // Use FOR UPDATE SKIP LOCKED to atomically claim jobs without races.
+        // Cap at max-targets to bound the work per poll cycle.
         List<AgentScanJob> pending = scanJobRepository.claimPendingJobsWithLock(
                 agent.getId(), agent.getMaxTargets());
         Instant now = Instant.now();
@@ -185,10 +191,20 @@ public class AgentService {
 
         validateCidr(target.getHost(), agent.getAllowedCidrs());
 
+        // Capture the previous lastScannedAt BEFORE the scan overwrites it — required for
+        // FORCE debounce in ExpiryEvaluationService (RFC 0008 §5).
+        Instant previousLastScannedAt = target.getLastScannedAt();
+
+        // Map job's trigger_source to EvaluationMode (RFC 0008 §6.3).
+        ExpiryEvaluationService.EvaluationMode evalMode =
+                TRIGGER_USER.equals(job.getTriggerSource())
+                        ? ExpiryEvaluationService.EvaluationMode.FORCE
+                        : ExpiryEvaluationService.EvaluationMode.SCHEDULED;
+
         if ("FULL".equals(request.getScanType())) {
-            processFull(agent, target, request);
+            processFull(agent, target, request, evalMode, previousLastScannedAt);
         } else if ("DELTA".equals(request.getScanType())) {
-            processDelta(target, request);
+            processDelta(target, request, evalMode, previousLastScannedAt);
         } else {
             throw new IllegalArgumentException("Unknown scanType: " + request.getScanType());
         }
@@ -205,7 +221,9 @@ public class AgentService {
                 agent.getName(), target.getHost(), request.getScanType());
     }
 
-    private void processFull(Agent agent, Target target, AgentScanResultRequest req) {
+    private void processFull(Agent agent, Target target, AgentScanResultRequest req,
+                             ExpiryEvaluationService.EvaluationMode evalMode,
+                             Instant previousLastScannedAt) {
         CertificateRecord record = certRepository
                 .findByTargetIdAndSerialNumber(target.getId(), req.getSerialNumber())
                 .orElse(CertificateRecord.builder()
@@ -224,13 +242,18 @@ public class AgentService {
         record.setSubjectAltNames(req.getSubjectAltNames());
         record.setChainDepth(req.getChainDepth());
         record.setPublicCertB64(req.getPublicCertB64());
-        record.setStatus(determineStatus(req.getNotAfter()));
+        record.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter()));
         record.setScannedByAgent(agent);
         record.setScannedAt(Instant.now());
         certRepository.save(record);
+
+        // Post-scan expiry evaluation (RFC 0008 §7).
+        expiryEvaluationService.evaluateAndNotify(record, evalMode, previousLastScannedAt);
     }
 
-    private void processDelta(Target target, AgentScanResultRequest req) {
+    private void processDelta(Target target, AgentScanResultRequest req,
+                              ExpiryEvaluationService.EvaluationMode evalMode,
+                              Instant previousLastScannedAt) {
         if (req.getCertificateId() == null)
             throw new IllegalArgumentException("DELTA result must include certificateId");
 
@@ -238,19 +261,41 @@ public class AgentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Certificate record not found"));
 
         existing.setExpiryDate(req.getNotAfter());
-        existing.setStatus(determineStatus(req.getNotAfter()));
+        existing.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter()));
         existing.setScannedAt(Instant.now());
         certRepository.save(existing);
+
+        // Post-scan expiry evaluation (RFC 0008 §7).
+        expiryEvaluationService.evaluateAndNotify(existing, evalMode, previousLastScannedAt);
     }
 
+    /**
+     * Queues a scan job for a private target. Defaults to SCHEDULED trigger source
+     * (used by the nightly private-scan sweep). Use the overload with triggerSource
+     * for user-initiated (FORCE) scans.
+     */
     @Transactional
     public void queueScanJob(Target target) {
-        // Delegate to the org-scoped overload so the tenant check always runs.
-        queueScanJob(target.getId(), target.getOrganization().getId());
+        queueScanJob(target.getId(), target.getOrganization().getId(), TRIGGER_SCHEDULED);
+    }
+
+    /**
+     * User-facing overload — called from TargetService.triggerScan for manual scans.
+     * Passes TRIGGER_USER so submitResult selects EvaluationMode.FORCE (RFC 0008 §6.3).
+     */
+    @Transactional
+    public void queueScanJob(Target target, String triggerSource) {
+        queueScanJob(target.getId(), target.getOrganization().getId(), triggerSource);
     }
 
     @Transactional
     public void queueScanJob(UUID targetId, UUID orgId) {
+        // Preserve existing callers — default to SCHEDULED.
+        queueScanJob(targetId, orgId, TRIGGER_SCHEDULED);
+    }
+
+    @Transactional
+    public void queueScanJob(UUID targetId, UUID orgId, String triggerSource) {
         subscriptionGuard.assertScansAllowed(orgId);
         Target target = targetRepository.findByIdAndOrganizationId(targetId, orgId)
                 .orElseThrow(() -> new ResourceNotFoundException("Target not found"));
@@ -266,10 +311,13 @@ public class AgentService {
         }
 
         AgentScanJob job = AgentScanJob.builder()
-                .agent(target.getAgent()).target(target).orgId(orgId).status(ScanJobStatus.PENDING)
+                .agent(target.getAgent()).target(target).orgId(orgId)
+                .status(ScanJobStatus.PENDING)
+                .triggerSource(triggerSource)
                 .build();
         scanJobRepository.save(job);
-        log.info("Scan job queued — target: {}, agent: {}", target.getHost(), target.getAgent().getName());
+        log.info("Scan job queued — target: {}, agent: {}, source: {}",
+                target.getHost(), target.getAgent().getName(), triggerSource);
     }
 
     public List<AgentResponse> listAgents(UUID orgId) {
@@ -356,13 +404,6 @@ public class AgentService {
             if (rem > 0) { int mask = 0xFF & (0xFF << (8 - rem)); return (a[full] & mask) == (n[full] & mask); }
             return true;
         } catch (Exception e) { return false; }
-    }
-
-    private CertStatus determineStatus(Instant expiry) {
-        long days = ChronoUnit.DAYS.between(Instant.now(), expiry);
-        if (days < 0) return CertStatus.EXPIRED;
-        if (days <= 30) return CertStatus.EXPIRING;
-        return CertStatus.VALID;
     }
 
     private String sha256Hex(String input) {

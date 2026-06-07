@@ -109,13 +109,22 @@ LLD §4.1 "Agent registration" sequence is stale — it describes the old mTLS-C
 **Action:** Author `docs/architecture/rfcs/0001-member-offboarding.md` consolidating the Phase 1 + Phase 2 design.
 
 ### N8 — Cert-expiry alert deduplication is undocumented (low)
-`CertificateExpiryScheduler.java:44,67-92` adds `app.alert.dedup-hours` (default 23h) and persists `last_alert_sent_at` per record. Not in HLD §3.5 or LLD §5.
+`CertificateExpiryScheduler.java:44,67-92` adds `app.alert.dedup-hours` (default 23h) and persists `last_alert_sent_at` per record. Not in HLD §3.5 or LLD §5. **Note:** the dedup mechanism is also currently *broken* — see N11.
 
 ### N9 — Virtual threads enabled by default (informational)
 `application.yml:4-6` sets `spring.threads.virtual.enabled: true` (Java 25 LTS). Worth noting in HLD §6 Scalability.
 
 ### N10 — Platform-admin `AdminController` is undocumented (low)
 `AdminController.java` at `/api/v1/admin/**` (class-level `@PreAuthorize("hasRole('PLATFORM_ADMIN')")`) consolidates flat list, tree, detail, promote/demote MSP, archive/restore, quota update, and audit feed. Endpoint table in LLD §2 does not list any `/api/v1/admin/**` routes.
+
+### N11 — Cert-expiry alert dedup stamp is broken: `@Async`+boolean (HIGH)
+`NotificationService.dispatchExpiryAlert` (`NotificationService.java:93-127`) is `@Async` **and** returns `boolean`; `@EnableAsync` is active (`CertGuardApplication.java:9`). The caller consumes the return synchronously (`CertificateExpiryScheduler.java:88-92`), but the async proxy returns before the body runs, so `certRepository.stampAlertSentAt(...)` (`CertificateRecordRepository.java:63-65`) is never reached → `last_alert_sent_at` is never written → the N8 dedup gate never trips → every in-window cert re-alerts on every daily run (alert storm), and `alertsSent` always logs 0. Fix in RFC 0008 §4 (return `void`; stamp in-transaction; dispatch via AFTER_COMMIT).
+
+### N12 — No post-scan expiry-notification hook (HIGH)
+Neither scan write-path evaluates expiry or notifies: `SslScannerService.persistCertificates:117-149` and `AgentService.processFull/processDelta:208-244` only set `CertStatus` and stamp `lastScannedAt`. Expiry alerts fire **only** from the 08:00 cron (`CertificateExpiryScheduler`), so a manual/force scan never notifies until the next morning. Closed by RFC 0008 §2/§7 (`ExpiryEvaluationService` convergence point called from sweep + both scan paths).
+
+### N13 — Expiry thresholds are not tenant-scoped (MEDIUM)
+`warning-days`/`critical-days` are app-wide `@Value` config (`application.yml:98-100`), read in `CertificateExpiryScheduler:42-44`, `SslScannerService:39-40`, and **hardcoded `30`** in `AgentService.determineStatus:361-366` (a divergence). No per-org/per-target override. Closed by RFC 0008 §3 (`notification_settings` table + resolution chain).
 
 ---
 

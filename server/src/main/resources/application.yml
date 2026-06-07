@@ -103,6 +103,10 @@ app:
     # Prevents alert storms on long-expired certificates. Default: 23h (just
     # under the daily schedule interval so a cert missed one day is caught next).
     dedup-hours: ${ALERT_DEDUP_HOURS:23}
+    # Minimum seconds between FORCE (manual) scan alerts for the same target.
+    # Prevents alert spam from rapid back-to-back force scans. Applied at
+    # evaluation time against the target's prior lastScannedAt (RFC 0008 §5).
+    force-scan-debounce-seconds: ${ALERT_FORCE_SCAN_DEBOUNCE_SECONDS:120}
   scanning:
     public:
       thread-pool-size: 20

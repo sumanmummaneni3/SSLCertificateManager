@@ -41,4 +41,12 @@ public class AgentScanJob extends BaseEntity {
 
     @Column(name = "completed_at")
     private Instant completedAt;
+
+    /**
+     * Origin of this scan job: 'SCHEDULED' (system/sweep) or 'USER' (manual force-scan).
+     * Read by AgentService.submitResult to select EvaluationMode (RFC 0008 §6.3).
+     */
+    @Column(name = "trigger_source", nullable = false, length = 16)
+    @Builder.Default
+    private String triggerSource = "SCHEDULED";
 }

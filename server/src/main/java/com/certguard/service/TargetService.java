@@ -209,12 +209,13 @@ public class TargetService {
             return "Scan triggered for " + target.getHost();
         }
 
-        // Private — queue job for agent
+        // Private — queue job for agent.
+        // Pass TRIGGER_USER so the agent path selects EvaluationMode.FORCE (RFC 0008 §6.3).
         if (target.getAgent() == null) {
             throw new IllegalStateException(
                 "Private target has no assigned agent. Assign an agent before scanning.");
         }
-        agentService.queueScanJob(target);
+        agentService.queueScanJob(target, AgentService.TRIGGER_USER);
         return "Scan job queued for agent '" + target.getAgent().getName() + "'";
     }
 
