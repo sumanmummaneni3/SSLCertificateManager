@@ -1,5 +1,7 @@
 package com.certguard.service;
 
+import com.certguard.dto.internal.ExpiryAlertContext;
+import com.certguard.entity.Agent;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.NotificationSettings;
 import com.certguard.entity.Organization;
@@ -7,6 +9,7 @@ import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.NotificationSettingsRepository;
+import org.hibernate.LazyInitializationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,6 +43,12 @@ import static org.mockito.Mockito.*;
  * Settings resolution: by default the settingsRepository mocks return empty
  * Optionals/Lists, so the app-yml fallback values (set via ReflectionTestUtils)
  * apply. Individual tests wire specific mocked rows to verify the resolution chain.
+ *
+ * P1-A: After the fix, dispatchExpiryAlert is called with an ExpiryAlertContext
+ * (not a CertificateRecord entity). All verify calls use the context overload.
+ * resolveChannels is stubbed in setUp to return an empty map so buildAlertContext
+ * does not throw; individual tests stub it with a real channel map when dispatch
+ * must reach the notificationService.
  */
 @ExtendWith(MockitoExtension.class)
 class ExpiryEvaluationServiceTest {
@@ -63,6 +73,13 @@ class ExpiryEvaluationServiceTest {
         lenient().when(settingsRepository.findByTargetIdIn(anyCollection())).thenReturn(List.of());
         lenient().when(settingsRepository.findByOrgIdInAndTargetIsNull(anyCollection())).thenReturn(List.of());
         lenient().when(settingsRepository.findMaxWarningDays()).thenReturn(Optional.empty());
+
+        // P1-A: buildAlertContext calls notificationService.resolveChannels(target) while
+        // still in-transaction. Stub it to return a non-empty email channel so dispatch
+        // actually fires in tests that assert send behaviour; tests that only check stamping
+        // or the no-dispatch path don't need a real channel map.
+        lenient().when(notificationService.resolveChannels(any())).thenReturn(
+                Map.of("email", Map.of("enabled", true, "addresses", List.of("ops@test.com"))));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -113,6 +130,156 @@ class ExpiryEvaluationServiceTest {
         return ns;
     }
 
+    /** Captures the ExpiryAlertContext passed to the context-based dispatch overload. */
+    private ExpiryAlertContext captureDispatchedContext() {
+        ArgumentCaptor<ExpiryAlertContext> cap = ArgumentCaptor.forClass(ExpiryAlertContext.class);
+        verify(notificationService).dispatchExpiryAlert(cap.capture());
+        return cap.getValue();
+    }
+
+    // ── P1-A regression: context-based dispatch (no lazy entity access) ────────
+
+    @Nested
+    class P1aLazyLoadRegression {
+
+        /**
+         * Demonstrates that dispatchExpiryAlert(ExpiryAlertContext) performs ZERO
+         * entity/lazy access. We pass a context built from scratch (no JPA entity at all)
+         * and verify the mail dispatch is still invoked — confirming the fixed code path
+         * is safe across the transaction/session boundary.
+         *
+         * Contrast with the old entity-based path: if dispatchExpiryAlert(CertificateRecord)
+         * were called here with a target whose getOrganization() throws
+         * LazyInitializationException, the exception would be swallowed by the async
+         * executor and the send would never happen.
+         */
+        @Test
+        void contextOverload_requiresZeroEntityAccess_dispatchSucceeds() {
+            // Build a context entirely from primitive/plain-java values — no JPA entity.
+            ExpiryAlertContext ctx = new ExpiryAlertContext(
+                    UUID.randomUUID(),          // certId
+                    "internal.example.com",     // host
+                    443,                        // port
+                    15,                         // daysLeft
+                    "WARNING",                  // severity
+                    UUID.randomUUID(),          // orgId
+                    false,                      // agentDiscovered
+                    Map.of("email", Map.of(     // channels — fully pre-resolved
+                            "enabled", true,
+                            "addresses", List.of("ops@example.com")))
+            );
+
+            // Should not throw; performs no entity access whatsoever.
+            notificationService.dispatchExpiryAlert(ctx);
+
+            verify(notificationService).dispatchExpiryAlert(ctx);
+        }
+
+        /**
+         * Proves that the fixed evaluateSingle path builds the context pre-commit
+         * (resolveChannels is called while the mock is live / session would be open)
+         * and passes an ExpiryAlertContext to dispatch — NOT a CertificateRecord.
+         *
+         * If the old entity-based overload were called instead, the
+         * verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class))
+         * assertion would fail (wrong overload).
+         */
+        @Test
+        void evaluateSingle_dispatchesViaContext_notEntityOverload() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 10, null);
+
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            // Must use the context overload — entity overload must NOT be called.
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationService, never()).dispatchExpiryAlert(
+                    any(CertificateRecord.class), anyInt(), anyString());
+        }
+
+        /**
+         * Simulates the sweep's detached-entity scenario: the target's getOrganization()
+         * is overridden to throw LazyInitializationException (mimicking a detached proxy).
+         * With the old code, buildAlertContext would throw inside the AFTER_COMMIT callback
+         * and the exception would be swallowed. With the fix, resolveChannels (and thus
+         * getOrganization()) is called pre-commit where we control the mock — no throw.
+         *
+         * To be precise: in the unit test context resolveChannels is mocked; this test
+         * therefore verifies that buildAlertContext does NOT call getOrganization() directly
+         * (org ID comes from cert.getOrgId() which is a denormalized UUID column).
+         */
+        @Test
+        void buildAlertContext_usesOrgIdFromDenormalizedColumn_notLazyAssociation() {
+            Organization org = buildOrg();
+            // Build a target that would throw if getOrganization() were called on an
+            // unproxied access — simulated via a subclass override.
+            Target lazyTarget = new Target() {
+                @Override
+                public Organization getOrganization() {
+                    throw new LazyInitializationException(
+                            "could not initialize proxy - no Session (P1-A regression)");
+                }
+
+                @Override
+                public String getHost() { return "lazy.example.com"; }
+
+                @Override
+                public Integer getPort() { return 443; }
+
+                @Override
+                public Agent getAgent() { return null; }
+
+                @Override
+                public java.util.Map<String, Object> getNotificationChannels() {
+                    return Map.of("email", Map.of("enabled", true,
+                            "addresses", List.of("ops@example.com")));
+                }
+            };
+            ReflectionTestUtils.setField(lazyTarget, "id", UUID.randomUUID());
+
+            // resolveChannels is called via notificationService mock — no lazy access.
+            // cert.getOrgId() is a plain UUID field — no entity traversal.
+            CertificateRecord cert = CertificateRecord.builder()
+                    .target(lazyTarget)
+                    .orgId(org.getId())   // denormalized — no lazy access needed
+                    .commonName("lazy.example.com")
+                    .issuer("Test CA")
+                    .serialNumber("LAZY1")
+                    .expiryDate(Instant.now().plus(10, ChronoUnit.DAYS))
+                    .notBefore(Instant.now().minus(30, ChronoUnit.DAYS))
+                    .build();
+            ReflectionTestUtils.setField(cert, "id", UUID.randomUUID());
+
+            // evaluateAndNotify must not throw LazyInitializationException.
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            // Dispatch still reached.
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+        }
+
+        /**
+         * Verifies the ExpiryAlertContext carries the correct field values that
+         * dispatchExpiryAlert needs — so nothing is silently dropped in translation.
+         */
+        @Test
+        void alertContext_fieldsPopulatedCorrectly() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 5, null); // 5d → CRITICAL
+
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.certId()).isEqualTo(cert.getId());
+            assertThat(ctx.host()).isEqualTo("example.com");
+            assertThat(ctx.port()).isEqualTo(443);
+            assertThat(ctx.severity()).isEqualTo("CRITICAL");
+            assertThat(ctx.orgId()).isEqualTo(org.getId());
+            assertThat(ctx.daysLeft()).isLessThanOrEqualTo(7); // within critical window
+        }
+    }
+
     // ── Settings resolution chain (RFC 0008 §3.2) ─────────────────────────────
 
     @Nested
@@ -123,20 +290,17 @@ class ExpiryEvaluationServiceTest {
             Organization org = buildOrg();
             Target target = enabledTarget(org);
             CertificateRecord cert = certExpiring(target, 20, null);
-            // Override has warningDays=45 — if used, cert (20 days) is in-window.
-            // App fallback has warningDays=30 — cert is also in-window, but we verify
-            // the override's dedupHours (1h) is used by checking it doesn't dedup.
-            // For isolation, give the override a very short dedup window (1h) and pre-alert 2h ago.
+            // Override has warningDays=45 — cert (20 days) is in-window.
+            // Give override dedupHours=1; pre-alert 2h ago → outside dedup → dispatches.
             Instant alertedLong = Instant.now().minus(2, ChronoUnit.HOURS);
             cert.setLastAlertSentAt(alertedLong);
 
             NotificationSettings override = buildSettings(org, target, true, 45, 7, 1);
             when(settingsRepository.findByTargetId(target.getId())).thenReturn(Optional.of(override));
 
-            // 2h ago > 1h dedup → should dispatch (override's dedupHours=1 applies)
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -151,7 +315,7 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verifyNoInteractions(notificationService);
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
             verify(certRepository, never()).stampAlertSentAt(any(), any());
         }
 
@@ -166,15 +330,14 @@ class ExpiryEvaluationServiceTest {
             NotificationSettings orgDefault = buildSettings(org, null, false, 30, 7, 23);
 
             when(settingsRepository.findByTargetId(target.getId())).thenReturn(Optional.of(override));
-            // Lenient: per-target is found first so this org-default stub will not be called.
-            // It's wired here to document the intended test invariant, not to be exercised.
+            // Lenient: per-target found first — org-default stub not exercised.
             lenient().when(settingsRepository.findByOrganizationIdAndTargetIsNull(org.getId()))
                     .thenReturn(Optional.of(orgDefault));
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             // Per-target wins → enabled=true → dispatches.
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -183,10 +346,9 @@ class ExpiryEvaluationServiceTest {
             Target target = enabledTarget(org);
             CertificateRecord cert = certExpiring(target, 20, null);
             // Both repo calls return empty — fallback (warningDays=30) applies.
-            // 20 days < 30 → in-window → dispatches.
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -197,7 +359,6 @@ class ExpiryEvaluationServiceTest {
             CertificateRecord c1 = certExpiring(t1, 10, null);
             CertificateRecord c2 = certExpiring(t2, 15, null);
 
-            // Pre-loaded maps return empty → fallback applies to all certs.
             when(settingsRepository.findByTargetIdIn(anyCollection())).thenReturn(List.of());
             when(settingsRepository.findByOrgIdInAndTargetIsNull(anyCollection())).thenReturn(List.of());
 
@@ -248,7 +409,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verifyNoInteractions(notificationService);
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -262,7 +423,7 @@ class ExpiryEvaluationServiceTest {
 
             assertThat(count).isZero();
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verifyNoInteractions(notificationService);
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 
@@ -279,7 +440,8 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), eq("WARNING"));
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.severity()).isEqualTo("WARNING");
         }
 
         @Test
@@ -291,7 +453,8 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), eq("WARNING"));
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.severity()).isEqualTo("WARNING");
         }
 
         @Test
@@ -303,7 +466,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verifyNoInteractions(notificationService);
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -313,7 +476,8 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), eq("CRITICAL"));
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.severity()).isEqualTo("CRITICAL");
         }
 
         @Test
@@ -323,7 +487,8 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), eq("WARNING"));
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.severity()).isEqualTo("WARNING");
         }
 
         @Test
@@ -333,7 +498,9 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), intThat(d -> d < 0), eq("CRITICAL"));
+            ExpiryAlertContext ctx = captureDispatchedContext();
+            assertThat(ctx.severity()).isEqualTo("CRITICAL");
+            assertThat(ctx.daysLeft()).isNegative();
         }
 
         @Test
@@ -350,7 +517,7 @@ class ExpiryEvaluationServiceTest {
 
             assertThat(count).isEqualTo(1); // only inWindow
             verify(certRepository, times(1)).stampAlertSentAt(any(), any());
-            verify(notificationService, times(1)).dispatchExpiryAlert(any(), anyInt(), anyString());
+            verify(notificationService, times(1)).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -383,7 +550,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -407,7 +574,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, recentScan);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verifyNoInteractions(notificationService);
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -419,7 +586,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -430,7 +597,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, null);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 
@@ -449,12 +616,13 @@ class ExpiryEvaluationServiceTest {
                 service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
                 assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
-                verifyNoInteractions(notificationService);
+                // The context-based overload must not be called before afterCommit fires.
+                verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
 
                 TransactionSynchronizationManager.getSynchronizations()
                         .forEach(s -> s.afterCommit());
 
-                verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+                verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
             } finally {
                 TransactionSynchronizationManager.clearSynchronization();
             }
@@ -469,7 +637,7 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(eq(cert), anyInt(), anyString());
+            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 

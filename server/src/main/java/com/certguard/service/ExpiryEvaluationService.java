@@ -1,5 +1,6 @@
 package com.certguard.service;
 
+import com.certguard.dto.internal.ExpiryAlertContext;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.NotificationSettings;
 import com.certguard.entity.Target;
@@ -213,19 +214,24 @@ public class ExpiryEvaluationService {
         // Stamp synchronously in the caller's transaction — durable regardless of email outcome.
         certRepository.stampAlertSentAt(cert.getId(), now);
 
+        // P1-A fix: resolve all entity data WHILE THE SESSION IS STILL OPEN (before commit).
+        // The AFTER_COMMIT callback and the @Async dispatch run on threads with no Hibernate
+        // session; passing a managed entity across that boundary causes LazyInitializationException
+        // on target.getOrganization() / target.getAgent() which silently kills the alert.
+        // Build an ExpiryAlertContext from plain values now, and pass only the context.
+        final ExpiryAlertContext alertCtx = buildAlertContext(cert, (int) daysLeft, severity);
+
         // Dispatch after commit — SMTP failure never rolls back the sweep/scan transaction.
-        final int daysLeftFinal = (int) daysLeft;
-        final String severityFinal = severity;
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    notificationService.dispatchExpiryAlert(cert, daysLeftFinal, severityFinal);
+                    notificationService.dispatchExpiryAlert(alertCtx);
                 }
             });
         } else {
             // No active Spring transaction (e.g., unit tests without a real TX context).
-            notificationService.dispatchExpiryAlert(cert, daysLeftFinal, severityFinal);
+            notificationService.dispatchExpiryAlert(alertCtx);
         }
 
         return true;
@@ -278,5 +284,35 @@ public class ExpiryEvaluationService {
 
     private Settings appYmlFallback() {
         return new Settings(true, warningDays, criticalDays, dedupHours);
+    }
+
+    // ── Pre-commit context builder (P1-A) ─────────────────────────────────────
+
+    /**
+     * Captures everything the email dispatch needs into a plain-Java value object
+     * while the Hibernate session is still open. Must be called before the
+     * transaction commits so that lazy associations ({@code target.organization},
+     * {@code target.agent}, {@code target.notificationChannels}) are reachable.
+     *
+     * The returned {@link ExpiryAlertContext} is safe to cross any thread / session
+     * boundary — it holds only UUIDs, primitives, Strings, and a Map of plain values.
+     */
+    private ExpiryAlertContext buildAlertContext(CertificateRecord cert, int daysLeft, String severity) {
+        Target target = cert.getTarget();
+
+        // All lazy-association accesses happen here, in-transaction.
+        String host   = target != null ? target.getHost() : "unknown";
+        int    port   = target != null ? target.getPort() : 0;
+        UUID   orgId  = cert.getOrgId();                              // denormalized — no lazy access
+        boolean agentDiscovered = target != null && target.getAgent() != null;
+
+        // resolveChannels reads target.notificationChannels (JSONB eager) and may read
+        // target.organization.getId() + orgChannelRepository — all safe here in-session.
+        Map<String, Object> channels = target != null
+                ? notificationService.resolveChannels(target)
+                : Map.of();
+
+        return new ExpiryAlertContext(cert.getId(), host, port, daysLeft, severity,
+                orgId, agentDiscovered, channels);
     }
 }

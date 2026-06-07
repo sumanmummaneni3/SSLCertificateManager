@@ -1,5 +1,6 @@
 package com.certguard.service;
 
+import com.certguard.dto.internal.ExpiryAlertContext;
 import com.certguard.dto.internal.InternalRenewalNotificationRequest;
 import com.certguard.entity.Agent;
 import com.certguard.entity.CertificateRecord;
@@ -80,20 +81,58 @@ public class NotificationService {
     }
 
     /**
-     * Called by the expiry checker when a certificate crosses an expiry threshold.
-     * Widened signature (RFC 0004): accepts CertificateRecord so we can include the cert id
-     * in the deep-link URL and determine if the target is agent-discovered.
+     * Primary dispatch path (P1-A fix): accepts a pre-built {@link ExpiryAlertContext}
+     * that was constructed while the Hibernate session was still open (before the
+     * AFTER_COMMIT boundary). Performs zero JPA entity access — safe to call from any
+     * async thread or post-commit hook.
      *
-     * Fire-and-forget: returns void. The dedup stamp (last_alert_sent_at) is written
-     * by the caller (CertificateExpiryScheduler) unconditionally in its own transaction,
-     * immediately after enqueuing this async dispatch. This matches the AgentOfflineScheduler
-     * pattern and fixes the @Async+boolean dedup bug (RFC 0008 §4 / GAPS N11).
-     *
-     * @param cert       the certificate record nearing expiry
-     * @param daysLeft   days until certificate expires (negative = already expired)
-     * @param severity   "WARNING" (<=30 days) or "CRITICAL" (<=7 days)
+     * @param ctx immutable snapshot built in-transaction by ExpiryEvaluationService
      */
     @Async
+    public void dispatchExpiryAlert(ExpiryAlertContext ctx) {
+        Map<String, Object> channels = ctx.channels();
+        if (channels == null || channels.isEmpty()) {
+            log.warn("No notification channels configured for target {}:{} (org {}), skipping alert",
+                    ctx.host(), ctx.port(), ctx.orgId());
+            return;
+        }
+
+        String logTarget    = ctx.host() + ":" + ctx.port();
+        String templateName = "CRITICAL".equals(ctx.severity()) ? "expiry-critical" : "expiry-warning";
+        String subject      = buildExpirySubjectFromCtx(ctx);
+        String deepLinkUrl  = uiBaseUrl + "/certificates/" + ctx.certId();
+
+        org.thymeleaf.context.Context thCtx = new org.thymeleaf.context.Context();
+        thCtx.setVariable("host",            ctx.host());
+        thCtx.setVariable("port",            ctx.port());
+        thCtx.setVariable("daysLeft",        ctx.daysLeft());
+        thCtx.setVariable("severity",        ctx.severity());
+        thCtx.setVariable("baseUrl",         baseUrl);
+        thCtx.setVariable("agentDiscovered", ctx.agentDiscovered());
+        thCtx.setVariable("deepLinkUrl",     deepLinkUrl);
+
+        dispatchEmail(channels, subject, templateName, thCtx, logTarget);
+
+        logComingSoon("sms",          channels, logTarget);
+        logComingSoon("whatsapp",     channels, logTarget);
+        logComingSoon("slack",        channels, logTarget);
+        logComingSoon("teams",        channels, logTarget);
+        logComingSoon("psa",          channels, logTarget);
+        logComingSoon("service_desk", channels, logTarget);
+    }
+
+    /**
+     * Legacy entity-based overload — retained for backward compatibility with tests
+     * that construct a full in-memory entity graph (session always open, no lazy risk).
+     *
+     * @deprecated Prefer {@link #dispatchExpiryAlert(ExpiryAlertContext)} for any
+     *             call that crosses a transaction boundary (AFTER_COMMIT / async thread).
+     *             This overload dereferences {@code cert.getTarget().getOrganization()} and
+     *             {@code target.getAgent()}, which throws LazyInitializationException if the
+     *             session is closed (P1-A).
+     */
+    @Async
+    @Deprecated(since = "RFC-0008-P1A", forRemoval = false)
     public void dispatchExpiryAlert(CertificateRecord cert, int daysLeft, String severity) {
         Target target = cert.getTarget();
         Map<String, Object> channels = resolveChannels(target);
@@ -332,6 +371,14 @@ public class NotificationService {
         }
         return "[CertGuard] " + severity + ": " + target.getHost() + ":" + target.getPort()
                 + " expires in " + daysLeft + " day(s)";
+    }
+
+    private String buildExpirySubjectFromCtx(ExpiryAlertContext ctx) {
+        if (ctx.daysLeft() < 0) {
+            return "[CertGuard] EXPIRED: " + ctx.host() + ":" + ctx.port();
+        }
+        return "[CertGuard] " + ctx.severity() + ": " + ctx.host() + ":" + ctx.port()
+                + " expires in " + ctx.daysLeft() + " day(s)";
     }
 
     private String resolveRenewalContactEmail(InternalRenewalNotificationRequest req) {

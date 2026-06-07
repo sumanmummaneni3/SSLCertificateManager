@@ -10,8 +10,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-
 /**
  * Daily sweep that enqueues scan jobs for every enabled private target that has
  * an assigned agent (RFC 0008 §6).
@@ -24,10 +22,14 @@ import org.springframework.transaction.annotation.Transactional;
  *   jobs, enforces {@code SubscriptionGuard}, and requires a non-null agent, so the
  *   sweep does not need to re-check those conditions. Failures from any of them are
  *   caught and logged per-target so a single bad target never aborts the sweep.
- * - The candidate set is fetched in pages of {@code enqueue-batch-size} targets.
- *   Each page is processed inside its own transaction (the {@code @Transactional}
- *   on {@link #enqueueChunk} is purposely on the inner method, not the outer loop)
- *   so a failure in one chunk does not roll back previously committed jobs.
+ * - The candidate set is fetched in pages of {@code enqueue-batch-size} targets and
+ *   processed by {@link #enqueueChunk}. Per-target durability is provided by
+ *   {@code AgentService.queueScanJob}'s own {@code @Transactional} method (each job
+ *   insert is committed on its own via AgentService's proxy). The per-target try/catch
+ *   in {@code enqueueChunk} ensures a failure on one target never aborts the rest of
+ *   the page. NOTE: {@code enqueueChunk} itself is intentionally NOT {@code @Transactional}
+ *   — it is called via {@code this.enqueueChunk()} (self-invocation), which bypasses the
+ *   Spring proxy, so any annotation would be a no-op (P1-C).
  * - Job draining is naturally rate-limited per agent: agents poll at their own
  *   cadence (default 30s) and the claim path caps jobs per poll via
  *   {@code agent.getMaxTargets()}, so no thundering-herd throttle is needed here
@@ -83,12 +85,15 @@ public class PrivateScanScheduler {
     }
 
     /**
-     * Enqueues scan jobs for one page of targets. Runs in its own transaction so a
-     * failure mid-chunk does not roll back jobs committed in prior chunks.
+     * Enqueues scan jobs for one page of targets. Per-target durability comes from
+     * {@code AgentService.queueScanJob}'s own {@code @Transactional} (each insert is
+     * committed through AgentService's proxy). The try/catch ensures a failure on one
+     * target never aborts the rest. This method is NOT {@code @Transactional} — it is
+     * called via self-invocation ({@code this.enqueueChunk()}), which bypasses the
+     * Spring proxy, so any transaction annotation here would be silently ignored (P1-C).
      *
      * @return int[2] where [0] = jobs queued, [1] = targets skipped
      */
-    @Transactional
     public int[] enqueueChunk(java.util.List<Target> targets) {
         int queued  = 0;
         int skipped = 0;
