@@ -54,8 +54,8 @@ services:
   # ─────────────────────────────────────────
   app:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     container_name: certguard-app
     restart: unless-stopped
     depends_on:
