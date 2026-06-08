@@ -228,27 +228,6 @@ services:
       - certguard-net
 
   # ─────────────────────────────────────────
-  # CertGuard UI (React SPA served by nginx)
-  # ─────────────────────────────────────────
-  ui:
-    build:
-      context: ./ui
-      dockerfile: Dockerfile
-    container_name: certguard-ui
-    restart: unless-stopped
-    depends_on:
-      gateway:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ | grep -q 'id=\"root\"' || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - certguard-net
-
-  # ─────────────────────────────────────────
   # NGINX Reverse Proxy (port 443)
   # ─────────────────────────────────────────
   nginx:
@@ -264,7 +243,7 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-      ui:
+      app:
         condition: service_healthy
     networks:
       - certguard-net
