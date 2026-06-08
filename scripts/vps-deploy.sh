@@ -131,8 +131,11 @@ ${AUTH_COMPOSE_BASE} --env-file certguard-auth-service/.env --env-file "${ENV_DE
 log "Image pull complete."
 
 # ── 9. Remove existing containers so compose can replace them ────────────────
-log "Removing existing app/gateway/auth-service containers..."
-docker rm -f certguard-app certguard-gateway certguard-auth-service-auth-service-1 2>/dev/null || true
+# certguard-ui is no longer a compose service (the app now serves the SPA), but a
+# container from a pre-consolidation deploy may still be running and serving the
+# old bundle — remove it here so it doesn't linger as an orphan.
+log "Removing existing app/gateway/auth-service containers (and any stale ui)..."
+docker rm -f certguard-app certguard-gateway certguard-ui certguard-auth-service-auth-service-1 2>/dev/null || true
 
 # ── 10. Bring services up ────────────────────────────────────────────────────
 log "Deploying services (app, gateway, auth-service; no-deps=${NO_DEPS:-false})..."
