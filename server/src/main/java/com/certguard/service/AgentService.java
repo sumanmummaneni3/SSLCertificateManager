@@ -242,7 +242,7 @@ public class AgentService {
         record.setSubjectAltNames(req.getSubjectAltNames());
         record.setChainDepth(req.getChainDepth());
         record.setPublicCertB64(req.getPublicCertB64());
-        record.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter()));
+        record.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter(), target, target.getOrganization().getId()));
         record.setScannedByAgent(agent);
         record.setScannedAt(Instant.now());
         certRepository.save(record);
@@ -261,7 +261,7 @@ public class AgentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Certificate record not found"));
 
         existing.setExpiryDate(req.getNotAfter());
-        existing.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter()));
+        existing.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter(), target, target.getOrganization().getId()));
         existing.setScannedAt(Instant.now());
         certRepository.save(existing);
 

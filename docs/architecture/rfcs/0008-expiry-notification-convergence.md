@@ -168,6 +168,8 @@ Decision #3 removes dedup for FORCE, so repeated clicks could each email. Mitiga
 
 **Async caveat for private/agent force scans:** for private targets, `POST /scan` only *queues* a job; the cert is written later in `submitResult`. The debounce check therefore must be applied at **evaluation time inside `submitResult`'s evaluate call** (compare prior `lastScannedAt` before it is overwritten), not only at queue time — otherwise the agent round-trip defeats the debounce. Implementation note: capture `previousLastScannedAt` before stamping the new one, and pass `mode=FORCE` only when the job originated from a user trigger. To distinguish user-triggered from sweep-triggered agent jobs, see §6.3.
 
+> **Known limitation (accepted 2026-06-07).** For agent/private targets the debounce baseline (`lastScannedAt`) only advances when a scan *completes*, so the debounce window is effectively a no-op for targets that scan infrequently. Back-to-back force clicks are still collapsed by `queueScanJob`'s PENDING/CLAIMED de-dup, but a user who force-scans, waits for it to complete, then force-scans again within the window **will receive two emails**. This is accepted as-is: the synchronous public path is fully debounced, and "FORCE always notifies" (decision #3) is the intended bias. If repeat-force spam becomes a problem, add a `last_force_requested_at` stamp written at queue time and use it as the debounce baseline for the agent path.
+
 ## 6. Daily private-target scan sweep (decision #2)
 
 ### 6.1 Where it lives

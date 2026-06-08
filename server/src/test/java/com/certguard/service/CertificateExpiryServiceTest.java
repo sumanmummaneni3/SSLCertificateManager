@@ -46,7 +46,10 @@ class CertificateExpiryServiceTest {
     @BeforeEach
     void setUp() {
         scheduler = new CertificateExpiryScheduler(certRepository, expiryEvaluationService);
-        ReflectionTestUtils.setField(scheduler, "warningDays", 30);
+        // warningDays is no longer a @Value field on the scheduler (RFC 0008 §3.3 —
+        // the scheduler uses resolveMaxWarningDays() instead).  Stub the service so
+        // tests that don't override it get the expected 30-day window.
+        lenient().when(expiryEvaluationService.resolveMaxWarningDays()).thenReturn(30);
 
         orgId = UUID.randomUUID();
         org = Organization.builder().name("Org").build();
@@ -81,7 +84,9 @@ class CertificateExpiryServiceTest {
 
             scheduler.checkExpiringCertificates();
 
-            verifyNoInteractions(expiryEvaluationService);
+            // resolveMaxWarningDays() IS called to build the fetch window — but
+            // evaluateAndNotify must NOT be called when the result set is empty.
+            verify(expiryEvaluationService, never()).evaluateAndNotify(anyCollection(), any());
         }
 
         @Test
@@ -106,6 +111,7 @@ class CertificateExpiryServiceTest {
 
         @Test
         void schedulerQueriesWithCorrectWarningCutoff() {
+            // resolveMaxWarningDays returns 30 (stubbed in setUp via lenient).
             when(certRepository.findExpiringWithTargets(any(), any()))
                     .thenReturn(List.of());
 
@@ -122,6 +128,22 @@ class CertificateExpiryServiceTest {
             assertThat(capturedNow).isAfterOrEqualTo(before).isBeforeOrEqualTo(after);
             long daysBetween = ChronoUnit.DAYS.between(capturedNow, capturedCutoff);
             assertThat(daysBetween).isEqualTo(30L);
+        }
+
+        @Test
+        void schedulerUsesResolveMaxWarningDays_widenedWindow_queriesWithCorrectDays() {
+            // When some target has warningDays=60, the fetch window must be 60, not 30.
+            when(expiryEvaluationService.resolveMaxWarningDays()).thenReturn(60);
+            when(certRepository.findExpiringWithTargets(any(), any())).thenReturn(List.of());
+
+            scheduler.checkExpiringCertificates();
+
+            ArgumentCaptor<Instant> nowCaptor = ArgumentCaptor.forClass(Instant.class);
+            ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+            verify(certRepository).findExpiringWithTargets(nowCaptor.capture(), cutoffCaptor.capture());
+
+            long daysBetween = ChronoUnit.DAYS.between(nowCaptor.getValue(), cutoffCaptor.getValue());
+            assertThat(daysBetween).isEqualTo(60L);
         }
 
         @Test
@@ -150,7 +172,9 @@ class CertificateExpiryServiceTest {
 
             scheduler.checkExpiringCertificates();
 
-            verifyNoInteractions(expiryEvaluationService);
+            // resolveMaxWarningDays() is called to build the window but evaluateAndNotify
+            // must never be reached when the candidate set is empty.
+            verify(expiryEvaluationService, never()).evaluateAndNotify(anyCollection(), any());
         }
     }
 }

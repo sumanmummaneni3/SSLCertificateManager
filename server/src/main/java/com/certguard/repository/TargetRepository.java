@@ -20,6 +20,13 @@ public interface TargetRepository extends JpaRepository<Target, UUID> {
     Page<Target> findAllByOrganizationId(UUID orgId, Pageable pageable);
     List<Target> findAllByOrganizationIdAndIsPrivateFalseAndEnabledTrue(UUID orgId);
     List<Target> findAllByIsPrivateFalseAndEnabledTrue();
+
+    /**
+     * Candidate set for the nightly private-target sweep (RFC 0008 §6.2).
+     * Returns enabled private targets that have an assigned agent.
+     * Results are page-able so the scheduler can process in bounded chunks.
+     */
+    Page<Target> findAllByIsPrivateTrueAndEnabledTrueAndAgentIsNotNull(Pageable pageable);
     Optional<Target> findByIdAndOrganizationId(UUID id, UUID orgId);
     boolean existsByOrganizationIdAndHostAndPort(UUID orgId, String host, int port);
     long countByOrganizationId(UUID orgId);

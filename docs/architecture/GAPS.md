@@ -126,6 +126,9 @@ Neither scan write-path evaluates expiry or notifies: `SslScannerService.persist
 ### N13 — Expiry thresholds are not tenant-scoped (MEDIUM)
 `warning-days`/`critical-days` are app-wide `@Value` config (`application.yml:98-100`), read in `CertificateExpiryScheduler:42-44`, `SslScannerService:39-40`, and **hardcoded `30`** in `AgentService.determineStatus:361-366` (a divergence). No per-org/per-target override. Closed by RFC 0008 §3 (`notification_settings` table + resolution chain).
 
+### N14 — No daily scan sweep for private/agent targets (MEDIUM) — **Closed**
+Public targets are scanned nightly by `SslScannerService.scheduledPublicScan` (cron `0 0 2 * * *`). Private/agent targets had no timer-driven sweep — they were only scanned on manual trigger or when an agent happened to poll a user-queued job. This meant the "all registered certificates refreshed every 24h" contract did not hold for private targets, so the expiry sweep at 08:00 could be working from stale cert data for private targets. Closed by RFC 0008 §6: `PrivateScanScheduler` (`PrivateScanScheduler.java`) — `@Scheduled(cron = "${app.scanning.private.schedule-cron:0 0 3 * * *}")`, ShedLock `lockAtMostFor=PT1H`, paged enqueue in chunks of `app.scanning.private.enqueue-batch-size` (default 500). Eligible targets: `enabled=true AND isPrivate=true AND agent IS NOT NULL`. Per-target failures (suspended org, missing agent race) are caught and logged without aborting the sweep.
+
 ---
 
 ## 4. Doc-vs-Code Discrepancies
