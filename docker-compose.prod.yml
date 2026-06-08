@@ -21,7 +21,3 @@ services:
   gateway:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-gateway:${APP_IMAGE_TAG:-latest}
     build: !reset null
-
-  ui:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/certguard-ui:${APP_IMAGE_TAG:-latest}
-    build: !reset null

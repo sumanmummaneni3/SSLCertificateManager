@@ -216,7 +216,8 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
         {view === "targets" && (
           <TargetsView targets={targets} onScan={triggerScan} scanning={scanning}
             onAdd={() => setShowAdd(true)} onDelete={setDeleteId}
-            onEdit={setEditTarget} onRefresh={load} me={me} org={org} />
+            onEdit={setEditTarget} onRefresh={load} me={me} org={org}
+            token={token} toast={toast} />
         )}
         {view === "certs" && (
           <CertsView

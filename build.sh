@@ -17,10 +17,12 @@ npm install --silent
 npm run build
 echo "UI build complete: $(ls dist/assets | wc -l) assets generated"
 
-# NOTE: UI staging into server/src/main/resources/static/ is no longer done
-# here. server/Dockerfile now has a multi-stage build (ui-builder stage) that
-# compiles the UI and copies dist/ into the server classpath before mvn package.
-# The npm build above is kept so developers can iterate on the UI locally.
+# NOTE: UI staging into server/src/main/resources/static/ is not done here.
+# server/Dockerfile has a ui-builder stage (build context = repo root) that runs
+# `npm ci && npm run build` and bakes dist/ into the server classpath before
+# `mvn package`. The npm build above is kept so developers can iterate on the UI
+# locally (e.g. for `cd server && mvn spring-boot:run`, copy ui/dist/* —
+# excluding *.map — into server/src/main/resources/static/).
 
 echo ""
 echo "=== [2/2] Building agent ==="
@@ -29,8 +31,9 @@ JAVA_HOME="$JAVA17_HOME" mvn clean package -q
 AGENT_JAR="$ROOT/agent/target/certguard-agent.jar"
 echo "Agent build complete: $AGENT_JAR"
 
-# NOTE: Agent JAR staging into server/src/main/resources/agent/ is also handled
-# by server/Dockerfile (agent-builder stage). Local staging is only needed if
+# NOTE: Agent JAR staging into server/src/main/resources/agent/ is handled by
+# server/Dockerfile (agent-builder stage), which builds agent/ from source and
+# bakes the JAR into the server classpath. Local staging is only needed if
 # running `mvn spring-boot:run` from server/ directly without Docker; uncomment
 # the block below in that case.
 #

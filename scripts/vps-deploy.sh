@@ -48,7 +48,6 @@ AUTH_COMPOSE_BASE="docker compose -f certguard-auth-service/docker-compose.yml -
 ENV_DEPLOY=".env.deploy"
 HEALTH_APP_TIMEOUT=120
 HEALTH_GATEWAY_TIMEOUT=60
-HEALTH_UI_TIMEOUT=30
 HEALTH_AUTH_TIMEOUT=90
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -127,28 +126,30 @@ log "GHCR authentication successful."
 
 # ── 8. Pull images from GHCR ─────────────────────────────────────────────────
 log "Pulling images for tag ${IMAGE_TAG}..."
-${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway ui
+${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" pull app gateway
 ${AUTH_COMPOSE_BASE} --env-file certguard-auth-service/.env --env-file "${ENV_DEPLOY}" pull auth-service
 log "Image pull complete."
 
 # ── 9. Remove existing containers so compose can replace them ────────────────
-log "Removing existing app/gateway/ui/auth-service containers..."
+# certguard-ui is no longer a compose service (the app now serves the SPA), but a
+# container from a pre-consolidation deploy may still be running and serving the
+# old bundle — remove it here so it doesn't linger as an orphan.
+log "Removing existing app/gateway/auth-service containers (and any stale ui)..."
 docker rm -f certguard-app certguard-gateway certguard-ui certguard-auth-service-auth-service-1 2>/dev/null || true
 
 # ── 10. Bring services up ────────────────────────────────────────────────────
-log "Deploying services (app, gateway, ui, auth-service; no-deps=${NO_DEPS:-false})..."
-${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate ${NO_DEPS} app gateway ui
+log "Deploying services (app, gateway, auth-service; no-deps=${NO_DEPS:-false})..."
+${COMPOSE_BASE} --env-file .env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate ${NO_DEPS} app gateway
 ${AUTH_COMPOSE_BASE} --env-file certguard-auth-service/.env --env-file "${ENV_DEPLOY}" up -d --no-build --force-recreate --no-deps auth-service
 log "docker compose up complete."
 
 # ── 11. Health checks ────────────────────────────────────────────────────────
 wait_healthy "certguard-app"                          "${HEALTH_APP_TIMEOUT}"
 wait_healthy "certguard-gateway"                      "${HEALTH_GATEWAY_TIMEOUT}"
-wait_healthy "certguard-ui"                           "${HEALTH_UI_TIMEOUT}"
 wait_healthy "certguard-auth-service-auth-service-1"  "${HEALTH_AUTH_TIMEOUT}"
 
 # ── 12. Restart nginx ─────────────────────────────────────────────────────────
-# The app/gateway/ui containers were just recreated with new IPs. nginx now uses
+# The app/gateway containers were just recreated with new IPs. nginx now uses
 # Docker's DNS resolver + variable proxy_pass to re-resolve dynamically, but we
 # still restart it here to (a) pick up any nginx.conf changes pulled in step 5 and
 # (b) guarantee a clean re-resolution. nginx has no healthcheck, so verify via a

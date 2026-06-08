@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "@/lib/api.js";
 import { Spinner, Badge } from "@/components/index.js";
 import { MspUpgradeModal } from "./MspUpgradeModal.jsx";
+import { OrgNotificationSettingsPanel } from "@/panels/notifications/OrgNotificationSettingsPanel.jsx";
 
 // Hoisted outside SettingsView so React sees a stable component type across
 // renders. Defining it inside the parent caused a new type on every keystroke,
@@ -33,6 +34,8 @@ export function SettingsView({ token, org, me, toast }) {
   const [dirty, setDirty]     = useState(false);
   const [errors, setErrors]   = useState({});
   const [showMspUpgradeModal, setShowMspUpgradeModal] = useState(false);
+  // Settings tab: "profile" | "notifications"
+  const [settingsTab, setSettingsTab] = useState("profile");
 
   useEffect(() => {
     api.getOrgProfile(token)
@@ -93,6 +96,49 @@ export function SettingsView({ token, org, me, toast }) {
         </div>
       </div>
       <div className="page-content">
+        {/* Tab switcher */}
+        <div className="admin-tabs" role="tablist" aria-label="Settings sections" style={{ marginBottom: "1.5rem" }}>
+          <button
+            role="tab"
+            aria-selected={settingsTab === "profile"}
+            aria-controls="settings-profile-panel"
+            id="settings-profile-tab"
+            className={`admin-tab${settingsTab === "profile" ? " active" : ""}`}
+            onClick={() => setSettingsTab("profile")}
+          >
+            Organisation Profile
+          </button>
+          <button
+            role="tab"
+            aria-selected={settingsTab === "notifications"}
+            aria-controls="settings-notifications-panel"
+            id="settings-notifications-tab"
+            className={`admin-tab${settingsTab === "notifications" ? " active" : ""}`}
+            onClick={() => setSettingsTab("notifications")}
+          >
+            Notifications
+          </button>
+        </div>
+
+        {/* Notifications tab */}
+        {settingsTab === "notifications" && (
+          <div
+            id="settings-notifications-panel"
+            role="tabpanel"
+            aria-labelledby="settings-notifications-tab"
+            style={{ maxWidth: 640 }}
+          >
+            <OrgNotificationSettingsPanel token={token} me={me} toast={toast} />
+          </div>
+        )}
+
+        {/* Profile tab */}
+        {settingsTab === "profile" && (
+        <div
+          id="settings-profile-panel"
+          role="tabpanel"
+          aria-labelledby="settings-profile-tab"
+        >
         {loading ? (
           <div className="loading-center"><Spinner lg /><span>Loading settings...</span></div>
         ) : (
@@ -165,6 +211,8 @@ export function SettingsView({ token, org, me, toast }) {
               )}
             </div>
           </form>
+        )}
+        </div>
         )}
       </div>
       {showMspUpgradeModal && (
