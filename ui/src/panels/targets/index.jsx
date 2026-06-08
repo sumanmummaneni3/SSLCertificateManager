@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { statusColor, hostTypeColor, fmtDate } from "@/lib/helpers.js";
 import { Spinner, Badge, DaysBar } from "@/components/index.js";
+import { TargetNotificationModal } from "@/panels/notifications/TargetNotificationModal.jsx";
 
-export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org }) {
+export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org, token, toast }) {
   const canWrite = me == null || me?.permissions?.canWriteTargets;
   const scansBlocked = me?.permissions?.scansBlocked === true;
   const showOrgCol = org?.orgType === "MSP" || me?.platformAdmin === true;
+  const [notifTarget, setNotifTarget] = useState(null);
   return (
     <>
       <div className="page-header">
@@ -100,6 +103,16 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
                               {scanning[t.id] ? <Spinner /> : "⟳"}
                             </button>
                           )}
+                          {/* Notification settings — visible to all roles with read access */}
+                          <button
+                            className="scan-btn"
+                            style={{ color: "var(--accent)", borderColor: "rgba(0,212,255,0.3)" }}
+                            onClick={() => setNotifTarget(t)}
+                            title="Notification settings"
+                            aria-label={`Notification settings for ${t.host}:${t.port}`}
+                          >
+                            ⚬
+                          </button>
                           {canWrite && (
                             <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
                               onClick={() => onEdit(t)} title="Edit target">✎</button>
@@ -118,6 +131,16 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
           </div>
         )}
       </div>
+
+      {notifTarget && (
+        <TargetNotificationModal
+          target={notifTarget}
+          token={token}
+          me={me}
+          toast={toast}
+          onClose={() => setNotifTarget(null)}
+        />
+      )}
     </>
   );
 }

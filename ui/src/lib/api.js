@@ -134,4 +134,10 @@ export const api = {
   cancelRenewal:        (renewalId, token) => api.call("POST", `/api/v1/renewals/${renewalId}/cancel`, null, token),
   renewalPackageUrl:    (renewalId) => `${API_BASE}/api/v1/renewals/${renewalId}/package`,
   listRenewalProviders: (token) => api.call("GET", `/api/v1/renewal/providers`, null, token),
+  // Notification settings endpoints (RFC 0008 §3.4)
+  getOrgNotificationSettings:    (token) => api.call("GET",  "/api/v1/org/notification-settings", null, token),
+  putOrgNotificationSettings:    (body, token) => api.call("PUT", "/api/v1/org/notification-settings", body, token),
+  getTargetNotificationSettings: (targetId, token) => api.call("GET",  `/api/v1/targets/${targetId}/notification-settings`, null, token),
+  putTargetNotificationSettings: (targetId, body, token) => api.call("PUT",  `/api/v1/targets/${targetId}/notification-settings`, body, token),
+  deleteTargetNotificationSettings: (targetId, token) => api.call("DELETE", `/api/v1/targets/${targetId}/notification-settings`, null, token),
 };

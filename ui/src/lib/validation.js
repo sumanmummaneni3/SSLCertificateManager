@@ -33,3 +33,33 @@ export function isRfc1918(h) {
   return s.startsWith("192.168.") || s.startsWith("10.") || s.startsWith("127.") ||
     /^172\.(1[6-9]|2\d|3[01])\./.test(s);
 }
+
+/**
+ * Validates notification settings form values.
+ * Mirrors the server-side CHECK constraint from RFC 0008 §3.1:
+ *   critical_days > 0
+ *   warning_days > critical_days
+ *   dedup_hours >= 1
+ *
+ * Returns an errors object (empty = valid).
+ */
+export function validateNotificationSettings({ warningDays, criticalDays, dedupHours }) {
+  const errs = {};
+  const w = parseInt(warningDays, 10);
+  const c = parseInt(criticalDays, 10);
+  const d = parseInt(dedupHours, 10);
+
+  if (isNaN(w) || w < 1) {
+    errs.warningDays = "Warning days must be a positive number";
+  }
+  if (isNaN(c) || c < 1) {
+    errs.criticalDays = "Critical days must be a positive number";
+  }
+  if (!isNaN(w) && !isNaN(c) && c >= w) {
+    errs.criticalDays = "Critical days must be less than warning days";
+  }
+  if (isNaN(d) || d < 1) {
+    errs.dedupHours = "Dedup hours must be at least 1";
+  }
+  return errs;
+}
