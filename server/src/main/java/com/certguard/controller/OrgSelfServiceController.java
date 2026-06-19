@@ -1,7 +1,7 @@
 package com.certguard.controller;
 
-import com.certguard.dto.request.RequestMspUpgradeRequest;
 import com.certguard.dto.request.RequestQuotaIncreaseRequest;
+import com.certguard.dto.response.OrgResponse;
 import com.certguard.entity.Organization;
 import com.certguard.entity.Subscription;
 import com.certguard.enums.SalesWebhookEventType;
@@ -9,6 +9,7 @@ import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.security.TenantContext;
+import com.certguard.service.OrgService;
 import com.certguard.service.SalesWebhookService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -29,30 +30,27 @@ public class OrgSelfServiceController {
     private final SalesWebhookService salesWebhookService;
     private final OrganizationRepository organizationRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final OrgService orgService;
 
     public OrgSelfServiceController(SalesWebhookService salesWebhookService,
                                     OrganizationRepository organizationRepository,
-                                    SubscriptionRepository subscriptionRepository) {
+                                    SubscriptionRepository subscriptionRepository,
+                                    OrgService orgService) {
         this.salesWebhookService    = salesWebhookService;
         this.organizationRepository = organizationRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.orgService             = orgService;
     }
 
-    @PostMapping("/request-msp-upgrade")
+    /**
+     * Self-service upgrade to MSP — flips the caller's org to MSP immediately,
+     * no sales review. The free-tier quota (10 certificates) carries over;
+     * scanning beyond it requires a paid quota increase.
+     */
+    @PostMapping("/upgrade-msp")
     @PreAuthorize("hasAnyRole('ADMIN', 'PLATFORM_ADMIN')")
-    public ResponseEntity<Void> requestMspUpgrade(@Valid @RequestBody RequestMspUpgradeRequest req) {
-        UUID orgId = TenantContext.getOrgId();
-        Organization org = organizationRepository.findById(orgId)
-                .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
-        Subscription sub = subscriptionRepository.findByOrganizationId(orgId).orElse(null);
-        String actorEmail = SecurityContextHolder.getContext().getAuthentication().getName();
-
-        salesWebhookService.fire(
-                SalesWebhookEventType.MSP_UPGRADE_REQUESTED,
-                org, sub, actorEmail,
-                Map.of("reason", req.reason() != null ? req.reason() : ""));
-
-        return ResponseEntity.accepted().build();
+    public ResponseEntity<OrgResponse> upgradeMsp() {
+        return ResponseEntity.ok(orgService.upgradeToMsp(TenantContext.getOrgId()));
     }
 
     @PostMapping("/request-quota-increase")

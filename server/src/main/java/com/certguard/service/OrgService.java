@@ -129,6 +129,24 @@ public class OrgService {
         return toResponse(org, sub);
     }
 
+    /**
+     * Self-service MSP upgrade: flips a SINGLE org to MSP immediately, with no
+     * sales review. The free-tier certificate quota (10) is preserved as-is —
+     * scanning beyond it requires a paid quota increase, enforced in
+     * {@link TargetService}. Idempotent for orgs that are already MSP.
+     */
+    @Transactional
+    public OrgResponse upgradeToMsp(UUID orgId) {
+        Organization org = orgRepository.findById(orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Organization not found: " + orgId));
+        if (org.getOrgType() != OrgType.MSP) {
+            org.setOrgType(OrgType.MSP);
+            orgRepository.save(org);
+        }
+        Subscription sub = subscriptionRepository.findByOrganizationId(orgId).orElse(null);
+        return toResponse(org, sub);
+    }
+
     public List<OrgResponse> listAllOrgs() {
         return orgRepository.findAll().stream()
                 .map(org -> {
