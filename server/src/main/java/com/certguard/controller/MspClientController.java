@@ -37,7 +37,7 @@ public class MspClientController {
     }
 
     @PostMapping("/clients")
-    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<OrgResponse> createClient(
             @Valid @RequestBody CreateClientOrgRequest req,
             @AuthenticationPrincipal CertGuardUserPrincipal principal) {
@@ -46,7 +46,7 @@ public class MspClientController {
     }
 
     @PutMapping("/clients/{clientOrgId}")
-    @PreAuthorize("hasAnyRole('ADMIN','PLATFORM_ADMIN') " +
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN') " +
                   "and @mspAccessGuard.canAccessOrg(#clientOrgId)")
     public ResponseEntity<OrgResponse> updateClient(
             @PathVariable UUID clientOrgId,

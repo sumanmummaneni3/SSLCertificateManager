@@ -13,7 +13,7 @@ export function MspOrgsView({ token, me, toast }) {
   const upgradePending = me?.permissions?.mspUpgradePending === true;
 
   const canManage = me == null || me?.permissions?.canManageMspClients ||
-    me?.user?.role === "ADMIN";
+    me?.user?.role === "ADMIN" || me?.user?.role === "ENGINEER";
 
   const load = () => {
     setLoading(true);

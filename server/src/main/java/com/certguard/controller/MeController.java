@@ -78,7 +78,7 @@ public class MeController {
         permissions.put("canWriteTargets",    isEngineer);
         permissions.put("canWriteAgents",     isEngineer);
         permissions.put("canWriteLocations",  isEngineer);
-        permissions.put("canManageMspClients", isAdmin);
+        permissions.put("canManageMspClients", isEngineer);
         permissions.put("canEditOrgProfile",  isAdmin);
         permissions.put("canViewAllOrgs",     isPlatformAdmin);
         permissions.put("canActAsOrg",        isPlatformAdmin);
