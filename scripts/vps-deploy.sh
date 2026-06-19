@@ -25,6 +25,10 @@
 #   POSTGRES_DB             — Database name for pg_dump
 #   GITHUB_REPOSITORY_OWNER — Owner of the GHCR packages
 #   GITHUB_PAT              — Personal Access Token with read:packages scope
+#   POSTGRES_CONTAINER      — (optional) Postgres container to back up;
+#                             defaults to "certguard-postgres". When that
+#                             container is not running the backup is skipped
+#                             with a warning instead of failing the deploy.
 #
 # The script writes a temporary .env.deploy file to pass APP_IMAGE_TAG without
 # modifying the canonical .env file. It is cleaned up on completion.
@@ -91,12 +95,21 @@ source .env
 set +o allexport
 
 # ── 3. Postgres backup ───────────────────────────────────────────────────────
+# Skip (with a warning) when Postgres isn't running rather than failing the whole
+# deploy with a raw "No such container" error — e.g. a first bring-up or an
+# intentionally stopped stack. Flyway migrations can't run against a down DB
+# anyway, so there is nothing to lose by proceeding.
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-certguard-postgres}"
 mkdir -p backups
-PGDUMP_FILE="backups/pgdump-$(date +%Y%m%d-%H%M%S).sql.gz"
-log "Starting pg_dump backup -> ${PGDUMP_FILE}"
-docker exec certguard-postgres pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
-  | gzip > "${PGDUMP_FILE}"
-log "Postgres backup complete: ${PGDUMP_FILE}"
+if docker ps --format '{{.Names}}' | grep -qx "${POSTGRES_CONTAINER}"; then
+  PGDUMP_FILE="backups/pgdump-$(date +%Y%m%d-%H%M%S).sql.gz"
+  log "Starting pg_dump backup -> ${PGDUMP_FILE}"
+  docker exec "${POSTGRES_CONTAINER}" pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" \
+    | gzip > "${PGDUMP_FILE}"
+  log "Postgres backup complete: ${PGDUMP_FILE}"
+else
+  log "WARNING: Postgres container '${POSTGRES_CONTAINER}' is not running — skipping pre-deploy DB backup."
+fi
 
 # ── 4. Keystore backup ───────────────────────────────────────────────────────
 CERTS_BACKUP="backups/certs-$(date +%Y%m%d-%H%M%S)"
