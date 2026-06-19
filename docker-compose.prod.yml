@@ -12,6 +12,11 @@
 #
 # The deploy script (scripts/vps-deploy.sh) writes APP_IMAGE_TAG to .env.deploy and
 # passes both --env-file .env --env-file .env.deploy so .env is never modified.
+#
+# The renewal-service / renewal-postgres are gated behind the "renewal" compose
+# profile (they build from source and are not published to GHCR), so the command
+# above excludes them. To run the renewal stack, build it and add
+# `--profile renewal` to the compose command.
 
 services:
   app:
