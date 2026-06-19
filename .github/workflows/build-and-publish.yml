@@ -132,3 +132,19 @@ jobs:
           files: agent/target/certguard-agent.jar
           name: Release ${{ github.ref_name }}
           generate_release_notes: true
+
+  deploy-vps:
+    # Redeploy the VPS on every push to main, after all images are published.
+    # Runs scripts/vps-deploy.sh on the host, pinning the deploy to this commit's
+    # image tag. --no-deps keeps postgres/rabbitmq running across the redeploy.
+    needs: [build-app, build-gateway, build-auth-service]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to VPS over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: bash /opt/certguard/scripts/vps-deploy.sh ${{ github.sha }} --no-deps
