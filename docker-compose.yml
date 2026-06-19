@@ -112,6 +112,9 @@ services:
     image: postgres:16-alpine
     container_name: certguard-renewal-postgres
     restart: unless-stopped
+    # Opt-in only: the renewal stack is not part of the default deploy yet (no
+    # published image). Start it explicitly with `--profile renewal`.
+    profiles: ["renewal"]
     environment:
       POSTGRES_DB:       ${RENEWAL_POSTGRES_DB:-certguard_renewal}
       POSTGRES_USER:     ${RENEWAL_POSTGRES_USER:-renewal_user}
@@ -137,6 +140,10 @@ services:
       dockerfile: Dockerfile
     container_name: certguard-renewal-service
     restart: unless-stopped
+    # Opt-in only: builds from source and is not published to GHCR, so it is
+    # excluded from the default `up`/`--no-build` deploy. Start it explicitly
+    # with `--profile renewal` (and build it first).
+    profiles: ["renewal"]
     depends_on:
       renewal-postgres:
         condition: service_healthy
