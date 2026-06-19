@@ -1,0 +1,15 @@
+[Unit]
+Description=Poll GHCR for new CertGuard images every 5 minutes and auto-deploy
+Documentation=https://github.com/sumanmummaneni3/SSLCertificateManager/blob/main/docs/DEPLOY_AUTODEPLOY.md
+
+[Timer]
+# First check shortly after boot, then every 5 minutes while the unit is active.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Allow systemd to batch the wakeup for efficiency.
+AccuracySec=30s
+Persistent=true
+Unit=certguard-autodeploy.service
+
+[Install]
+WantedBy=timers.target

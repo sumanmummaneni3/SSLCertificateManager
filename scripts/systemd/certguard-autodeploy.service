@@ -1,0 +1,14 @@
+[Unit]
+Description=CertGuard auto-deploy poller (checks GHCR, triggers vps-deploy.sh)
+Documentation=https://github.com/sumanmummaneni3/SSLCertificateManager/blob/main/docs/DEPLOY_AUTODEPLOY.md
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# DEPLOY_PATH defaults to /opt/certguard inside the script; override here if your
+# checkout lives elsewhere, e.g. Environment=DEPLOY_PATH=/srv/certguard
+ExecStart=/usr/bin/env bash /opt/certguard/scripts/vps-autodeploy.sh
+# A deploy (backup + recreate + health checks) can take a couple of minutes.
+TimeoutStartSec=600
