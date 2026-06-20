@@ -424,8 +424,9 @@ public class RevocationCheckService {
         return RevocationResult.unknown(source, "serial not found in OCSP response");
     }
 
-    private byte[] sendHttpPost(String url, String contentType, String accept,
-                                byte[] body, int timeoutMs) throws Exception {
+    /** Package-private so test subclasses can stub the transport layer. */
+    byte[] sendHttpPost(String url, String contentType, String accept,
+                        byte[] body, int timeoutMs) throws Exception {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(timeoutMs))
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -446,7 +447,8 @@ public class RevocationCheckService {
         return response.body();
     }
 
-    private byte[] downloadCrl(String url) throws Exception {
+    /** Package-private so test subclasses can stub the transport layer. */
+    byte[] downloadCrl(String url) throws Exception {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(crlTimeoutMs))
                 .followRedirects(HttpClient.Redirect.NORMAL)

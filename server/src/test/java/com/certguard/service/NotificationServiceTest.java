@@ -232,6 +232,119 @@ class NotificationServiceTest {
     }
 
     @Nested
+    class DispatchRevocationAlert {
+
+        private com.certguard.dto.internal.RevocationAlertContext ctxWith(
+                String reason, boolean onHold, boolean highSeverity, Map<String, Object> channels) {
+            return new com.certguard.dto.internal.RevocationAlertContext(
+                    UUID.randomUUID(),
+                    "example.com", 443,
+                    UUID.randomUUID(),
+                    reason,
+                    "OCSP",
+                    java.time.Instant.now().minus(1, java.time.temporal.ChronoUnit.HOURS),
+                    onHold,
+                    highSeverity ? "CRITICAL" : "HIGH",
+                    channels);
+        }
+
+        private Map<String, Object> emailChannels(String... addresses) {
+            Map<String, Object> emailCfg = new HashMap<>();
+            emailCfg.put("enabled", true);
+            emailCfg.put("addresses", List.of(addresses));
+            Map<String, Object> channels = new HashMap<>();
+            channels.put("email", emailCfg);
+            return channels;
+        }
+
+        @Test
+        void devModeSkipsSend() {
+            ReflectionTestUtils.setField(notificationService, "devMode", true);
+            var ctx = ctxWith("KEY_COMPROMISE", false, true, emailChannels("ops@example.com"));
+
+            notificationService.dispatchRevocationAlert(ctx);
+
+            verifyNoInteractions(mailSender);
+        }
+
+        @Test
+        void emptyChannelsSkipsSend() {
+            var ctx = ctxWith("UNSPECIFIED", false, false, Map.of());
+
+            notificationService.dispatchRevocationAlert(ctx);
+
+            verifyNoInteractions(mailSender);
+        }
+
+        @Test
+        void revocationAlertUsesRevocationTemplate() {
+            var ctx = ctxWith("KEY_COMPROMISE", false, true, emailChannels("ops@example.com"));
+            when(templateEngine.process(anyString(), any(org.thymeleaf.context.IContext.class)))
+                    .thenReturn("body");
+            MimeMessage mime = mock(MimeMessage.class);
+            when(mailSender.createMimeMessage()).thenReturn(mime);
+
+            notificationService.dispatchRevocationAlert(ctx);
+
+            ArgumentCaptor<String> templateCaptor = ArgumentCaptor.forClass(String.class);
+            verify(templateEngine, atLeastOnce()).process(templateCaptor.capture(),
+                    any(org.thymeleaf.context.IContext.class));
+            assertThat(templateCaptor.getAllValues())
+                    .anyMatch(name -> name.contains("revocation-alert"));
+        }
+
+        @Test
+        void onHoldReasonDisplayedAsSuspended() {
+            // reason display = "Suspended (on hold)" when onHold=true
+            var ctx = ctxWith("CERTIFICATE_HOLD", true, false, emailChannels("ops@example.com"));
+            when(templateEngine.process(anyString(), any(org.thymeleaf.context.IContext.class)))
+                    .thenReturn("body");
+            MimeMessage mime = mock(MimeMessage.class);
+            when(mailSender.createMimeMessage()).thenReturn(mime);
+
+            notificationService.dispatchRevocationAlert(ctx);
+
+            // Subject must contain "Suspended (on hold)"
+            ArgumentCaptor<org.thymeleaf.context.IContext> ctxCaptor =
+                    ArgumentCaptor.forClass(org.thymeleaf.context.IContext.class);
+            verify(templateEngine, atLeastOnce()).process(anyString(), ctxCaptor.capture());
+            org.thymeleaf.context.IContext captured = ctxCaptor.getAllValues().get(0);
+            assertThat(captured.getVariable("onHold")).isEqualTo(true);
+            assertThat(captured.getVariable("reason")).isEqualTo("Suspended (on hold)");
+        }
+
+        @Test
+        void highSeverityFlagSetForKeyCompromise() {
+            var ctx = ctxWith("KEY_COMPROMISE", false, true, emailChannels("sec@example.com"));
+            when(templateEngine.process(anyString(), any(org.thymeleaf.context.IContext.class)))
+                    .thenReturn("body");
+            MimeMessage mime = mock(MimeMessage.class);
+            when(mailSender.createMimeMessage()).thenReturn(mime);
+
+            notificationService.dispatchRevocationAlert(ctx);
+
+            ArgumentCaptor<org.thymeleaf.context.IContext> ctxCaptor =
+                    ArgumentCaptor.forClass(org.thymeleaf.context.IContext.class);
+            verify(templateEngine, atLeastOnce()).process(anyString(), ctxCaptor.capture());
+            org.thymeleaf.context.IContext captured = ctxCaptor.getAllValues().get(0);
+            assertThat(captured.getVariable("highSeverity")).isEqualTo(true);
+        }
+
+        @Test
+        void smtpExceptionIsSwallowed() {
+            var ctx = ctxWith("SUPERSEDED", false, false, emailChannels("ops@example.com"));
+            when(templateEngine.process(anyString(), any(org.thymeleaf.context.IContext.class)))
+                    .thenReturn("body");
+            MimeMessage mime = mock(MimeMessage.class);
+            when(mailSender.createMimeMessage()).thenReturn(mime);
+            doThrow(new RuntimeException("SMTP down")).when(mailSender).send(any(MimeMessage.class));
+
+            notificationService.dispatchRevocationAlert(ctx);
+            // no exception propagates
+        }
+    }
+
+    @Nested
     class DispatchAgentOfflineAlert {
 
         @Test
