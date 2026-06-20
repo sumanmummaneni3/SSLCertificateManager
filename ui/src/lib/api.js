@@ -140,4 +140,7 @@ export const api = {
   getTargetNotificationSettings: (targetId, token) => api.call("GET",  `/api/v1/targets/${targetId}/notification-settings`, null, token),
   putTargetNotificationSettings: (targetId, body, token) => api.call("PUT",  `/api/v1/targets/${targetId}/notification-settings`, body, token),
   deleteTargetNotificationSettings: (targetId, token) => api.call("DELETE", `/api/v1/targets/${targetId}/notification-settings`, null, token),
+  // RFC 0009 — per-cert revocation deep-check toggle (BE-12, FE-3)
+  patchCertRevocationDeepCheck: (orgId, certId, enabled, token) =>
+    api.call("PATCH", `/api/v1/organizations/${orgId}/certificates/${certId}/revocation-deep-check`, { enabled }, token),
 };

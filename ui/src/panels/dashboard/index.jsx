@@ -1,15 +1,30 @@
-import { statusColor, hostTypeColor, fmtDate } from "@/lib/helpers.js";
+import { certBadgeType, certStatusLabel, hostTypeColor, fmtDate } from "@/lib/helpers.js";
 import { Spinner, Badge, DaysBar } from "@/components/index.js";
 
 export function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me, org }) {
   const showOrgCol = org?.orgType === "MSP" || me?.platformAdmin === true;
-  const stats = dash ? [
-    { label: "Total Targets",  value: dash.totalTargets, cls: "total"      },
-    { label: "Valid",          value: dash.valid,        cls: "valid"      },
-    { label: "Expiring Soon",  value: dash.expiring,     cls: "expiring"   },
-    { label: "Expired",        value: dash.expired,      cls: "expired"    },
-    { label: "Unreachable",    value: dash.unreachable,  cls: "unreachable"},
+
+  // Build stat cards — put security-critical cards (REVOKED, INVALID) first if non-zero
+  const baseStats = dash ? [
+    { label: "Total Targets",  value: dash.totalTargets,        cls: "total"      },
+    { label: "Valid",          value: dash.valid,               cls: "valid"      },
+    { label: "Expiring Soon",  value: dash.expiring,            cls: "expiring"   },
+    { label: "Expired",        value: dash.expired,             cls: "expired"    },
+    { label: "Unreachable",    value: dash.unreachable,         cls: "unreachable"},
   ] : [];
+
+  // RFC 0009 security cards — only rendered when non-null (feature may not be active yet in shadow mode)
+  const revokedVal = dash?.revoked ?? null;
+  const invalidVal = dash?.invalid ?? null;
+
+  const securityStats = [];
+  if (revokedVal !== null) securityStats.push({ label: "Revoked", value: revokedVal, cls: "revoked" });
+  if (invalidVal !== null) securityStats.push({ label: "Invalid Chain", value: invalidVal, cls: "invalid" });
+
+  // Prioritize security cards first when there are active alerts
+  const stats = securityStats.length > 0
+    ? [...securityStats, ...baseStats]
+    : baseStats;
 
   return (
     <>
@@ -75,7 +90,12 @@ export function DashboardView({ dash, targets, onScan, scanning, onAddTarget, me
                       <td><Badge type={hostTypeColor(t.hostType)}>{t.hostType || "—"}</Badge></td>
                       <td>
                         {cert
-                          ? <Badge type={statusColor(cert.status)}>{cert.status}</Badge>
+                          ? <Badge
+                              type={certBadgeType(cert.status, cert.onHold)}
+                              title={cert.onHold ? "On hold — reversible suspension" : undefined}
+                            >
+                              {certStatusLabel(cert.status, cert.onHold)}
+                            </Badge>
                           : <Badge type="unknown">No scan</Badge>}
                       </td>
                       <td className="mono">{cert ? fmtDate(cert.expiryDate) : "—"}</td>

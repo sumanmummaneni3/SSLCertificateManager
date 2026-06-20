@@ -1,15 +1,17 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api.js";
-import { statusColor, hostTypeColor, fmtDate } from "@/lib/helpers.js";
+import { certBadgeType, certStatusLabel, hostTypeColor, fmtDate } from "@/lib/helpers.js";
 import { Spinner, Badge, DaysBar } from "@/components/index.js";
 import { RenewalStatusPanel, RenewalHistoryList, RequestRenewalModal } from "./renewal/index.js";
+import { RevocationPanel } from "./RevocationPanel.jsx";
 
-export function CertificateDetailView({ certId, token, toast, onBack }) {
+export function CertificateDetailView({ certId, orgId, token, me, toast, onBack }) {
   const [cert, setCert]             = useState(null);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState("");
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [activeRenewal, setActiveRenewal]   = useState(null);
+  const canWrite = me == null || me?.user?.role === "ADMIN" || me?.user?.role === "ENGINEER" || me?.platformAdmin === true;
 
   useEffect(() => {
     if (!certId) return;
@@ -88,7 +90,12 @@ export function CertificateDetailView({ certId, token, toast, onBack }) {
 
                 <span className="cert-field-key">Status</span>
                 <span className="cert-field-val">
-                  <Badge type={statusColor(cert.status)}>{cert.status || "—"}</Badge>
+                  <Badge
+                    type={certBadgeType(cert.status, cert.onHold)}
+                    title={cert.onHold ? "This certificate is on a reversible hold" : undefined}
+                  >
+                    {certStatusLabel(cert.status, cert.onHold)}
+                  </Badge>
                 </span>
 
                 <span className="cert-field-key">Issuer</span>
@@ -121,6 +128,16 @@ export function CertificateDetailView({ certId, token, toast, onBack }) {
                 <span className="cert-field-val">{fmtDate(cert.scannedAt)}</span>
               </div>
             </div>
+
+            {/* RFC 0009 — Revocation & Chain panel (FE-2, FE-3) */}
+            <RevocationPanel
+              cert={cert}
+              orgId={orgId}
+              token={token}
+              canWrite={canWrite}
+              toast={toast}
+              onUpdate={(patch) => setCert((prev) => prev ? { ...prev, ...patch } : prev)}
+            />
 
             {/* Target info */}
             {cert.target && (

@@ -233,7 +233,9 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
         {view === "cert-detail" && selectedCertId && (
           <CertificateDetailView
             certId={selectedCertId}
+            orgId={org?.id}
             token={token}
+            me={me}
             toast={toast}
             onBack={() => {
               setView("certs");

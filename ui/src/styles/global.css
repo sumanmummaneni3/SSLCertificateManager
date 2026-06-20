@@ -416,6 +416,9 @@ body::before {
 .stat-card.expired .stat-value  { color: var(--red); }
 .stat-card.total .stat-value    { color: var(--accent); }
 .stat-card.unreachable .stat-value { color: var(--orange); }
+/* RFC 0009 */
+.stat-card.revoked .stat-value  { color: #ff4444; }
+.stat-card.invalid .stat-value  { color: #d966d6; }
 
 /* ── TARGET TABLE ── */
 .section-header {
@@ -471,6 +474,25 @@ tr:hover td { background: color-mix(in srgb, var(--color-primary) 3%, transparen
 .badge-expired   { background: rgba(255,82,82,0.12);  color: var(--red);   border: 1px solid rgba(255,82,82,0.25); }
 .badge-unreachable { background: rgba(255,145,0,0.12); color: var(--orange); border: 1px solid rgba(255,145,0,0.25); }
 .badge-unknown   { background: rgba(90,96,112,0.15);  color: var(--muted); border: 1px solid var(--border2); }
+/* RFC 0009 — REVOKED: critical red (stronger than expired) */
+.badge-revoked-status {
+  background: rgba(220,38,38,0.15);
+  color: #ff4444;
+  border: 1px solid rgba(220,38,38,0.4);
+  font-weight: 700;
+}
+/* RFC 0009 — INVALID: broken-chain error (distinct purple-red) */
+.badge-invalid   {
+  background: rgba(139,0,139,0.12);
+  color: #d966d6;
+  border: 1px solid rgba(200,0,200,0.3);
+}
+/* RFC 0009 — on-hold: amber, reversible (not terminal) */
+.badge-on-hold   {
+  background: rgba(255,183,0,0.13);
+  color: #f0a800;
+  border: 1px solid rgba(255,183,0,0.35);
+}
 .badge-domain    { background: rgba(0,212,255,0.08);  color: var(--accent); border: 1px solid rgba(0,212,255,0.2); }
 .badge-ip        { background: rgba(0,102,255,0.1);   color: #6699ff;      border: 1px solid rgba(102,153,255,0.2); }
 .badge-hostname  { background: rgba(128,0,255,0.1);   color: #bb88ff;      border: 1px solid rgba(187,136,255,0.2); }
@@ -1240,4 +1262,108 @@ tr:hover td { background: color-mix(in srgb, var(--color-primary) 3%, transparen
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+/* ── RFC 0009 — REVOCATION PANEL ── */
+.revocation-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.revocation-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.revocation-callout.critical {
+  background: rgba(220,38,38,0.1);
+  border: 1px solid rgba(220,38,38,0.35);
+  color: #ff6666;
+}
+
+.revocation-callout.warning {
+  background: rgba(255,183,0,0.1);
+  border: 1px solid rgba(255,183,0,0.3);
+  color: #f0a800;
+}
+
+.revocation-callout.neutral {
+  background: rgba(90,96,112,0.1);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+}
+
+.revocation-callout.advisory {
+  background: rgba(139,0,139,0.08);
+  border: 1px solid rgba(200,0,200,0.25);
+  color: #cc66cc;
+}
+
+.revocation-callout-icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.revocation-callout-body { flex: 1; }
+
+.revocation-callout-title {
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.revocation-callout-detail {
+  font-size: 0.78rem;
+  opacity: 0.9;
+}
+
+/* Deep-check toggle row */
+.deep-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+}
+
+.deep-check-label {
+  flex: 1;
+}
+
+.deep-check-label-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.deep-check-label-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Revocation OFF warning */
+.revocation-off-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(255,82,82,0.08);
+  border: 1px solid rgba(255,82,82,0.3);
+  border-radius: var(--radius);
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #ff8a8a;
+  line-height: 1.5;
 }
