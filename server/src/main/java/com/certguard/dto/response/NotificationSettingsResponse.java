@@ -9,6 +9,8 @@ import java.util.UUID;
  * Response for GET/PUT /api/v1/org/notification-settings
  * and GET/PUT /api/v1/targets/{id}/notification-settings (RFC 0008 §3.4).
  *
+ * <p>RFC 0009: extended with revocation policy fields.
+ *
  * For per-target GET:
  *   - {@code inherited = false} → a persisted override row exists; fields reflect the override.
  *   - {@code inherited = true}  → no override row; fields reflect the effective value
@@ -32,4 +34,23 @@ public class NotificationSettingsResponse {
      * Always false for org-default GET/PUT responses.
      */
     boolean inherited;
+
+    // ── RFC 0009: Revocation policy fields ────────────────────────────────────
+
+    /**
+     * Master revocation-check switch for the org.
+     * Defaults to true; set false to opt out of CA endpoint contact.
+     */
+    boolean revocationCheckEnabled;
+
+    /**
+     * Failure mode when revocation is indeterminate: SOFT (default) or HARD.
+     * HARD raises an advisory alert; never fabricates REVOKED.
+     */
+    String revocationFailMode;
+
+    /**
+     * Whether to raise chain advisory alerts for private targets (public always get advisory).
+     */
+    boolean alertOnUntrustedChain;
 }

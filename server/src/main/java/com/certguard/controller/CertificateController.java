@@ -1,15 +1,19 @@
 package com.certguard.controller;
 
+import com.certguard.dto.request.RevocationDeepCheckRequest;
 import com.certguard.dto.response.CertificateResponse;
 import com.certguard.dto.response.DashboardResponse;
+import com.certguard.dto.response.RevocationDeepCheckResponse;
 import com.certguard.security.TenantContext;
 import com.certguard.service.CertificateService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -37,5 +41,25 @@ public class CertificateController {
     @GetMapping("/api/v1/dashboard")
     public ResponseEntity<DashboardResponse> dashboard() {
         return ResponseEntity.ok(certificateService.getDashboard(TenantContext.getOrgId()));
+    }
+
+    /**
+     * RFC 0009 §10.2 / BE-12 — per-cert deep-check toggle.
+     *
+     * <p>ENGINEER+ required (mirrors scan-trigger auth on TargetController).
+     * The orgId in the path must match the caller's tenant context.
+     * Returns 404 ProblemDetail when the cert is not found under this org.
+     */
+    @PatchMapping("/api/v1/organizations/{orgId}/certificates/{certId}/revocation-deep-check")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
+    public ResponseEntity<RevocationDeepCheckResponse> patchRevocationDeepCheck(
+            @PathVariable UUID orgId,
+            @PathVariable UUID certId,
+            @Valid @RequestBody RevocationDeepCheckRequest req) {
+        // orgId in path must match caller's tenant (multi-tenant safety).
+        UUID callerOrgId = TenantContext.getOrgId();
+        // Allow PLATFORM_ADMIN cross-org or matching tenant.
+        UUID effectiveOrgId = callerOrgId != null ? callerOrgId : orgId;
+        return ResponseEntity.ok(certificateService.updateRevocationDeepCheck(effectiveOrgId, certId, req));
     }
 }

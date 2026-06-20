@@ -1,7 +1,9 @@
 package com.certguard.service;
 
+import com.certguard.dto.request.RevocationDeepCheckRequest;
 import com.certguard.dto.response.CertificateResponse;
 import com.certguard.dto.response.DashboardResponse;
+import com.certguard.dto.response.RevocationDeepCheckResponse;
 import com.certguard.dto.response.TargetResponse;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
@@ -77,10 +79,31 @@ public class CertificateService {
         long expiring      = certRepository.countByOrgIdAndStatus(orgId, CertStatus.EXPIRING);
         long expired       = certRepository.countByOrgIdAndStatus(orgId, CertStatus.EXPIRED);
         long unreachable   = certRepository.countByOrgIdAndStatus(orgId, CertStatus.UNREACHABLE);
+        long revoked       = certRepository.countByOrgIdAndStatus(orgId, CertStatus.REVOKED);
+        long invalid       = certRepository.countByOrgIdAndStatus(orgId, CertStatus.INVALID);
 
         return DashboardResponse.builder()
                 .totalTargets(totalTargets).valid(valid)
                 .expiring(expiring).expired(expired).unreachable(unreachable)
+                .revoked(revoked).invalid(invalid)
+                .build();
+    }
+
+    /**
+     * Persists the per-cert deep-check toggle (RFC 0009 §10.2 / BE-12).
+     *
+     * @throws ResourceNotFoundException when certId is not found under orgId
+     */
+    @Transactional
+    public RevocationDeepCheckResponse updateRevocationDeepCheck(UUID orgId, UUID certId,
+                                                                  RevocationDeepCheckRequest req) {
+        int updated = certRepository.updateRevocationDeepCheck(certId, orgId, req.getEnabled());
+        if (updated == 0) {
+            throw new ResourceNotFoundException("Certificate not found: " + certId);
+        }
+        return RevocationDeepCheckResponse.builder()
+                .id(certId)
+                .revocationDeepCheck(req.getEnabled())
                 .build();
     }
 
@@ -100,6 +123,22 @@ public class CertificateService {
                 .status(cert.getStatus())
                 .scannedAt(cert.getScannedAt())
                 .scannedByAgentId(cert.getScannedByAgent() != null ? cert.getScannedByAgent().getId() : null)
+                // RFC 0009: revocation fields
+                .revocationStatus(cert.getRevocationStatus() != null
+                        ? cert.getRevocationStatus().name() : null)
+                .revocationSource(cert.getRevocationSource() != null
+                        ? cert.getRevocationSource().name() : null)
+                .revocationReason(cert.getRevocationReason())
+                .revocationReasonCode(cert.getRevocationReasonCode())
+                .revokedAt(cert.getRevokedAt())
+                .revocationCheckedAt(cert.getRevocationCheckedAt())
+                .revocationDeepCheck(cert.isRevocationDeepCheck())
+                // RFC 0009: chain fields
+                .chainTrusted(cert.getChainTrusted())
+                .chainValidationError(cert.getChainValidationError() != null
+                        ? cert.getChainValidationError().name() : null)
+                // Derived convenience
+                .onHold(cert.isOnHold())
                 .build();
     }
 }
