@@ -32,6 +32,16 @@ public class ScanResult {
     // ERROR only
     private String errorMessage;
 
+    /**
+     * FULL only — full chain as base64-encoded DER, leaf at index 0 then intermediates.
+     * Null for DELTA and ERROR scan types (not needed: DELTA re-uses the stored leaf).
+     * Added RFC 0009 §3.4: allows server-side chain validation and revocation checking
+     * without requiring the agent to contact CA endpoints.
+     * Optional field: older agents that do not send it are tolerated — server falls back to
+     * AIA-based completion or records INCOMPLETE_CHAIN.
+     */
+    private List<String> chainB64;
+
     public String  getScanType()           { return type != null ? type.name() : null; }
     public Type    getType()               { return type; }
     public void    setType(Type v)         { type = v; }
@@ -65,4 +75,7 @@ public class ScanResult {
     public void    setLastCertificateId(String v) { lastCertificateId = v; }
     public String  getErrorMessage()       { return errorMessage; }
     public void    setErrorMessage(String v) { errorMessage = v; }
+
+    public List<String> getChainB64()          { return chainB64; }
+    public void         setChainB64(List<String> v) { chainB64 = v; }
 }
