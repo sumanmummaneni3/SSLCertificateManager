@@ -1,12 +1,16 @@
 package com.certguard.service;
 
 import com.certguard.dto.internal.ExpiryAlertContext;
+import com.certguard.dto.internal.RevocationAlertContext;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.NotificationSettings;
 import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
+import com.certguard.enums.RevocationStatus;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.NotificationSettingsRepository;
+import com.certguard.service.chain.ChainValidationResult;
+import com.certguard.service.revocation.RevocationResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,7 +60,13 @@ public class ExpiryEvaluationService {
     public enum EvaluationMode { SCHEDULED, FORCE }
 
     /** Immutable resolved settings for a single evaluation. */
-    record Settings(boolean enabled, int warningDays, int criticalDays, int dedupHours) {}
+    record Settings(boolean enabled, int warningDays, int criticalDays, int dedupHours,
+                    boolean revocationCheckEnabled, String revocationFailMode, boolean alertOnUntrustedChain) {
+        /** Compat constructor for tests and callers that don't use revocation fields. */
+        Settings(boolean enabled, int warningDays, int criticalDays, int dedupHours) {
+            this(enabled, warningDays, criticalDays, dedupHours, true, "SOFT", false);
+        }
+    }
 
     private final NotificationService notificationService;
     private final CertificateRecordRepository certRepository;
@@ -67,6 +77,7 @@ public class ExpiryEvaluationService {
     @Value("${app.alert.critical-days:7}") private int criticalDays;
     @Value("${app.alert.dedup-hours:23}")  private int dedupHours;
     @Value("${app.alert.force-scan-debounce-seconds:120}") private int forceScanDebounceSeconds;
+    @Value("${app.revocation.shadow:true}") private boolean revocationShadowMode;
 
     public ExpiryEvaluationService(NotificationService notificationService,
                                    CertificateRecordRepository certRepository,
@@ -145,19 +156,100 @@ public class ExpiryEvaluationService {
     }
 
     /**
-     * Derives {@link CertStatus} for a cert using the resolved warningDays for that target.
-     * Replaces the duplicated / hardcoded logic that was in SslScannerService and AgentService.
+     * Derives {@link CertStatus} for a cert — expiry-only (legacy overload).
      *
      * @param expiry   the certificate's not-after instant
      * @param target   the target the cert was scanned from (may be null for partial builds)
      * @param orgId    the org id (used as fallback when target is null)
      */
     public CertStatus determineCertStatus(Instant expiry, Target target, UUID orgId) {
+        return determineCertStatus(expiry, null, null, target, orgId);
+    }
+
+    /**
+     * Single convergence point for certificate status derivation (RFC 0009 §3.5).
+     *
+     * <p>Precedence: {@code REVOKED > EXPIRED > INVALID > EXPIRING > VALID}.
+     *
+     * <ul>
+     *   <li>REVOKED only from a definitive, signature-verified OCSP/CRL response.
+     *   <li>INVALID only when the target is public AND chain_trusted=false.
+     *   <li>Private targets with untrusted chains stay advisory-only (VALID/EXPIRING).
+     *   <li>Shadow mode honours the precedence but callers suppress the final status update.
+     * </ul>
+     *
+     * @param expiry      the certificate's not-after instant
+     * @param revocation  revocation check result (may be null → treat as UNCHECKED)
+     * @param chain       chain validation result  (may be null → treat as not-yet-evaluated)
+     * @param target      the target (used for warningDays resolution and isPrivate check)
+     * @param orgId       the org id
+     */
+    public CertStatus determineCertStatus(Instant expiry,
+                                          RevocationResult revocation,
+                                          ChainValidationResult chain,
+                                          Target target, UUID orgId) {
         Settings settings = resolveSettings(target, orgId);
         long days = ChronoUnit.DAYS.between(Instant.now(), expiry);
+
+        // 1. REVOKED dominates everything (§10.3: even dominates EXPIRED).
+        if (revocation != null && revocation.status() == RevocationStatus.REVOKED) {
+            return CertStatus.REVOKED;
+        }
+
+        // 2. EXPIRED.
         if (days < 0) return CertStatus.EXPIRED;
+
+        // 3. INVALID — public target + untrusted chain (§10.4).
+        boolean isPublic = target != null && Boolean.FALSE.equals(target.getIsPrivate());
+        if (chain != null && !chain.trusted() && isPublic) {
+            return CertStatus.INVALID;
+        }
+
+        // 4. EXPIRING.
         if (days <= settings.warningDays()) return CertStatus.EXPIRING;
+
         return CertStatus.VALID;
+    }
+
+    /**
+     * Transition-gated revocation alert (RFC 0009 §3.6 / BE-9).
+     *
+     * <p>Fires once on the edge into {@code REVOKED} (or when stamp is null).
+     * Does NOT fire on every daily re-check; bypasses the expiry dedup window.
+     * Must be called in-transaction so lazy associations can be resolved.
+     *
+     * @param cert the freshly-saved CertificateRecord (status already updated)
+     */
+    @Transactional
+    public void evaluateRevocationAndNotify(CertificateRecord cert) {
+        if (revocationShadowMode) return; // shadow mode: suppress alerts
+        if (cert.getStatus() != com.certguard.enums.CertStatus.REVOKED) return;
+
+        // Transition-gated: only alert on the first edge into REVOKED.
+        // Subsequent re-checks where it's already REVOKED do NOT re-alert.
+        if (cert.getLastRevocationAlertSentAt() != null) {
+            // Already alerted; don't repeat.
+            return;
+        }
+
+        // Stamp BEFORE dispatching (synchronously in the caller's transaction).
+        Instant now = Instant.now();
+        certRepository.stampRevocationAlertSentAt(cert.getId(), now);
+
+        // Pre-resolve all data needed by the email template (P1-A pattern).
+        final RevocationAlertContext alertCtx = buildRevocationAlertContext(cert);
+
+        // Dispatch after commit.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    notificationService.dispatchRevocationAlert(alertCtx);
+                }
+            });
+        } else {
+            notificationService.dispatchRevocationAlert(alertCtx);
+        }
     }
 
     // ── Core algorithm (RFC 0008 §2.3) ───────────────────────────────────────
@@ -279,11 +371,44 @@ public class ExpiryEvaluationService {
     }
 
     private Settings toSettings(NotificationSettings ns) {
-        return new Settings(ns.getEnabled(), ns.getWarningDays(), ns.getCriticalDays(), ns.getDedupHours());
+        String failMode = ns.getRevocationFailMode() != null
+                ? ns.getRevocationFailMode().name() : "SOFT";
+        boolean alertOnChain = ns.getAlertOnUntrustedChain() != null
+                && ns.getAlertOnUntrustedChain();
+        boolean revocationEnabled = ns.getRevocationCheckEnabled() == null
+                || ns.getRevocationCheckEnabled();
+        return new Settings(ns.getEnabled(), ns.getWarningDays(), ns.getCriticalDays(),
+                ns.getDedupHours(), revocationEnabled, failMode, alertOnChain);
     }
 
     private Settings appYmlFallback() {
-        return new Settings(true, warningDays, criticalDays, dedupHours);
+        return new Settings(true, warningDays, criticalDays, dedupHours,
+                true, "SOFT", false);
+    }
+
+    // ── Revocation alert context builder (BE-9) ──────────────────────────────
+
+    private RevocationAlertContext buildRevocationAlertContext(CertificateRecord cert) {
+        Target target = cert.getTarget();
+        String host = target != null ? target.getHost() : "unknown";
+        int port    = target != null ? target.getPort() : 0;
+
+        String reason = cert.getRevocationReason();
+        boolean onHold = cert.isOnHold();
+        String severity = isHighSeverityReason(reason) ? "CRITICAL" : (onHold ? "WARNING" : "HIGH");
+
+        Map<String, Object> channels = target != null
+                ? notificationService.resolveChannels(target) : Map.of();
+
+        return new RevocationAlertContext(
+                cert.getId(), host, port, cert.getOrgId(),
+                reason,
+                cert.getRevocationSource() != null ? cert.getRevocationSource().name() : "UNKNOWN",
+                cert.getRevokedAt(), onHold, severity, channels);
+    }
+
+    private boolean isHighSeverityReason(String reason) {
+        return "KEY_COMPROMISE".equals(reason) || "CA_COMPROMISE".equals(reason);
     }
 
     // ── Pre-commit context builder (P1-A) ─────────────────────────────────────
