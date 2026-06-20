@@ -19,6 +19,13 @@ import java.util.UUID;
 public class CertificateResponse {
     private UUID id;
     private UUID targetId;
+    /**
+     * Owning organization UUID. Included so the UI can construct org-scoped
+     * URLs (e.g. the PATCH revocation-deep-check endpoint) without relying on
+     * a separate org-context variable — important for MSP/impersonation flows
+     * where the cert may belong to a client org, not the acting MSP org.
+     */
+    private UUID orgId;
     private String host;
     private int port;
     private String commonName;
@@ -41,7 +48,19 @@ public class CertificateResponse {
 
     // ── RFC 0009: Revocation fields ────────────────────────────────────────────
 
-    /** GOOD | REVOKED | UNKNOWN | UNCHECKED | null (not yet evaluated). */
+    /**
+     * GOOD | REVOKED | UNKNOWN | UNCHECKED — never null in the response.
+     *
+     * <p>Mapping:
+     * <ul>
+     *   <li>{@code UNCHECKED} — no revocation check has been attempted yet (entity field is null or UNCHECKED).
+     *   <li>{@code UNKNOWN}   — check was attempted but result was indeterminate (responder down, stale CRL, etc.).
+     *   <li>{@code GOOD}      — definitively good (OCSP or CRL confirms not revoked).
+     *   <li>{@code REVOKED}   — definitively revoked (signature-verified response; only when shadow=false).
+     * </ul>
+     * The frontend should treat UNCHECKED and UNKNOWN as "not confirmed" with neutral copy.
+     * The distinction is whether a check was ever attempted (UNCHECKED = never; UNKNOWN = tried and inconclusive).
+     */
     private String revocationStatus;
     /** OCSP_STAPLED | OCSP | CRL | NONE | null. */
     private String revocationSource;

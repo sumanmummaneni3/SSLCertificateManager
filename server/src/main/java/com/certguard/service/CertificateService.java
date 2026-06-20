@@ -109,8 +109,16 @@ public class CertificateService {
 
     private CertificateResponse toResponse(CertificateRecord cert) {
         long days = ChronoUnit.DAYS.between(Instant.now(), cert.getExpiryDate());
+
+        // revocationStatus: normalize null → "UNCHECKED" so the response never emits null.
+        // Distinction: UNCHECKED = never attempted; UNKNOWN = attempted but inconclusive.
+        String revocationStatusStr = cert.getRevocationStatus() != null
+                ? cert.getRevocationStatus().name()
+                : "UNCHECKED";
+
         return CertificateResponse.builder()
                 .id(cert.getId())
+                .orgId(cert.getOrgId())           // owning org — needed for MSP/impersonation
                 .targetId(cert.getTarget().getId())
                 .host(cert.getTarget().getHost())
                 .port(cert.getTarget().getPort())
@@ -124,8 +132,7 @@ public class CertificateService {
                 .scannedAt(cert.getScannedAt())
                 .scannedByAgentId(cert.getScannedByAgent() != null ? cert.getScannedByAgent().getId() : null)
                 // RFC 0009: revocation fields
-                .revocationStatus(cert.getRevocationStatus() != null
-                        ? cert.getRevocationStatus().name() : null)
+                .revocationStatus(revocationStatusStr)
                 .revocationSource(cert.getRevocationSource() != null
                         ? cert.getRevocationSource().name() : null)
                 .revocationReason(cert.getRevocationReason())

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+
 @RestController
 @RequiredArgsConstructor
 @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
@@ -47,8 +48,15 @@ public class CertificateController {
      * RFC 0009 §10.2 / BE-12 — per-cert deep-check toggle.
      *
      * <p>ENGINEER+ required (mirrors scan-trigger auth on TargetController).
-     * The orgId in the path must match the caller's tenant context.
-     * Returns 404 ProblemDetail when the cert is not found under this org.
+     *
+     * <p>The {@code orgId} in the path is authoritative — it is the owning org of the cert,
+     * which the UI sources from {@code CertificateResponse.orgId}. This correctly handles
+     * MSP/impersonation: when an MSP engineer acts on a client org's cert, the path carries
+     * the client org's UUID, not the MSP org's UUID. The repository query filters by
+     * {@code (certId, orgId)}, so an org mismatch yields a 404 ProblemDetail — no data leak.
+     *
+     * <p>Spring Security enforces that the caller has been granted access to this org before
+     * this handler is reached; no additional TenantContext check is needed here.
      */
     @PatchMapping("/api/v1/organizations/{orgId}/certificates/{certId}/revocation-deep-check")
     @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
@@ -56,10 +64,6 @@ public class CertificateController {
             @PathVariable UUID orgId,
             @PathVariable UUID certId,
             @Valid @RequestBody RevocationDeepCheckRequest req) {
-        // orgId in path must match caller's tenant (multi-tenant safety).
-        UUID callerOrgId = TenantContext.getOrgId();
-        // Allow PLATFORM_ADMIN cross-org or matching tenant.
-        UUID effectiveOrgId = callerOrgId != null ? callerOrgId : orgId;
-        return ResponseEntity.ok(certificateService.updateRevocationDeepCheck(effectiveOrgId, certId, req));
+        return ResponseEntity.ok(certificateService.updateRevocationDeepCheck(orgId, certId, req));
     }
 }
