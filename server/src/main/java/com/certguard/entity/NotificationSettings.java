@@ -1,10 +1,11 @@
 package com.certguard.entity;
 
+import com.certguard.enums.RevocationFailMode;
 import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * Per-target or org-default notification policy row (RFC 0008 §3).
+ * Per-target or org-default notification policy row (RFC 0008 §3, extended by RFC 0009 §4.3).
  *
  * Resolution order in {@link com.certguard.service.ExpiryEvaluationService}:
  *   1. Row where target_id = this target's id  (per-target override)
@@ -48,4 +49,33 @@ public class NotificationSettings extends BaseEntity {
     @Column(name = "dedup_hours", nullable = false)
     @Builder.Default
     private Integer dedupHours = 23;
+
+    // ── RFC 0009: Revocation policy ────────────────────────────────────────────
+
+    /**
+     * Master revocation-check kill-switch for this org (RFC 0009 §10.7).
+     * When false, the cloud server will not contact third-party CA endpoints for this org.
+     * Certs will show revocation_status = UNCHECKED.
+     */
+    @Column(name = "revocation_check_enabled", nullable = false)
+    @Builder.Default
+    private Boolean revocationCheckEnabled = true;
+
+    /**
+     * Failure mode when revocation is indeterminate (RFC 0009 §6).
+     * SOFT (default): indeterminate → UNKNOWN, no alert.
+     * HARD: indeterminate → advisory alert (does NOT fabricate REVOKED).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "revocation_fail_mode", nullable = false)
+    @Builder.Default
+    private RevocationFailMode revocationFailMode = RevocationFailMode.SOFT;
+
+    /**
+     * Whether to raise a chain advisory alert when chain_trusted = false (RFC 0009 §3.5).
+     * Public targets always get the advisory; this controls private-target advisory gating.
+     */
+    @Column(name = "alert_on_untrusted_chain", nullable = false)
+    @Builder.Default
+    private Boolean alertOnUntrustedChain = false;
 }
