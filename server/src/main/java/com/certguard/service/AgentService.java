@@ -12,16 +12,25 @@ import com.certguard.enums.ScanJobStatus;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.AgentHmacService;
+import com.certguard.service.chain.ChainValidationResult;
+import com.certguard.service.chain.ChainValidationService;
+import com.certguard.service.revocation.RevocationCheckService;
+import com.certguard.service.revocation.RevocationResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -42,6 +51,11 @@ public class AgentService {
     private final BCryptPasswordEncoder passwordEncoder;
     private final SubscriptionGuard subscriptionGuard;
     private final ExpiryEvaluationService expiryEvaluationService;
+    private final ChainValidationService chainValidationService;
+    private final RevocationCheckService revocationCheckService;
+
+    @Value("${app.revocation.shadow:true}")
+    private boolean revocationShadowMode;
 
     /** Trigger-source constant used when a job is queued by the user (force/manual scan). */
     public static final String TRIGGER_USER      = "USER";
@@ -242,9 +256,40 @@ public class AgentService {
         record.setSubjectAltNames(req.getSubjectAltNames());
         record.setChainDepth(req.getChainDepth());
         record.setPublicCertB64(req.getPublicCertB64());
-        record.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter(), target, target.getOrganization().getId()));
         record.setScannedByAgent(agent);
         record.setScannedAt(Instant.now());
+
+        // RFC 0009: Build chain from chainB64 + leaf, then run chain/revocation checks.
+        X509Certificate[] chain = buildChain(req.getChainB64(), req.getPublicCertB64());
+        ChainValidationResult chainResult = chainValidationService.validate(chain);
+        RevocationResult revResult = revocationCheckService.check(
+                chain, null /* no staple from agent */, record.isRevocationDeepCheck());
+
+        // Persist chain + revocation fields.
+        record.setChainTrusted(chainResult.trusted());
+        record.setChainValidationError(chainResult.error());
+        record.setRevocationStatus(revResult.status());
+        record.setRevocationSource(revResult.source());
+        record.setRevocationCheckedAt(revResult.checkedAt());
+        record.setRevocationReason(revResult.reason());
+        record.setRevocationReasonCode(revResult.reasonCode());
+        record.setRevokedAt(revResult.revokedAt());
+
+        // Status with shadow mode guard.
+        CertStatus newStatus = expiryEvaluationService.determineCertStatus(
+                req.getNotAfter(), revResult, chainResult, target, target.getOrganization().getId());
+        if (revocationShadowMode) {
+            CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
+                    req.getNotAfter(), null, null, target, target.getOrganization().getId());
+            record.setStatus(shadowStatus);
+            if (newStatus == CertStatus.REVOKED || newStatus == CertStatus.INVALID) {
+                log.info("[SHADOW] Agent FULL: would set status={} for cert {} but shadow=true",
+                        newStatus, req.getCommonName());
+            }
+        } else {
+            record.setStatus(newStatus);
+        }
+
         certRepository.save(record);
 
         // Post-scan expiry evaluation (RFC 0008 §7).
@@ -261,8 +306,40 @@ public class AgentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Certificate record not found"));
 
         existing.setExpiryDate(req.getNotAfter());
-        existing.setStatus(expiryEvaluationService.determineCertStatus(req.getNotAfter(), target, target.getOrganization().getId()));
         existing.setScannedAt(Instant.now());
+
+        // RFC 0009: DELTA doesn't re-send the cert. Run revocation on the STORED leaf.
+        // This is how between-scan revocations are detected (the motivating incident).
+        X509Certificate[] chain = buildChain(null, existing.getPublicCertB64());
+        RevocationResult revResult = revocationCheckService.check(
+                chain, null /* no staple */, existing.isRevocationDeepCheck());
+
+        // Persist updated revocation fields.
+        existing.setRevocationStatus(revResult.status());
+        existing.setRevocationSource(revResult.source());
+        existing.setRevocationCheckedAt(revResult.checkedAt());
+        existing.setRevocationReason(revResult.reason());
+        existing.setRevocationReasonCode(revResult.reasonCode());
+        existing.setRevokedAt(revResult.revokedAt());
+
+        // Use the previously-recorded chain result (chain didn't change on DELTA).
+        ChainValidationResult storedChain = ChainValidationResult.trusted(
+                existing.getChainDepth() != null ? existing.getChainDepth() : 1);
+        if (Boolean.FALSE.equals(existing.getChainTrusted())) {
+            storedChain = ChainValidationResult.failed(
+                    existing.getChainValidationError(), existing.getChainDepth() != null ? existing.getChainDepth() : 1);
+        }
+
+        CertStatus newStatus = expiryEvaluationService.determineCertStatus(
+                req.getNotAfter(), revResult, storedChain, target, target.getOrganization().getId());
+        if (revocationShadowMode) {
+            CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
+                    req.getNotAfter(), null, null, target, target.getOrganization().getId());
+            existing.setStatus(shadowStatus);
+        } else {
+            existing.setStatus(newStatus);
+        }
+
         certRepository.save(existing);
 
         // Post-scan expiry evaluation (RFC 0008 §7).
@@ -377,6 +454,35 @@ public class AgentService {
                 .filter(t -> t.getAgentId() == null)
                 .collect(Collectors.toList());
         tokenRepository.deleteAll(toDelete);
+    }
+
+    /**
+     * Builds an X509Certificate[] from base64-encoded DER strings (RFC 0009 §3.4).
+     *
+     * <p>Priority: if {@code chainB64} is present and non-empty, use those certs
+     * (leaf first, then intermediates). Otherwise decode {@code leafB64} alone.
+     * Backward-compatible: older agents send only the leaf in publicCertB64.
+     */
+    private X509Certificate[] buildChain(List<String> chainB64, String leafB64) {
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            if (chainB64 != null && !chainB64.isEmpty()) {
+                X509Certificate[] chain = new X509Certificate[chainB64.size()];
+                for (int i = 0; i < chainB64.size(); i++) {
+                    byte[] der = Base64.getDecoder().decode(chainB64.get(i));
+                    chain[i] = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(der));
+                }
+                return chain;
+            }
+            if (leafB64 != null && !leafB64.isBlank()) {
+                byte[] der = Base64.getDecoder().decode(leafB64);
+                X509Certificate leaf = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(der));
+                return new X509Certificate[]{ leaf };
+            }
+        } catch (Exception e) {
+            log.warn("Could not build certificate chain from B64: {}", e.getMessage());
+        }
+        return new X509Certificate[0];
     }
 
     private void validateCidr(String host, List<String> allowedCidrs) {
