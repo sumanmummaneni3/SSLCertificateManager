@@ -50,6 +50,9 @@ services:
       ALERT_THRESHOLD_CRITICAL_DAYS: ${ALERT_THRESHOLD_CRITICAL_DAYS:-7}
       JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseContainerSupport"
       MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+      # Local dev defaults to the 'dev' Spring profile so /api/v1/auth/dev-token is available
+      # (that endpoint also requires APP_DEV_MODE=true). Override to "" or "prod" for production.
+      SPRING_PROFILES_ACTIVE:     ${SPRING_PROFILES_ACTIVE:-dev}
       APP_DEV_MODE:               ${APP_DEV_MODE:-false}
       PLATFORM_ADMIN_EMAILS:      ${PLATFORM_ADMIN_EMAILS:-}
       RENEWAL_SERVICE_URL:        http://renewal-service:8444
