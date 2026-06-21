@@ -27,6 +27,8 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
   const [deleteId, setDeleteId]   = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [view, setView]           = useState(initialCertId ? "cert-detail" : "dashboard");
+  // When an MSP drills into a single client org's targets from the MSP dashboard.
+  const [mspTargetFilter, setMspTargetFilter] = useState(null);
 
   // Proactive nav-guard: hit the server's session record before changing view.
   // Fail-open on network / 5xx — the reactive 401 handler still catches real expiry.
@@ -42,6 +44,18 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
       }
     }
   }, [token, onExpireSession]);
+
+  // Sidebar navigation always clears any MSP per-client target filter.
+  const sidebarNavigate = useCallback((viewId) => {
+    setMspTargetFilter(null);
+    navigateTo(viewId);
+  }, [navigateTo]);
+
+  // Drill into one client org's targets from the MSP dashboard.
+  const viewClientTargets = useCallback((orgId, orgName) => {
+    setMspTargetFilter({ orgId, orgName });
+    setView("msp-targets");
+  }, []);
 
   const [selectedCertId, setSelectedCertId] = useState(initialCertId || null);
   const [certs, setCerts]         = useState([]);
@@ -159,7 +173,7 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
   if (loading) {
     return (
       <div className="app">
-        <Sidebar view={view} onView={navigateTo} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+        <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
         <div className="main"><div className="loading-center"><Spinner lg /><span>Loading dashboard...</span></div></div>
       </div>
     );
@@ -167,7 +181,7 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={navigateTo} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+      <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
       <div className="main">
         {actingAsOrgId && (
           <div className="impersonation-banner" role="alert">
@@ -253,9 +267,10 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
         )}
         {view === "team"     && <TeamView     token={token} org={org} toast={toast} me={me} />}
         {view === "settings" && <SettingsView token={token} org={org} me={me} toast={toast} />}
-        {view === "msp-dashboard" && <MspDashboardView token={token} me={me} />}
+        {view === "msp-dashboard" && <MspDashboardView token={token} me={me} onViewClientTargets={viewClientTargets} />}
         {view === "msp-orgs"      && <MspOrgsView     token={token} me={me} toast={toast} />}
-        {view === "msp-targets"   && <MspTargetsView   token={token} me={me} />}
+        {view === "msp-targets"   && <MspTargetsView   token={token} me={me} toast={toast}
+            filter={mspTargetFilter} onClearFilter={() => setMspTargetFilter(null)} />}
         {view === "platform-admin-orgs" && (
           <PlatformOrgsView
             token={token}
@@ -281,8 +296,7 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
 
       {showAdd && (
         <AddTargetModal token={token} onClose={() => setShowAdd(false)}
-          onAdded={() => { setShowAdd(false); load(); }} toast={toast}
-          isMsp={org?.orgType === "MSP"} primaryOrg={org} />
+          onAdded={() => { setShowAdd(false); load(); }} toast={toast} />
       )}
 
       {editTarget && (

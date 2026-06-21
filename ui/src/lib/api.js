@@ -74,7 +74,7 @@ export const api = {
   // MSP endpoints
   msp: {
     getDashboard: (token) => api.call("GET", "/api/v1/msp/dashboard", null, token),
-    getTargets:   (token, page = 0, size = 20) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}`, null, token),
+    getTargets:   (token, page = 0, size = 20, orgId = null) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}${orgId ? `&orgId=${orgId}` : ""}`, null, token),
     listClients:  (token) => api.call("GET", "/api/v1/msp/clients", null, token),
     createClient: (data, token) => api.call("POST", "/api/v1/msp/clients", data, token),
     updateClient: (id, data, token) => api.call("PUT", `/api/v1/msp/clients/${id}`, data, token),

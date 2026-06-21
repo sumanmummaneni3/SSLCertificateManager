@@ -2,25 +2,30 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api.js";
 import { fmtDate } from "@/lib/helpers.js";
 import { Spinner, Badge } from "@/components/index.js";
+import { AddTargetModal } from "@/panels/targets/AddTargetModal.jsx";
 
-export function MspTargetsView({ token, me }) {
+export function MspTargetsView({ token, me, filter, onClearFilter, toast }) {
   const [targets, setTargets]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [page, setPage]         = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [showAdd, setShowAdd]   = useState(false);
   const upgradePending = me?.permissions?.mspUpgradePending === true;
+  const filterOrgId = filter?.orgId || null;
 
   const load = useCallback(async (p) => {
     if (upgradePending) return;
     setLoading(true);
     try {
-      const data = await api.msp.getTargets(token, p, 20);
+      const data = await api.msp.getTargets(token, p, 20, filterOrgId);
       setTargets(data?.content || []);
       setTotalPages(data?.totalPages ?? 0);
-    } catch { /* silently ignore — no toast prop */ }
+    } catch { /* silently ignore */ }
     finally { setLoading(false); }
-  }, [token, upgradePending]);
+  }, [token, upgradePending, filterOrgId]);
 
+  // Reset to the first page whenever the org filter changes.
+  useEffect(() => { setPage(0); }, [filterOrgId]);
   useEffect(() => { load(page); }, [load, page]);
 
   const handlePrev = () => { if (page > 0) setPage((p) => p - 1); };
@@ -43,10 +48,20 @@ export function MspTargetsView({ token, me }) {
     <>
       <div className="page-header">
         <div>
-          <div className="page-title">All Targets</div>
-          <div className="page-sub">Cross-organisation target view — read only</div>
+          <div className="page-title">{filter ? `Targets — ${filter.orgName}` : "All Targets"}</div>
+          <div className="page-sub">
+            {filter ? "Targets for this client organisation" : "Cross-organisation target view"}
+          </div>
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={() => load(page)}>↻ Refresh</button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {filter && (
+            <button className="btn btn-secondary btn-sm" onClick={onClearFilter}>← All Targets</button>
+          )}
+          {filter && (
+            <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>+ Add Target</button>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={() => load(page)}>↻ Refresh</button>
+        </div>
       </div>
       <div className="page-content">
         {loading ? (
@@ -55,7 +70,11 @@ export function MspTargetsView({ token, me }) {
           <div className="empty">
             <div className="empty-icon" aria-hidden="true">⊕</div>
             <div className="empty-title">No targets found</div>
-            <p className="empty-sub">Targets added to client organisations will appear here.</p>
+            <p className="empty-sub">
+              {filter
+                ? `No targets yet for ${filter.orgName}. Use “Add Target” to create one.`
+                : "Targets added to client organisations will appear here."}
+            </p>
           </div>
         ) : (
           <>
@@ -112,6 +131,16 @@ export function MspTargetsView({ token, me }) {
           </>
         )}
       </div>
+
+      {showAdd && filter && (
+        <AddTargetModal
+          token={token}
+          forOrg={{ id: filter.orgId, name: filter.orgName }}
+          toast={toast || (() => {})}
+          onClose={() => setShowAdd(false)}
+          onAdded={() => { setShowAdd(false); load(page); }}
+        />
+      )}
     </>
   );
 }

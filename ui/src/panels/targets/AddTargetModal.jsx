@@ -3,7 +3,10 @@ import { api } from "@/lib/api.js";
 import { isRfc1918 } from "@/lib/validation.js";
 import { Spinner } from "@/components/index.js";
 
-export function AddTargetModal({ token, onClose, onAdded, toast, isMsp, primaryOrg }) {
+export function AddTargetModal({ token, onClose, onAdded, toast, forOrg }) {
+  // `forOrg` ({ id, name }) scopes the target to a specific organization (e.g. an MSP
+  // adding to a client org). When omitted, the target is created in the caller's own
+  // organization (the dashboard "Add Target" flow).
   const [host, setHost]           = useState("");
   const [port, setPort]           = useState("443");
   const [desc, setDesc]           = useState("");
@@ -12,31 +15,12 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp, primaryO
   const [agents, setAgents]       = useState([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
-  const [clientOrgs, setClientOrgs] = useState([]);
-  // Default to the MSP's own (primary) org so targets can be added to it
-  // straight after onboarding, without first creating a client org.
-  const [targetOrgId, setTargetOrgId] = useState(isMsp ? (primaryOrg?.id || "") : "");
 
   useEffect(() => {
     api.listAgents(token).then(setAgents).catch(() => {});
-    if (isMsp) {
-      api.msp.listClients(token).then(setClientOrgs).catch(() => {});
-    }
-  }, [token, isMsp]);
-
-  // The MSP can add targets to its own org (primary) as well as any client org.
-  // listClients() returns only child orgs, so prepend the primary org explicitly.
-  const orgOptions = isMsp
-    ? [
-        ...(primaryOrg?.id
-          ? [{ id: primaryOrg.id, name: `${primaryOrg.name || "Your organization"} (your org)` }]
-          : []),
-        ...clientOrgs.filter((o) => o.id !== primaryOrg?.id),
-      ]
-    : [];
+  }, [token]);
 
   const handleAdd = async () => {
-    if (isMsp && !targetOrgId) { setError("Please select an organization"); return; }
     if (!host.trim()) { setError("Host is required"); return; }
     if (isPrivate && !agentId) { setError("Select an agent for private targets"); return; }
     setError(""); setLoading(true);
@@ -48,8 +32,8 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp, primaryO
         agentId: isPrivate ? agentId : undefined,
         description: desc.trim() || undefined,
       };
-      const target = isMsp
-        ? await api.createTargetForOrg(targetOrgId, payload, token)
+      const target = forOrg?.id
+        ? await api.createTargetForOrg(forOrg.id, payload, token)
         : await api.createTarget(payload, token);
       toast(`Target added: ${target.host}:${target.port}`, "success");
       onAdded(target);
@@ -71,13 +55,10 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp, primaryO
 
         {error && <div className="alert alert-error" role="alert">⚠ {error}</div>}
 
-        {isMsp && (
+        {forOrg?.id && (
           <div className="field">
-            <label htmlFor="target-org">Organization <span style={{color:"var(--red)"}}>*</span></label>
-            <select id="target-org" value={targetOrgId} onChange={e => setTargetOrgId(e.target.value)}>
-              <option value="">— Select organization —</option>
-              {orgOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
+            <label>Organization</label>
+            <div className="badge badge-domain" style={{ display: "inline-block" }}>{forOrg.name}</div>
           </div>
         )}
 
