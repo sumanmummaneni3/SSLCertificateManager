@@ -49,4 +49,11 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
     @Modifying
     @Query("DELETE FROM AgentScanJob j WHERE j.status IN ('COMPLETED','FAILED') AND j.createdAt < :before")
     int deleteOldCompletedJobs(Instant before);
+
+    /**
+     * Counts PENDING + CLAIMED jobs for an org — used by RFC 0010 migration to record
+     * in-flight scan work at transfer time (Decision 2: count only, do not block).
+     */
+    @Query("SELECT COUNT(j) FROM AgentScanJob j WHERE j.orgId = :orgId AND j.status IN ('PENDING','CLAIMED')")
+    int countInFlightByOrgId(@Param("orgId") UUID orgId);
 }

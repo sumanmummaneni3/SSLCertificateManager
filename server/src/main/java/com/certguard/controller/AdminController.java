@@ -3,9 +3,14 @@ package com.certguard.controller;
 import com.certguard.dto.admin.AdminOrgDetailDto;
 import com.certguard.dto.admin.AdminOrgDto;
 import com.certguard.dto.admin.AdminOrgTreeDto;
+import com.certguard.dto.request.OrgTransferRequest;
+import com.certguard.dto.request.OrgTransferUndoRequest;
+import com.certguard.dto.response.OrgMigrationResponse;
 import com.certguard.dto.response.OrgResponse;
 import com.certguard.entity.PlatformAdminAudit;
 import com.certguard.service.AdminService;
+import com.certguard.service.OrgMigrationService;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -34,9 +39,11 @@ import java.util.UUID;
 public class AdminController {
 
     private final AdminService adminService;
+    private final OrgMigrationService orgMigrationService;
 
-    public AdminController(AdminService adminService) {
-        this.adminService = adminService;
+    public AdminController(AdminService adminService, OrgMigrationService orgMigrationService) {
+        this.adminService        = adminService;
+        this.orgMigrationService = orgMigrationService;
     }
 
     /**
@@ -122,5 +129,55 @@ public class AdminController {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ResponseEntity.ok(adminService.listAuditEvents(orgId, from, to, pageable));
+    }
+
+    // ── RFC 0010: MSP→MSP organisation migration ──────────────────────────────
+
+    /**
+     * Transfers a client org from its current MSP to a target MSP.
+     *
+     * <p>POST /api/v1/admin/orgs/{orgId}/transfer
+     *
+     * <p>One atomic transaction: pessimistic-lock org row, re-validate preconditions,
+     * flip parent_org_id, revoke source-MSP direct memberships + tokens, write FORWARD
+     * audit row. Post-commit: best-effort email notifications.
+     *
+     * @param orgId     the client org to transfer
+     * @param req       targetMspOrgId, optional expectedSourceMspId, required reason
+     * @param principal authenticated platform admin
+     */
+    @PostMapping("/orgs/{orgId}/transfer")
+    public ResponseEntity<OrgMigrationResponse> transferOrg(
+            @PathVariable UUID orgId,
+            @Valid @RequestBody OrgTransferRequest req,
+            @AuthenticationPrincipal CertGuardUserPrincipal principal) {
+
+        OrgMigrationResponse result = orgMigrationService.transfer(
+                orgId, req, principal.getUserId(), principal.getEmail());
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Reverses the most recent FORWARD migration of an org.
+     *
+     * <p>POST /api/v1/admin/orgs/{orgId}/transfer/undo
+     *
+     * <p>Re-parents the org to source_msp_org_id, restores exactly the recorded
+     * revoked_member_ids, clears token revocations, and writes a REVERSE audit row.
+     * Guarded: rejects with 409 undo-stale if the org has moved again since the FORWARD.
+     *
+     * @param orgId     the client org to restore
+     * @param req       migrationId (the FORWARD record to reverse), required reason
+     * @param principal authenticated platform admin
+     */
+    @PostMapping("/orgs/{orgId}/transfer/undo")
+    public ResponseEntity<OrgMigrationResponse> undoTransfer(
+            @PathVariable UUID orgId,
+            @Valid @RequestBody OrgTransferUndoRequest req,
+            @AuthenticationPrincipal CertGuardUserPrincipal principal) {
+
+        OrgMigrationResponse result = orgMigrationService.undo(
+                orgId, req, principal.getUserId(), principal.getEmail());
+        return ResponseEntity.ok(result);
     }
 }
