@@ -3,7 +3,7 @@ import { api } from "@/lib/api.js";
 import { isRfc1918 } from "@/lib/validation.js";
 import { Spinner } from "@/components/index.js";
 
-export function AddTargetModal({ token, onClose, onAdded, toast, isMsp }) {
+export function AddTargetModal({ token, onClose, onAdded, toast, isMsp, primaryOrg }) {
   const [host, setHost]           = useState("");
   const [port, setPort]           = useState("443");
   const [desc, setDesc]           = useState("");
@@ -13,7 +13,9 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp }) {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [clientOrgs, setClientOrgs] = useState([]);
-  const [targetOrgId, setTargetOrgId] = useState("");
+  // Default to the MSP's own (primary) org so targets can be added to it
+  // straight after onboarding, without first creating a client org.
+  const [targetOrgId, setTargetOrgId] = useState(isMsp ? (primaryOrg?.id || "") : "");
 
   useEffect(() => {
     api.listAgents(token).then(setAgents).catch(() => {});
@@ -22,8 +24,19 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp }) {
     }
   }, [token, isMsp]);
 
+  // The MSP can add targets to its own org (primary) as well as any client org.
+  // listClients() returns only child orgs, so prepend the primary org explicitly.
+  const orgOptions = isMsp
+    ? [
+        ...(primaryOrg?.id
+          ? [{ id: primaryOrg.id, name: `${primaryOrg.name || "Your organization"} (your org)` }]
+          : []),
+        ...clientOrgs.filter((o) => o.id !== primaryOrg?.id),
+      ]
+    : [];
+
   const handleAdd = async () => {
-    if (isMsp && !targetOrgId) { setError("Please select a client organization"); return; }
+    if (isMsp && !targetOrgId) { setError("Please select an organization"); return; }
     if (!host.trim()) { setError("Host is required"); return; }
     if (isPrivate && !agentId) { setError("Select an agent for private targets"); return; }
     setError(""); setLoading(true);
@@ -60,10 +73,10 @@ export function AddTargetModal({ token, onClose, onAdded, toast, isMsp }) {
 
         {isMsp && (
           <div className="field">
-            <label htmlFor="target-org">Client Organization <span style={{color:"var(--red)"}}>*</span></label>
+            <label htmlFor="target-org">Organization <span style={{color:"var(--red)"}}>*</span></label>
             <select id="target-org" value={targetOrgId} onChange={e => setTargetOrgId(e.target.value)}>
-              <option value="">— Select client org —</option>
-              {clientOrgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              <option value="">— Select organization —</option>
+              {orgOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </div>
         )}

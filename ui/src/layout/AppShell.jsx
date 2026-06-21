@@ -282,7 +282,7 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
       {showAdd && (
         <AddTargetModal token={token} onClose={() => setShowAdd(false)}
           onAdded={() => { setShowAdd(false); load(); }} toast={toast}
-          isMsp={org?.orgType === "MSP"} />
+          isMsp={org?.orgType === "MSP"} primaryOrg={org} />
       )}
 
       {editTarget && (
