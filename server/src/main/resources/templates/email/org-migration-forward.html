@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><title>Organisation Migrated to New MSP</title></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+  <h2 style="color:#1a73e8;">&#128260; Organisation Migrated to a New MSP</h2>
+  <p>This is an automated notification. The following organisation has been transferred from one Managed Service Provider to another on CertGuard Cloud.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Organisation</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${orgName}">Acme Corp</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Previous MSP</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${sourceMspName}">MSP-A</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">New MSP</td>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;color:#1a73e8;" th:text="${targetMspName}">MSP-B</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Reason</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${reason}">Customer request</td>
+    </tr>
+    <tr th:if="${referenceTicket != null and !referenceTicket.isEmpty()}">
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Reference</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${referenceTicket}">TICKET-1234</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Migration ID</td>
+      <td style="padding:8px;border:1px solid #eee;font-size:12px;" th:text="${migrationId}">00000000-...</td>
+    </tr>
+  </table>
+  <p>All certificate monitoring targets, scan history, and configuration have been preserved. The organisation is now managed under <strong th:text="${targetMspName}">MSP-B</strong>.</p>
+  <p>If you have questions about this change, please contact CertGuard support and reference the Migration ID above.</p>
+  <p style="text-align:center;margin:32px 0;">
+    <a th:href="${baseUrl}" style="background:#1a73e8;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">View in CertGuard</a>
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
+  <p style="font-size:12px;color:#999;">&mdash; CertGuard Cloud</p>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><title>Organisation Migration Reversed</title></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+  <h2 style="color:#b45309;">&#8635; Organisation Migration Reversed</h2>
+  <p>This is an automated notification. A previous MSP migration for the following organisation has been reversed on CertGuard Cloud.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Organisation</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${orgName}">Acme Corp</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Returned To MSP</td>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;color:#16a34a;" th:text="${sourceMspName}">MSP-A</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Reverted From MSP</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${targetMspName}">MSP-B</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Reason</td>
+      <td style="padding:8px;border:1px solid #eee;" th:text="${reason}">Mistaken transfer</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Migration ID</td>
+      <td style="padding:8px;border:1px solid #eee;font-size:12px;" th:text="${migrationId}">00000000-...</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;border:1px solid #eee;font-weight:bold;">Reverses</td>
+      <td style="padding:8px;border:1px solid #eee;font-size:12px;" th:text="${originalMigrationId}">00000000-...</td>
+    </tr>
+  </table>
+  <p>The organisation has been returned to <strong th:text="${sourceMspName}">MSP-A</strong>. All previously revoked MSP staff memberships have been restored.</p>
+  <p>If you have questions about this change, please contact CertGuard support and reference the Migration ID above.</p>
+  <p style="text-align:center;margin:32px 0;">
+    <a th:href="${baseUrl}" style="background:#b45309;color:#fff;padding:12px 28px;border-radius:4px;text-decoration:none;font-size:16px;">View in CertGuard</a>
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
+  <p style="font-size:12px;color:#999;">&mdash; CertGuard Cloud</p>
+</body>
+</html>

@@ -69,6 +69,30 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * RFC 0010: typed 409 errors for MSP→MSP org migration.
+     * Problem-type slug is carried by {@link OrgMigrationException#getProblemType()}.
+     */
+    @ExceptionHandler(OrgMigrationException.class)
+    public ProblemDetail handleOrgMigration(OrgMigrationException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setType(URI.create("https://certguard.dev/problems/" + ex.getProblemType()));
+        pd.setTitle(toTitle(ex.getProblemType()));
+        return pd;
+    }
+
+    private static String toTitle(String kebab) {
+        // "no-op-transfer" → "No Op Transfer"
+        String[] parts = kebab.split("-");
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) {
+            if (!p.isEmpty()) {
+                sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1)).append(' ');
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /**
      * Authorization denials from method security (@PreAuthorize) propagate here as
      * AccessDeniedException (incl. Spring Security 6's AuthorizationDeniedException
      * subclass). Without this they fall through to the catch-all below and return 500.

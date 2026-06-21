@@ -1,0 +1,21 @@
+CertGuard Cloud — Organisation Migrated to a New MSP
+
+This is an automated notification. The following organisation has been
+transferred from one Managed Service Provider to another on CertGuard Cloud.
+
+Organisation:  [(${orgName})]
+Previous MSP:  [(${sourceMspName})]
+New MSP:       [(${targetMspName})]
+Reason:        [(${reason})]
+[(${referenceTicket != null and !referenceTicket.isEmpty()} ? 'Reference:     ' + referenceTicket : '')]
+Migration ID:  [(${migrationId})]
+
+All certificate monitoring targets, scan history, and configuration have been
+preserved. The organisation is now managed under [(${targetMspName})].
+
+If you have questions about this change, please contact CertGuard support
+and reference the Migration ID above.
+
+Log in to CertGuard Cloud: [(${baseUrl})]
+
+— CertGuard Cloud

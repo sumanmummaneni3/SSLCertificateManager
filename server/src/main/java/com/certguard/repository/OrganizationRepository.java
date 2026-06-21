@@ -2,7 +2,9 @@ package com.certguard.repository;
 
 import com.certguard.entity.Organization;
 import com.certguard.enums.OrgType;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -34,4 +36,13 @@ public interface OrganizationRepository extends JpaRepository<Organization, UUID
 
     @Query("SELECT COALESCE(o.parentOrg.id, o.id) FROM Organization o WHERE o.id = :orgId")
     UUID findBillingOwner(@Param("orgId") UUID orgId);
+
+    /**
+     * RFC 0010: pessimistic write lock on a single org row — prevents concurrent transfers
+     * of the same org (double-submit / concurrent request race).
+     * Must be called inside an active transaction.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Organization o WHERE o.id = :id")
+    Optional<Organization> findByIdForUpdate(@Param("id") UUID id);
 }
