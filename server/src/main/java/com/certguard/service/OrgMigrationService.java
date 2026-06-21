@@ -219,18 +219,29 @@ public class OrgMigrationService {
         );
 
         // 7. Post-commit: best-effort notifications (outside tx — failure must not roll back)
-        final String orgName          = org.getName();
-        final String sourceMspContact = sourceMsp.getContactEmail();
-        final String targetMspContact = targetMsp.getContactEmail();
-        final String orgContact       = org.getContactEmail();
-        final UUID   auditId          = audit.getId();
+        //    Capture all primitives/strings before crossing the tx boundary; no entity refs.
+        final String fwdOrgName          = org.getName();
+        final String fwdOrgContact       = org.getContactEmail();
+        final String fwdSourceMspContact = sourceMsp.getContactEmail();
+        final String fwdTargetMspContact = targetMsp.getContactEmail();
+        final String fwdReason           = req.getReason();
+        final String fwdReferenceTicket  = req.getReferenceTicket();
+        final String fwdAuditIdStr       = audit.getId().toString();
+        final String fwdSourceMspName    = sourceMspName;
+        final String fwdTargetMspName    = targetMspName;
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                sendMigrationNotifications(
-                        "FORWARD", orgName, sourceMspName, targetMspName,
-                        sourceMspContact, targetMspContact, orgContact, auditId);
+                try {
+                    notificationService.dispatchOrgMigrationForward(
+                            fwdOrgName, fwdSourceMspName, fwdTargetMspName,
+                            fwdReason, fwdReferenceTicket, fwdAuditIdStr,
+                            fwdOrgContact, fwdSourceMspContact, fwdTargetMspContact);
+                } catch (Exception e) {
+                    log.warn("RFC-0010 post-commit forward notification failed (non-fatal): {}",
+                            e.getMessage());
+                }
             }
         });
 
@@ -356,59 +367,33 @@ public class OrgMigrationService {
                 )
         );
 
-        // Post-commit best-effort notifications
-        final String orgName          = org.getName();
-        final String sourceMspName    = forwardRecord.getSourceMspName();
-        final String sourceMspContact = sourceMsp.getContactEmail();
-        final String targetMspContact = targetMsp != null ? targetMsp.getContactEmail() : null;
-        final String orgContact       = org.getContactEmail();
-        final UUID   auditId          = reverseAudit.getId();
+        // Post-commit best-effort notifications (outside tx — failure must not roll back)
+        final String revOrgName             = org.getName();
+        final String revOrgContact          = org.getContactEmail();
+        final String revSourceMspName       = forwardRecord.getSourceMspName();
+        final String revSourceMspContact    = sourceMsp.getContactEmail();
+        final String revTargetMspName       = targetMspName;
+        final String revTargetMspContact    = targetMsp != null ? targetMsp.getContactEmail() : null;
+        final String revUndoReason          = req.getReason();
+        final String revAuditIdStr          = reverseAudit.getId().toString();
+        final String revOriginalMigrationId = forwardRecord.getId().toString();
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                sendMigrationNotifications(
-                        "REVERSE", orgName, sourceMspName, targetMspName,
-                        sourceMspContact, targetMspContact, orgContact, auditId);
+                try {
+                    notificationService.dispatchOrgMigrationReverse(
+                            revOrgName, revSourceMspName, revTargetMspName,
+                            revUndoReason, revAuditIdStr, revOriginalMigrationId,
+                            revOrgContact, revSourceMspContact, revTargetMspContact);
+                } catch (Exception e) {
+                    log.warn("RFC-0010 post-commit reverse notification failed (non-fatal): {}",
+                            e.getMessage());
+                }
             }
         });
 
         return response;
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────────
-
-    /**
-     * Best-effort post-commit email to source MSP contact, target MSP contact,
-     * and org contact_email. Failure is logged and does NOT roll back the move.
-     */
-    private void sendMigrationNotifications(String direction,
-                                             String orgName,
-                                             String sourceMspName,
-                                             String targetMspName,
-                                             String sourceMspContact,
-                                             String targetMspContact,
-                                             String orgContact,
-                                             UUID migrationId) {
-        log.info("RFC-0010 post-commit: sending {} migration notifications for org '{}' (migrationId={})",
-                direction, orgName, migrationId);
-
-        notifyMigration(sourceMspContact, direction, orgName, sourceMspName, targetMspName, migrationId);
-        notifyMigration(targetMspContact, direction, orgName, sourceMspName, targetMspName, migrationId);
-        notifyMigration(orgContact,       direction, orgName, sourceMspName, targetMspName, migrationId);
-    }
-
-    private void notifyMigration(String email, String direction, String orgName,
-                                  String sourceMspName, String targetMspName, UUID migrationId) {
-        if (email == null || email.isBlank()) return;
-        try {
-            // Delegate to NotificationService via its logger path (dev-mode aware).
-            // A full HTML template can be added in a follow-up; for v1 we log at INFO
-            // so operations can track it, and the service's devMode guard suppresses SMTP.
-            log.info("[MIGRATION NOTIFY] {} → {} org='{}' from='{}' to='{}' migrationId={}",
-                    direction, email, orgName, sourceMspName, targetMspName, migrationId);
-        } catch (Exception e) {
-            log.warn("Migration notification failed for {} (non-fatal): {}", email, e.getMessage());
-        }
-    }
 }

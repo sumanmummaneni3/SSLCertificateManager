@@ -203,6 +203,38 @@ class OrgMigrationServiceTest {
             assertThat(result.migration().revokedMemberCount()).isEqualTo(0);
             verify(tokenRevocationService, never()).revokeForUserInOrg(any(), any(), any(), any());
         }
+
+        /**
+         * RFC 0010 §3 post-commit: a notification failure must NOT roll back or throw
+         * from transfer(). The try/catch in afterCommit() absorbs the exception.
+         *
+         * We simulate a failure by making dispatchOrgMigrationForward throw, then
+         * trigger afterCommit() manually (TransactionSynchronizationManager is
+         * initialised in @BeforeEach so registered synchronizations run synchronously
+         * when we fire afterCompletion(STATUS_COMMITTED)).
+         */
+        @Test
+        void notificationFailure_doesNotPropagateFromTransfer() {
+            doThrow(new RuntimeException("SMTP down"))
+                    .when(notificationService)
+                    .dispatchOrgMigrationForward(any(), any(), any(), any(), any(), any(),
+                            any(), any(), any());
+
+            // transfer() must complete successfully even though the notification will throw
+            assertThatNoException().isThrownBy(
+                    () -> service.transfer(clientOrgId, validRequest(), actorId, actorEmail));
+
+            // The audit row must still have been written
+            verify(auditRepository).save(any(OrgMigrationAudit.class));
+
+            // Trigger afterCommit callbacks (simulates transaction commit in unit test)
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(s -> s.afterCommit());
+
+            // Notification was attempted (then swallowed)
+            verify(notificationService).dispatchOrgMigrationForward(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any());
+        }
     }
 
     // ── Forward transfer guard cases ──────────────────────────────────────────

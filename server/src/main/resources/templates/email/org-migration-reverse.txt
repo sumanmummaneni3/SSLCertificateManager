@@ -1,0 +1,21 @@
+CertGuard Cloud — Organisation Migration Reversed
+
+This is an automated notification. A previous MSP migration for the following
+organisation has been reversed on CertGuard Cloud.
+
+Organisation:     [(${orgName})]
+Returned To MSP:  [(${sourceMspName})]
+Reverted From MSP: [(${targetMspName})]
+Reason:           [(${reason})]
+Migration ID:     [(${migrationId})]
+Reverses:         [(${originalMigrationId})]
+
+The organisation has been returned to [(${sourceMspName})]. All previously
+revoked MSP staff memberships have been restored.
+
+If you have questions about this change, please contact CertGuard support
+and reference the Migration ID above.
+
+Log in to CertGuard Cloud: [(${baseUrl})]
+
+— CertGuard Cloud

@@ -323,6 +323,116 @@ public class NotificationService {
         sendMimeEmail(contactEmail, subject, "renewal-failed", ctx, "renewal " + req.renewalId());
     }
 
+    // ── RFC 0010: MSP→MSP organisation migration notifications ────────────────
+
+    /**
+     * Best-effort post-commit notification for a FORWARD (transfer) migration.
+     *
+     * Sends one email to each non-blank contact address: the impacted org, the
+     * source MSP, and the target MSP. Each send is independent — failure of one
+     * does not prevent the others. Called {@code @Async} so it executes outside
+     * any transaction and never rolls back the migration.
+     *
+     * @param orgName          display name of the migrated client org
+     * @param sourceMspName    display name of the source MSP (MSP-A)
+     * @param targetMspName    display name of the target MSP (MSP-B)
+     * @param reason           platform-admin-supplied reason
+     * @param referenceTicket  optional out-of-band ticket reference
+     * @param migrationId      UUID of the FORWARD audit record
+     * @param orgContact       contact_email of the client org (may be null)
+     * @param sourceMspContact contact_email of the source MSP (may be null)
+     * @param targetMspContact contact_email of the target MSP (may be null)
+     */
+    @Async
+    public void dispatchOrgMigrationForward(String orgName,
+                                             String sourceMspName,
+                                             String targetMspName,
+                                             String reason,
+                                             String referenceTicket,
+                                             String migrationId,
+                                             String orgContact,
+                                             String sourceMspContact,
+                                             String targetMspContact) {
+        if (devMode) {
+            log.info("[DEV] org-migration-forward email suppressed — org='{}' from='{}' to='{}' migrationId={}",
+                    orgName, sourceMspName, targetMspName, migrationId);
+            return;
+        }
+
+        String subject = "[CertGuard] Organisation '" + orgName + "' transferred to " + targetMspName;
+
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+        ctx.setVariable("orgName",         orgName);
+        ctx.setVariable("sourceMspName",   sourceMspName);
+        ctx.setVariable("targetMspName",   targetMspName);
+        ctx.setVariable("reason",          reason);
+        ctx.setVariable("referenceTicket", referenceTicket != null ? referenceTicket : "");
+        ctx.setVariable("migrationId",     migrationId);
+        ctx.setVariable("baseUrl",         baseUrl);
+
+        sendMigrationEmail(orgContact,       subject, "org-migration-forward", ctx);
+        sendMigrationEmail(sourceMspContact, subject, "org-migration-forward", ctx);
+        sendMigrationEmail(targetMspContact, subject, "org-migration-forward", ctx);
+    }
+
+    /**
+     * Best-effort post-commit notification for a REVERSE (undo) migration.
+     *
+     * Same recipient set and isolation semantics as
+     * {@link #dispatchOrgMigrationForward}.
+     *
+     * @param orgName            display name of the migrated client org
+     * @param sourceMspName      display name of MSP-A (the org is returned here)
+     * @param targetMspName      display name of MSP-B (reverted from)
+     * @param reason             platform-admin-supplied reason for the undo
+     * @param migrationId        UUID of the REVERSE audit record
+     * @param originalMigrationId UUID of the FORWARD record that was reversed
+     * @param orgContact         contact_email of the client org (may be null)
+     * @param sourceMspContact   contact_email of the source MSP (may be null)
+     * @param targetMspContact   contact_email of the target MSP (may be null)
+     */
+    @Async
+    public void dispatchOrgMigrationReverse(String orgName,
+                                             String sourceMspName,
+                                             String targetMspName,
+                                             String reason,
+                                             String migrationId,
+                                             String originalMigrationId,
+                                             String orgContact,
+                                             String sourceMspContact,
+                                             String targetMspContact) {
+        if (devMode) {
+            log.info("[DEV] org-migration-reverse email suppressed — org='{}' returnedTo='{}' revertedFrom='{}' migrationId={}",
+                    orgName, sourceMspName, targetMspName, migrationId);
+            return;
+        }
+
+        String subject = "[CertGuard] Organisation '" + orgName + "' migration reversed — returned to " + sourceMspName;
+
+        org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+        ctx.setVariable("orgName",             orgName);
+        ctx.setVariable("sourceMspName",       sourceMspName);
+        ctx.setVariable("targetMspName",       targetMspName);
+        ctx.setVariable("reason",              reason);
+        ctx.setVariable("migrationId",         migrationId);
+        ctx.setVariable("originalMigrationId", originalMigrationId);
+        ctx.setVariable("baseUrl",             baseUrl);
+
+        sendMigrationEmail(orgContact,       subject, "org-migration-reverse", ctx);
+        sendMigrationEmail(sourceMspContact, subject, "org-migration-reverse", ctx);
+        sendMigrationEmail(targetMspContact, subject, "org-migration-reverse", ctx);
+    }
+
+    /**
+     * Single-address migration email helper. Skips null/blank addresses silently;
+     * logs and swallows exceptions so a bad address never propagates up.
+     */
+    private void sendMigrationEmail(String to, String subject, String templateName,
+                                     org.thymeleaf.context.Context ctx) {
+        if (to == null || to.isBlank()) return;
+        sendMimeEmail(to, subject, templateName, ctx, "migration");
+    }
+
     /**
      * Resolves effective notification channels for a target.
      * Falls back to org-level channel config when target JSONB is empty.
