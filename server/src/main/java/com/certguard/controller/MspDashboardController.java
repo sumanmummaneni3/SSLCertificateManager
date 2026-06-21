@@ -30,7 +30,8 @@ public class MspDashboardController {
     }
 
     @GetMapping("/targets")
-    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN') "
+            + "and (#orgId == null or @mspAccessGuard.canAccessOrg(#orgId))")
     public ResponseEntity<Page<MspTargetRow>> targets(
             @RequestParam(required = false) UUID orgId, Pageable pageable) {
         return ResponseEntity.ok(

@@ -62,13 +62,11 @@ public class MspDashboardService {
 
     public Page<MspTargetRow> listTargetsAcrossChildren(UUID mspOrgId, UUID filterOrgId, Pageable pageable) {
         assertMsp(mspOrgId);
-        List<UUID> orgIds = collectScope(mspOrgId);
-        if (filterOrgId != null) {
-            if (!orgIds.contains(filterOrgId)) {
-                throw new AccessDeniedException("Organisation is not within this MSP's scope");
-            }
-            orgIds = List.of(filterOrgId);
-        }
+        // Access to filterOrgId is enforced at the controller via @mspAccessGuard.canAccessOrg.
+        // Restrict the scope to that single org when provided, else the full MSP scope.
+        List<UUID> orgIds = (filterOrgId != null)
+                ? List.of(filterOrgId)
+                : collectScope(mspOrgId);
         return targetRepository.findAllByOrgIdInWithOrg(orgIds, pageable)
                 .map(MspTargetRow::fromEntity);
     }

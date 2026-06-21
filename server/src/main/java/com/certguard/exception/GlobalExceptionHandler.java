@@ -4,8 +4,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
@@ -64,6 +66,23 @@ public class GlobalExceptionHandler {
         pd.setType(URI.create("https://certguard.dev/problems/renewal-not-supported"));
         pd.setTitle("Renewal Not Supported");
         return pd;
+    }
+
+    /**
+     * Authorization denials from method security (@PreAuthorize) propagate here as
+     * AccessDeniedException (incl. Spring Security 6's AuthorizationDeniedException
+     * subclass). Without this they fall through to the catch-all below and return 500.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+        log.warn("Access denied: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "Access denied");
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Invalid value for parameter '" + ex.getName() + "'");
     }
 
     @ExceptionHandler(Exception.class)
