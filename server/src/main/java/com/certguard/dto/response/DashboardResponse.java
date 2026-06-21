@@ -9,4 +9,8 @@ public class DashboardResponse {
     private long expiring;
     private long expired;
     private long unreachable;
+    /** RFC 0009: count of certificates with confirmed REVOKED status. */
+    private long revoked;
+    /** RFC 0009: count of public certificates with untrusted/invalid chains (INVALID status). */
+    private long invalid;
 }

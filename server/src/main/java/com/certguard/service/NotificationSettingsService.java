@@ -39,6 +39,11 @@ public class NotificationSettingsService {
     @Value("${app.alert.critical-days:7}") private int defaultCriticalDays;
     @Value("${app.alert.dedup-hours:23}")  private int defaultDedupHours;
 
+    // RFC 0009: revocation fallback defaults
+    @Value("${app.revocation.enabled:true}")              private boolean defaultRevocationCheckEnabled;
+    @Value("${app.revocation.fail-mode:SOFT}")            private String defaultRevocationFailMode;
+    @Value("${app.chain.alert-on-untrusted:false}")       private boolean defaultAlertOnUntrustedChain;
+
     public NotificationSettingsService(NotificationSettingsRepository settingsRepository,
                                        OrganizationRepository orgRepository,
                                        TargetRepository targetRepository) {
@@ -141,9 +146,35 @@ public class NotificationSettingsService {
         ns.setWarningDays(req.getWarningDays());
         ns.setCriticalDays(req.getCriticalDays());
         ns.setDedupHours(req.getDedupHours());
+        // RFC 0009: optional revocation fields — only update when explicitly provided
+        if (req.getRevocationCheckEnabled() != null) {
+            ns.setRevocationCheckEnabled(req.getRevocationCheckEnabled());
+        }
+        if (req.getRevocationFailMode() != null) {
+            com.certguard.enums.RevocationFailMode mode;
+            try {
+                mode = com.certguard.enums.RevocationFailMode.valueOf(req.getRevocationFailMode().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                    "Invalid revocationFailMode '" + req.getRevocationFailMode() + "'; expected SOFT or HARD");
+            }
+            ns.setRevocationFailMode(mode);
+        }
+        if (req.getAlertOnUntrustedChain() != null) {
+            ns.setAlertOnUntrustedChain(req.getAlertOnUntrustedChain());
+        }
     }
 
     private NotificationSettingsResponse toResponse(NotificationSettings ns, boolean inherited) {
+        // Determine revocation fields with safe defaults if the entity columns are null
+        // (existing rows pre-V35 will have null until updated).
+        boolean revCheckEnabled = ns.getRevocationCheckEnabled() != null
+                ? ns.getRevocationCheckEnabled() : defaultRevocationCheckEnabled;
+        String revFailMode = ns.getRevocationFailMode() != null
+                ? ns.getRevocationFailMode().name() : defaultRevocationFailMode;
+        boolean alertUntrusted = ns.getAlertOnUntrustedChain() != null
+                ? ns.getAlertOnUntrustedChain() : defaultAlertOnUntrustedChain;
+
         return NotificationSettingsResponse.builder()
                 .id(ns.getId())
                 .enabled(ns.getEnabled())
@@ -151,23 +182,19 @@ public class NotificationSettingsService {
                 .criticalDays(ns.getCriticalDays())
                 .dedupHours(ns.getDedupHours())
                 .inherited(inherited)
+                .revocationCheckEnabled(revCheckEnabled)
+                .revocationFailMode(revFailMode)
+                .alertOnUntrustedChain(alertUntrusted)
                 .build();
     }
 
     /** Effective value for a target that has no override — walks up the resolution chain. */
     private NotificationSettingsResponse effectiveForTarget(UUID orgId) {
         return settingsRepository.findByOrganizationIdAndTargetIsNull(orgId)
-                .map(ns -> NotificationSettingsResponse.builder()
-                        .id(ns.getId())
-                        .enabled(ns.getEnabled())
-                        .warningDays(ns.getWarningDays())
-                        .criticalDays(ns.getCriticalDays())
-                        .dedupHours(ns.getDedupHours())
-                        .inherited(true)
-                        .build())
+                .map(ns -> toResponse(ns, /* inherited= */ true))
                 .orElseGet(() -> {
                     NotificationSettingsResponse r = appYmlFallbackResponse();
-                    // Return as inherited=true since it's inherited from app defaults.
+                    // Re-stamp inherited=true since it's from app defaults (fallback defaults inherited=false).
                     return NotificationSettingsResponse.builder()
                             .id(r.getId())
                             .enabled(r.isEnabled())
@@ -175,6 +202,9 @@ public class NotificationSettingsService {
                             .criticalDays(r.getCriticalDays())
                             .dedupHours(r.getDedupHours())
                             .inherited(true)
+                            .revocationCheckEnabled(r.isRevocationCheckEnabled())
+                            .revocationFailMode(r.getRevocationFailMode())
+                            .alertOnUntrustedChain(r.isAlertOnUntrustedChain())
                             .build();
                 });
     }
@@ -187,6 +217,9 @@ public class NotificationSettingsService {
                 .criticalDays(defaultCriticalDays)
                 .dedupHours(defaultDedupHours)
                 .inherited(false)
+                .revocationCheckEnabled(defaultRevocationCheckEnabled)
+                .revocationFailMode(defaultRevocationFailMode)
+                .alertOnUntrustedChain(defaultAlertOnUntrustedChain)
                 .build();
     }
 

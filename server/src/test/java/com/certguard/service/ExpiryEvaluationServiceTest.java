@@ -686,4 +686,190 @@ class ExpiryEvaluationServiceTest {
                     .isEqualTo(CertStatus.EXPIRING);
         }
     }
+
+    // ── RFC 0009 §3.5: Status precedence (BE-7) ───────────────────────────────
+
+    /**
+     * Tests for the new 5-arg {@code determineCertStatus} overload that incorporates
+     * revocation and chain validation results.
+     * Precedence: REVOKED > EXPIRED > INVALID > EXPIRING > VALID
+     */
+    @Nested
+    class StatusPrecedenceRfc0009 {
+
+        private final com.certguard.service.revocation.RevocationResult REVOKED_RESULT =
+                com.certguard.service.revocation.RevocationResult.revoked(
+                        com.certguard.enums.RevocationSource.OCSP, "KEY_COMPROMISE", 1, java.time.Instant.now());
+
+        private final com.certguard.service.revocation.RevocationResult GOOD_RESULT =
+                com.certguard.service.revocation.RevocationResult.good(
+                        com.certguard.enums.RevocationSource.OCSP);
+
+        private final com.certguard.service.revocation.RevocationResult UNKNOWN_RESULT =
+                com.certguard.service.revocation.RevocationResult.unknown(
+                        com.certguard.enums.RevocationSource.OCSP, "responder down");
+
+        private final com.certguard.service.chain.ChainValidationResult TRUSTED_CHAIN =
+                com.certguard.service.chain.ChainValidationResult.trusted(3);
+
+        private final com.certguard.service.chain.ChainValidationResult UNTRUSTED_CHAIN =
+                com.certguard.service.chain.ChainValidationResult.failed(
+                        com.certguard.enums.ChainValidationError.UNTRUSTED_ANCHOR, 3);
+
+        @BeforeEach
+        void setRevocationShadow() {
+            // Disable shadow mode so status changes actually apply
+            ReflectionTestUtils.setField(service, "revocationShadowMode", false);
+        }
+
+        @Test
+        void revoked_beats_everything() {
+            Organization org = buildOrg();
+            Target publicTarget = enabledTarget(org);
+            ReflectionTestUtils.setField(publicTarget, "isPrivate", false);
+
+            Instant expired = Instant.now().minus(1, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    expired, REVOKED_RESULT, UNTRUSTED_CHAIN, publicTarget, org.getId());
+
+            // Even though the cert is expired AND chain is untrusted, REVOKED wins
+            assertThat(status).isEqualTo(CertStatus.REVOKED);
+        }
+
+        @Test
+        void expired_beats_invalid_when_not_revoked() {
+            Organization org = buildOrg();
+            Target publicTarget = enabledTarget(org);
+            ReflectionTestUtils.setField(publicTarget, "isPrivate", false);
+
+            Instant expired = Instant.now().minus(1, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    expired, GOOD_RESULT, UNTRUSTED_CHAIN, publicTarget, org.getId());
+
+            assertThat(status).isEqualTo(CertStatus.EXPIRED);
+        }
+
+        @Test
+        void invalid_returned_for_public_target_with_untrusted_chain_and_valid_expiry() {
+            Organization org = buildOrg();
+            Target publicTarget = enabledTarget(org);
+            ReflectionTestUtils.setField(publicTarget, "isPrivate", false);
+
+            Instant future = Instant.now().plus(60, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    future, GOOD_RESULT, UNTRUSTED_CHAIN, publicTarget, org.getId());
+
+            assertThat(status).isEqualTo(CertStatus.INVALID);
+        }
+
+        @Test
+        void private_target_with_untrusted_chain_stays_advisory_not_invalid() {
+            Organization org = buildOrg();
+            Target privateTarget = enabledTarget(org);
+            ReflectionTestUtils.setField(privateTarget, "isPrivate", true);
+
+            Instant future = Instant.now().plus(60, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    future, GOOD_RESULT, UNTRUSTED_CHAIN, privateTarget, org.getId());
+
+            // Private targets don't get INVALID; they stay VALID/EXPIRING
+            assertThat(status).isIn(CertStatus.VALID, CertStatus.EXPIRING);
+        }
+
+        @Test
+        void expiring_when_no_revocation_no_chain_issue() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+
+            Instant expiring = Instant.now().plus(10, ChronoUnit.DAYS); // inside 30-day window
+
+            CertStatus status = service.determineCertStatus(
+                    expiring, GOOD_RESULT, TRUSTED_CHAIN, target, org.getId());
+
+            assertThat(status).isEqualTo(CertStatus.EXPIRING);
+        }
+
+        @Test
+        void valid_when_no_issues_and_far_expiry() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+
+            Instant future = Instant.now().plus(60, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    future, GOOD_RESULT, TRUSTED_CHAIN, target, org.getId());
+
+            assertThat(status).isEqualTo(CertStatus.VALID);
+        }
+
+        @Test
+        void unknown_revocation_soft_fail_does_not_set_revoked() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+
+            Instant future = Instant.now().plus(60, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    future, UNKNOWN_RESULT, TRUSTED_CHAIN, target, org.getId());
+
+            // UNKNOWN with soft-fail should NOT become REVOKED
+            assertThat(status).isNotEqualTo(CertStatus.REVOKED);
+            assertThat(status).isEqualTo(CertStatus.VALID);
+        }
+
+        @Test
+        void null_revocation_and_null_chain_falls_back_to_expiry_logic() {
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+
+            Instant expiring = Instant.now().plus(5, ChronoUnit.DAYS); // critical window
+
+            CertStatus status = service.determineCertStatus(
+                    expiring, null, null, target, org.getId());
+
+            assertThat(status).isEqualTo(CertStatus.EXPIRING);
+        }
+
+        @Test
+        void determineCertStatus_always_returns_true_status_shadow_applied_by_caller() {
+            // Shadow mode is enforced by SslScannerService / AgentService, NOT by
+            // determineCertStatus. The method itself always reflects the true status.
+            // Callers gate the final entity.setStatus() call.
+            ReflectionTestUtils.setField(service, "revocationShadowMode", true);
+
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+
+            Instant future = Instant.now().plus(60, ChronoUnit.DAYS);
+
+            CertStatus status = service.determineCertStatus(
+                    future, REVOKED_RESULT, TRUSTED_CHAIN, target, org.getId());
+
+            // determineCertStatus is the single authority — it returns REVOKED regardless.
+            // Suppression happens at the persistCertificates / processFull level.
+            assertThat(status).isEqualTo(CertStatus.REVOKED);
+        }
+
+        @Test
+        void evaluateRevocationAndNotify_suppressed_in_shadow_mode() {
+            // Re-enable shadow mode: evaluateRevocationAndNotify must NOT dispatch
+            ReflectionTestUtils.setField(service, "revocationShadowMode", true);
+
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 60, null);
+            // Simulate cert is REVOKED
+            cert.setStatus(CertStatus.REVOKED);
+            cert.setLastRevocationAlertSentAt(null);
+
+            service.evaluateRevocationAndNotify(cert);
+
+            // In shadow mode: no revocation alert should fire
+            verify(notificationService, never()).dispatchRevocationAlert(any());
+        }
+    }
 }

@@ -60,9 +60,13 @@ public class MspDashboardService {
                 .build();
     }
 
-    public Page<MspTargetRow> listTargetsAcrossChildren(UUID mspOrgId, Pageable pageable) {
+    public Page<MspTargetRow> listTargetsAcrossChildren(UUID mspOrgId, UUID filterOrgId, Pageable pageable) {
         assertMsp(mspOrgId);
-        List<UUID> orgIds = collectScope(mspOrgId);
+        // Access to filterOrgId is enforced at the controller via @mspAccessGuard.canAccessOrg.
+        // Restrict the scope to that single org when provided, else the full MSP scope.
+        List<UUID> orgIds = (filterOrgId != null)
+                ? List.of(filterOrgId)
+                : collectScope(mspOrgId);
         return targetRepository.findAllByOrgIdInWithOrg(orgIds, pageable)
                 .map(MspTargetRow::fromEntity);
     }

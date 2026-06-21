@@ -121,6 +121,38 @@ app:
       schedule-cron: ${PRIVATE_SCAN_SCHEDULE_CRON:0 0 3 * * *}
       # Number of targets enqueued per transaction to bound transaction size (RFC 0008 §6.4).
       enqueue-batch-size: ${PRIVATE_SCAN_ENQUEUE_BATCH_SIZE:500}
+  revocation:
+    # Master switch — set false to disable all revocation checks globally.
+    enabled: ${APP_REVOCATION_ENABLED:true}
+    # Shadow mode (Phase 1 rollout): compute & record revocation data but do NOT set
+    # CertStatus=REVOKED/INVALID and do NOT send revocation alerts. Flip to false for Phase 2.
+    shadow: ${APP_REVOCATION_SHADOW:true}
+    # Global failure mode: SOFT (default) or HARD.
+    fail-mode: ${APP_REVOCATION_FAIL_MODE:SOFT}
+    # Clock-skew tolerance for OCSP thisUpdate/nextUpdate validation.
+    clock-skew-sec: ${APP_REVOCATION_CLOCK_SKEW_SEC:300}
+    ocsp:
+      enabled: ${APP_REVOCATION_OCSP_ENABLED:true}
+      timeout-ms: ${APP_REVOCATION_OCSP_TIMEOUT_MS:4000}
+      # Nonce disabled by default: responders cache responses; nonces break caching.
+      use-nonce: ${APP_REVOCATION_OCSP_USE_NONCE:false}
+    crl:
+      enabled: ${APP_REVOCATION_CRL_ENABLED:true}
+      timeout-ms: ${APP_REVOCATION_CRL_TIMEOUT_MS:8000}
+      max-bytes: ${APP_REVOCATION_CRL_MAX_BYTES:5242880}
+      stale-grace-hours: ${APP_REVOCATION_CRL_STALE_GRACE_HOURS:0}
+      cache-ttl-minutes: ${APP_REVOCATION_CRL_CACHE_TTL_MINUTES:60}
+    recheck:
+      schedule-cron: ${APP_REVOCATION_RECHECK_CRON:0 0 4 * * *}
+      min-age-hours: ${APP_REVOCATION_RECHECK_MIN_AGE_HOURS:20}
+      batch-size: ${APP_REVOCATION_RECHECK_BATCH_SIZE:500}
+  chain:
+    # Trust anchor source: SYSTEM (JDK cacerts) or path to a custom KeyStore file.
+    trust-store: ${APP_CHAIN_TRUST_STORE:SYSTEM}
+    # Alert on untrusted chain for private targets (public targets always get advisory).
+    alert-on-untrusted: ${APP_CHAIN_ALERT_ON_UNTRUSTED:false}
+    # Attempt to complete incomplete chains via AIA caIssuers fetch.
+    complete-via-aia: ${APP_CHAIN_COMPLETE_VIA_AIA:true}
   agent:
     offline-threshold-minutes: ${AGENT_OFFLINE_THRESHOLD_MINUTES:10}
     offline-check-interval-ms: ${AGENT_OFFLINE_CHECK_INTERVAL_MS:300000}

@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
@@ -67,4 +68,39 @@ public interface CertificateRecordRepository extends JpaRepository<CertificateRe
     // ── V22: MSP aggregated views ─────────────────────────────────────────
 
     long countByOrgIdInAndStatus(Collection<UUID> orgIds, CertStatus status);
+
+    // ── RFC 0009: Revocation recheck queries ──────────────────────────────
+
+    /**
+     * Finds certificates eligible for a revocation re-check:
+     * <ul>
+     *   <li>Status is not EXPIRED or UNREACHABLE (no point checking revocation).</li>
+     *   <li>Either never checked ({@code revocationCheckedAt IS NULL}) or checked before
+     *       {@code cutoff} (i.e., older than {@code min-age-hours}).</li>
+     * </ul>
+     * Paged for batch processing; JOIN FETCH target to avoid N+1 in callers.
+     */
+    @Query("SELECT c FROM CertificateRecord c JOIN FETCH c.target t " +
+           "WHERE c.status NOT IN :excludedStatuses " +
+           "AND t.enabled = true " +
+           "AND (c.revocationCheckedAt IS NULL OR c.revocationCheckedAt < :cutoff)")
+    Page<CertificateRecord> findEligibleForRevocationRecheck(
+            @Param("excludedStatuses") Set<CertStatus> excludedStatuses,
+            @Param("cutoff") Instant cutoff,
+            Pageable pageable);
+
+    /**
+     * Stamps last_revocation_alert_sent_at on a certificate record.
+     */
+    @Modifying
+    @Query("UPDATE CertificateRecord c SET c.lastRevocationAlertSentAt = :sentAt WHERE c.id = :id")
+    void stampRevocationAlertSentAt(UUID id, Instant sentAt);
+
+    /**
+     * Updates revocation_deep_check for a single certificate, scoped to org.
+     */
+    @Modifying
+    @Query("UPDATE CertificateRecord c SET c.revocationDeepCheck = :enabled " +
+           "WHERE c.id = :id AND c.orgId = :orgId")
+    int updateRevocationDeepCheck(UUID id, UUID orgId, boolean enabled);
 }

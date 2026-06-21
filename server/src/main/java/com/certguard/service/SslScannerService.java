@@ -5,6 +5,10 @@ import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
+import com.certguard.service.chain.ChainValidationResult;
+import com.certguard.service.chain.ChainValidationService;
+import com.certguard.service.revocation.RevocationResult;
+import com.certguard.service.revocation.RevocationCheckService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -36,10 +40,13 @@ public class SslScannerService {
     private final TargetRepository targetRepository;
     private final CertificateRecordRepository certRepository;
     private final ExpiryEvaluationService expiryEvaluationService;
+    private final ChainValidationService chainValidationService;
+    private final RevocationCheckService revocationCheckService;
 
     @Value("${app.scanning.public.thread-pool-size:20}") private int threadPoolSize;
     @Value("${app.scanning.public.connect-timeout-ms:10000}") private int connectTimeoutMs;
     @Value("${app.scanning.public.retry-max-attempts:3}") private int maxRetries;
+    @Value("${app.revocation.shadow:true}") private boolean revocationShadowMode;
 
     @Scheduled(cron = "${app.scanning.public.schedule-cron}")
     @SchedulerLock(name = "SslScannerService_scheduledPublicScan",
@@ -90,9 +97,9 @@ public class SslScannerService {
                                     Instant previousLastScannedAt) {
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                X509Certificate[] chain = fetchCertificateChain(target.getHost(), target.getPort());
-                if (chain != null && chain.length > 0) {
-                    persistCertificates(target, chain, mode, previousLastScannedAt);
+                ScanChainResult scanResult = fetchCertificateChain(target.getHost(), target.getPort());
+                if (scanResult != null && scanResult.chain().length > 0) {
+                    persistCertificates(target, scanResult, mode, previousLastScannedAt);
                     return;
                 }
             } catch (Exception e) {
@@ -103,7 +110,13 @@ public class SslScannerService {
         }
     }
 
-    private X509Certificate[] fetchCertificateChain(String host, int port) throws Exception {
+    /**
+     * Bundles the TLS peer chain with an optional OCSP staple from the SSL session.
+     * The staple is only available if the server is configured for OCSP stapling.
+     */
+    record ScanChainResult(X509Certificate[] chain, byte[] ocspStaple) {}
+
+    private ScanChainResult fetchCertificateChain(String host, int port) throws Exception {
         TrustManager[] trustAll = new TrustManager[]{ new X509TrustManager() {
             public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
             public void checkClientTrusted(X509Certificate[] c, String a) {}
@@ -121,14 +134,27 @@ public class SslScannerService {
                     ssl.setSSLParameters(params);
                 }
                 ssl.startHandshake();
-                return (X509Certificate[]) ssl.getSession().getPeerCertificates();
+                X509Certificate[] chain = (X509Certificate[]) ssl.getSession().getPeerCertificates();
+
+                // Attempt to extract OCSP staple from the extended session.
+                byte[] staple = null;
+                SSLSession session = ssl.getSession();
+                if (session instanceof ExtendedSSLSession extSession) {
+                    List<byte[]> statusResponses = extSession.getStatusResponses();
+                    if (statusResponses != null && !statusResponses.isEmpty()) {
+                        staple = statusResponses.get(0); // TLS 1.2: single entry for leaf
+                    }
+                }
+
+                return new ScanChainResult(chain, staple);
             }
         }
     }
 
-    private void persistCertificates(Target target, X509Certificate[] chain,
+    private void persistCertificates(Target target, ScanChainResult scanResult,
                                      ExpiryEvaluationService.EvaluationMode mode,
                                      Instant previousLastScannedAt) {
+        X509Certificate[] chain = scanResult.chain();
         X509Certificate leaf = chain[0];
         try {
             Instant expiry    = leaf.getNotAfter().toInstant();
@@ -143,11 +169,45 @@ public class SslScannerService {
                     .orElse(CertificateRecord.builder()
                             .target(target).orgId(target.getOrganization().getId()).serialNumber(serial).build());
 
+            // RFC 0009: Chain validation (BE-4) and revocation checking (BE-5).
+            ChainValidationResult chainResult = chainValidationService.validate(chain);
+            RevocationResult revResult = revocationCheckService.check(
+                    chain, scanResult.ocspStaple(), record.isRevocationDeepCheck());
+
             Instant now = Instant.now();
             record.setCommonName(cn); record.setIssuer(issuer);
             record.setExpiryDate(expiry); record.setNotBefore(notBefore);
             record.setPublicCertB64(b64);
-            record.setStatus(expiryEvaluationService.determineCertStatus(expiry, target, target.getOrganization().getId()));
+            record.setChainDepth(chain.length);
+
+            // Persist chain fields.
+            record.setChainTrusted(chainResult.trusted());
+            record.setChainValidationError(chainResult.error());
+
+            // Persist revocation fields (always, even in shadow mode — we still record).
+            record.setRevocationStatus(revResult.status());
+            record.setRevocationSource(revResult.source());
+            record.setRevocationCheckedAt(revResult.checkedAt());
+            record.setRevocationReason(revResult.reason());
+            record.setRevocationReasonCode(revResult.reasonCode());
+            record.setRevokedAt(revResult.revokedAt());
+
+            // Status: shadow mode = compute but don't set REVOKED/INVALID.
+            CertStatus newStatus = expiryEvaluationService.determineCertStatus(
+                    expiry, revResult, chainResult, target, target.getOrganization().getId());
+            if (revocationShadowMode) {
+                // Shadow: don't elevate to REVOKED/INVALID; use expiry-only status.
+                CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
+                        expiry, null, null, target, target.getOrganization().getId());
+                record.setStatus(shadowStatus);
+                if (newStatus == CertStatus.REVOKED || newStatus == CertStatus.INVALID) {
+                    log.info("[SHADOW] Would set status={} for cert {} but shadow=true",
+                            newStatus, cn);
+                }
+            } else {
+                record.setStatus(newStatus);
+            }
+
             record.setScannedAt(now);
             certRepository.save(record);
 
@@ -160,7 +220,8 @@ public class SslScannerService {
             target.setLastScannedAt(now);
             targetRepository.save(target);
 
-            log.info("Certificate saved — CN: {}, Expires: {}, Status: {}", cn, expiry, record.getStatus());
+            log.info("Certificate saved — CN: {}, Expires: {}, Status: {}, Revocation: {}/{}",
+                    cn, expiry, record.getStatus(), revResult.status(), revResult.source());
         } catch (CertificateEncodingException e) {
             log.error("Failed to encode cert for {}: {}", target.getHost(), e.getMessage());
         }

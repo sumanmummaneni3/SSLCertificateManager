@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { statusColor, hostTypeColor, fmtDate } from "@/lib/helpers.js";
+import { certBadgeType, certStatusLabel, hostTypeColor, fmtDate } from "@/lib/helpers.js";
 import { Spinner, Badge, DaysBar } from "@/components/index.js";
 import { TargetNotificationModal } from "@/panels/notifications/TargetNotificationModal.jsx";
 
@@ -87,7 +87,12 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
                       </td>
                       <td>
                         {cert
-                          ? <Badge type={statusColor(cert.status)}>{cert.status}</Badge>
+                          ? <Badge
+                              type={certBadgeType(cert.status, cert.onHold)}
+                              title={cert.onHold ? "On hold — reversible suspension" : undefined}
+                            >
+                              {certStatusLabel(cert.status, cert.onHold)}
+                            </Badge>
                           : <Badge type="unknown">No scan</Badge>}
                       </td>
                       <td className="mono">{cert ? fmtDate(cert.expiryDate) : "—"}</td>

@@ -297,6 +297,16 @@ public class SslScanner {
         r.setChainDepth(chain.length);
         r.setSubjectAltNames(extractSANs(leaf));
         r.setPublicCertB64(Base64.getEncoder().encodeToString(leaf.getEncoded()));
+
+        // RFC 0009 §3.4 — send full chain (leaf first then intermediates) so the server
+        // can perform chain validation and revocation checking without network access to
+        // private CA endpoints from the server side. DELTA leaves chainB64 null (no change).
+        List<String> chainB64 = new ArrayList<>();
+        for (X509Certificate cert : chain) {
+            chainB64.add(Base64.getEncoder().encodeToString(cert.getEncoded()));
+        }
+        r.setChainB64(chainB64);
+
         return r;
     }
 

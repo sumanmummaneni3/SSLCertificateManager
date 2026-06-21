@@ -168,6 +168,52 @@ public class NotificationService {
     }
 
     /**
+     * Dispatches a revocation alert (RFC 0009 §3.6 / BE-9).
+     *
+     * <p>CRITICAL severity — bypasses the expiry dedup window (fired transition-gated by
+     * {@link ExpiryEvaluationService#evaluateRevocationAndNotify}).
+     * Accepts a pre-built {@link com.certguard.dto.internal.RevocationAlertContext}
+     * (no entity access; safe across AFTER_COMMIT boundary).
+     */
+    @Async
+    public void dispatchRevocationAlert(com.certguard.dto.internal.RevocationAlertContext ctx) {
+        Map<String, Object> channels = ctx.channels();
+        if (channels == null || channels.isEmpty()) {
+            log.warn("No notification channels for revocation alert on {}:{} (org {})",
+                    ctx.host(), ctx.port(), ctx.orgId());
+            return;
+        }
+
+        String logTarget = ctx.host() + ":" + ctx.port();
+        String reasonDisplay = ctx.onHold()
+                ? "Suspended (on hold)"
+                : (ctx.revocationReason() != null ? ctx.revocationReason().replace('_', ' ') : "UNSPECIFIED");
+        String subject = "[CertGuard] REVOKED: " + ctx.host() + " — " + reasonDisplay;
+
+        String deepLinkUrl = uiBaseUrl + "/certificates/" + ctx.certId();
+
+        org.thymeleaf.context.Context thCtx = new org.thymeleaf.context.Context();
+        thCtx.setVariable("host",          ctx.host());
+        thCtx.setVariable("port",          ctx.port());
+        thCtx.setVariable("reason",        reasonDisplay);
+        thCtx.setVariable("source",        ctx.revocationSource());
+        thCtx.setVariable("revokedAt",     ctx.revokedAt() != null ? FMT.format(ctx.revokedAt()) : "unknown");
+        thCtx.setVariable("onHold",        ctx.onHold());
+        thCtx.setVariable("severity",      ctx.severity());
+        thCtx.setVariable("deepLinkUrl",   deepLinkUrl);
+        thCtx.setVariable("baseUrl",       baseUrl);
+        thCtx.setVariable("highSeverity",  ctx.isHighSeverity());
+
+        if (devMode) {
+            log.info("[DEV] Would send revocation alert for {}:{} — reason={} severity={}",
+                    ctx.host(), ctx.port(), ctx.revocationReason(), ctx.severity());
+            return;
+        }
+
+        dispatchEmail(channels, subject, "revocation-alert", thCtx, logTarget);
+    }
+
+    /**
      * Called when an agent is detected as offline.
      */
     @Async

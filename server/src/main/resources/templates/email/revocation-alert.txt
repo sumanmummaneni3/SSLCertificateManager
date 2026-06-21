@@ -1,0 +1,28 @@
+CertGuard Cloud — Certificate REVOKED
+
+Target:     [(${host + ':' + port})]
+Status:     [(${onHold ? 'Suspended (on hold)' : 'REVOKED'})]
+Reason:     [(${reason})]
+Source:     [(${source})]
+Revoked At: [(${revokedAt})]
+Severity:   [(${severity})]
+
+The SSL/TLS certificate for [(${host + ':' + port})] has been [(${onHold ? 'suspended (on hold)' : 'revoked'})].
+
+[# th:if="${onHold}"]
+This certificate is ON HOLD (certificateHold). The hold may be reversed by the issuing CA.
+Monitor for updates and replace the certificate if the hold is not lifted promptly.
+[/]
+[# th:if="${highSeverity}"]
+*** IMMEDIATE ACTION REQUIRED ***
+KEY_COMPROMISE or CA_COMPROMISE indicates the private key or issuing CA may be compromised.
+Replace this certificate immediately.
+[/]
+[# th:unless="${onHold or highSeverity}"]
+Please review this certificate and take appropriate action.
+[/]
+
+View certificate in CertGuard:
+[(${deepLinkUrl})]
+
+— CertGuard Cloud

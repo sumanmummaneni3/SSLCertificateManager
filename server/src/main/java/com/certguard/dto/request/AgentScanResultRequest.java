@@ -24,4 +24,11 @@ public class AgentScanResultRequest {
     private String publicCertB64;
     // DELTA only
     private UUID certificateId;
+
+    /**
+     * FULL only — full chain (base64 DER), leaf at index 0, then intermediates.
+     * RFC 0009 §3.4: optional for backward compat with older agents that don't send it.
+     * When absent, server records INCOMPLETE_CHAIN and attempts AIA completion.
+     */
+    private List<String> chainB64;
 }

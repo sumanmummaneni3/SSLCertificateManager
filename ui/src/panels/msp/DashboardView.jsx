@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "@/lib/api.js";
 import { Spinner } from "@/components/index.js";
 
-export function MspDashboardView({ token, me }) {
+export function MspDashboardView({ token, me, onViewClientTargets }) {
   const [dash, setDash]     = useState(null);
   const [loading, setLoading] = useState(true);
   const upgradePending = me?.permissions?.mspUpgradePending === true;
@@ -95,7 +95,7 @@ export function MspDashboardView({ token, me }) {
                           <button
                             className="scan-btn"
                             style={{ color: "var(--accent)", borderColor: "rgba(0,212,255,0.3)" }}
-                            onClick={() => {}}
+                            onClick={() => onViewClientTargets?.(o.orgId, o.orgName)}
                             aria-label={`View targets for ${o.orgName}`}
                           >
                             View Targets

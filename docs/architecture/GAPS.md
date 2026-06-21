@@ -129,6 +129,13 @@ Neither scan write-path evaluates expiry or notifies: `SslScannerService.persist
 ### N14 — No daily scan sweep for private/agent targets (MEDIUM) — **Closed**
 Public targets are scanned nightly by `SslScannerService.scheduledPublicScan` (cron `0 0 2 * * *`). Private/agent targets had no timer-driven sweep — they were only scanned on manual trigger or when an agent happened to poll a user-queued job. This meant the "all registered certificates refreshed every 24h" contract did not hold for private targets, so the expiry sweep at 08:00 could be working from stale cert data for private targets. Closed by RFC 0008 §6: `PrivateScanScheduler` (`PrivateScanScheduler.java`) — `@Scheduled(cron = "${app.scanning.private.schedule-cron:0 0 3 * * *}")`, ShedLock `lockAtMostFor=PT1H`, paged enqueue in chunks of `app.scanning.private.enqueue-batch-size` (default 500). Eligible targets: `enabled=true AND isPrivate=true AND agent IS NOT NULL`. Per-target failures (suspended org, missing agent race) are caught and logged without aborting the sweep.
 
+### N15 — No certificate chain validation or revocation checking; `REVOKED`/`INVALID` status unrepresentable (HIGH)
+Both scanners install a trust-all `X509TrustManager` (`agent/src/main/java/com/certguard/agent/scanner/SslScanner.java:196-202`; `server/src/main/java/com/certguard/service/SslScannerService.java:107-111`) and read **leaf fields only** (`SslScanner.java:283-301`; `SslScannerService.java:129-167`). The full chain reaches the socket (`getPeerCertificates()` at `SslScanner.java:250`, `SslScannerService.java:124`) but `chain[1..n]` is discarded. There is **no** OCSP-stapling inspection, OCSP request, CRL fetch/parse, AIA/CDP handling, or `PKIXRevocationChecker` anywhere in the tree. `CertStatus` (`enums/CertStatus.java:2`) has no `REVOKED` or `INVALID` value, and the sole status authority `ExpiryEvaluationService.determineCertStatus` (`:155-161`) is pure date math — it can never produce either.  Agent wire contract (`agent/src/main/java/com/certguard/agent/model/ScanResult.java`) carries no chain or revocation fields.
+
+**Impact (confirmed in production):** CertGuard's own cloud cert `cloud.oopsssl.co.uk` was revoked by Let's Encrypt for `keyCompromise`; browsers show `NET::ERR_CERT_REVOKED`; CertGuard reported it `VALID` because it had not yet expired.
+
+**Action:** Implement RFC 0009 — `ChainValidationService` + `RevocationCheckService` (server-side; OCSP-stapling → OCSP → CRL, soft-fail default), `RevocationRecheckScheduler` (daily, ShedLock), add `REVOKED` and `INVALID` to the `cert_status` enum (standalone non-transactional Flyway migration) + revocation/chain columns on `certificate_records`, and a `chainB64` field on the agent scan result so the server can build the full chain offline. Status precedence `REVOKED > EXPIRED > INVALID > EXPIRING > VALID`. **Decided (2026-06-20):** expired-and-revoked resolves to `REVOKED` (RFC §10.3); an untrusted/invalid chain on a **public** target fails to `INVALID` and raises an advisory, while private targets stay advisory-only (RFC §10.4).
+
 ---
 
 ## 4. Doc-vs-Code Discrepancies
@@ -165,6 +172,7 @@ Public targets are scanned nightly by `SslScannerService.scheduledPublicScan` (c
 | R13 (new) | `CertificateService` / `MspClientService` missing `@Transactional` | low | **Open** — works today but fragile |
 | R14 (new) | Gateway/auth-service split undocumented | medium | **Open** — see N1 |
 | R15 (new) | Bundle download single-use token replay protection | medium | **Verify** — check `AgentBundleService` for atomic consume |
+| R16 (new) | No chain validation / revocation checking; revoked cert reported VALID | **HIGH** | **Open** — see N15; RFC 0009 (revoked `cloud.oopsssl.co.uk` went undetected) |
 
 ---
 

@@ -74,7 +74,7 @@ export const api = {
   // MSP endpoints
   msp: {
     getDashboard: (token) => api.call("GET", "/api/v1/msp/dashboard", null, token),
-    getTargets:   (token, page = 0, size = 20) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}`, null, token),
+    getTargets:   (token, page = 0, size = 20, orgId = null) => api.call("GET", `/api/v1/msp/targets?page=${page}&size=${size}${orgId ? `&orgId=${orgId}` : ""}`, null, token),
     listClients:  (token) => api.call("GET", "/api/v1/msp/clients", null, token),
     createClient: (data, token) => api.call("POST", "/api/v1/msp/clients", data, token),
     updateClient: (id, data, token) => api.call("PUT", `/api/v1/msp/clients/${id}`, data, token),
@@ -140,4 +140,7 @@ export const api = {
   getTargetNotificationSettings: (targetId, token) => api.call("GET",  `/api/v1/targets/${targetId}/notification-settings`, null, token),
   putTargetNotificationSettings: (targetId, body, token) => api.call("PUT",  `/api/v1/targets/${targetId}/notification-settings`, body, token),
   deleteTargetNotificationSettings: (targetId, token) => api.call("DELETE", `/api/v1/targets/${targetId}/notification-settings`, null, token),
+  // RFC 0009 — per-cert revocation deep-check toggle (BE-12, FE-3)
+  patchCertRevocationDeepCheck: (orgId, certId, enabled, token) =>
+    api.call("PATCH", `/api/v1/organizations/${orgId}/certificates/${certId}/revocation-deep-check`, { enabled }, token),
 };

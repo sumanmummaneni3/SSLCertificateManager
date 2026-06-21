@@ -11,7 +11,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
 
 @RestController
 @RequestMapping(value = "/api/v1/msp", produces = "application/json")
@@ -27,9 +30,11 @@ public class MspDashboardController {
     }
 
     @GetMapping("/targets")
-    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN')")
-    public ResponseEntity<Page<MspTargetRow>> targets(Pageable pageable) {
+    @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','VIEWER','PLATFORM_ADMIN') "
+            + "and (#orgId == null or @mspAccessGuard.canAccessOrg(#orgId))")
+    public ResponseEntity<Page<MspTargetRow>> targets(
+            @RequestParam(required = false) UUID orgId, Pageable pageable) {
         return ResponseEntity.ok(
-                mspDashboardService.listTargetsAcrossChildren(TenantContext.getOrgId(), pageable));
+                mspDashboardService.listTargetsAcrossChildren(TenantContext.getOrgId(), orgId, pageable));
     }
 }
