@@ -213,6 +213,11 @@ public class AnonScanController {
 
             // 1. Agent JAR
             ClassPathResource agentJar = new ClassPathResource("agent/certguard-agent.jar");
+            if (!agentJar.exists()) {
+                throw new IllegalStateException(
+                    "agent/certguard-agent.jar not found on classpath — ensure it is committed to " +
+                    "server/src/main/resources/agent/ and not excluded by .gitignore");
+            }
             zip.putNextEntry(new ZipEntry("certguard-agent.jar"));
             try (InputStream in = agentJar.getInputStream()) {
                 in.transferTo(zip);
