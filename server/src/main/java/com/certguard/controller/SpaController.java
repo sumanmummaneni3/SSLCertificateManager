@@ -16,7 +16,8 @@ public class SpaController {
         "/",
         "/dashboard", "/targets", "/certificates", "/certificates/{id}", "/agents",
         "/invite",
-        "/auth/callback", "/auth/verify-email", "/auth/reset-password"
+        "/auth/callback", "/auth/verify-email", "/auth/reset-password",
+        "/scan", "/scan/{viewToken}"
     })
     public String index() { return "forward:/index.html"; }
 }
