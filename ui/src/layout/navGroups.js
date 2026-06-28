@@ -4,7 +4,8 @@ export const NAV_GROUPS = [
     items: [
       { id: "dashboard", icon: "◈", label: "Dashboard"    },
       { id: "targets",   icon: "⊕", label: "Targets"      },
-      { id: "certs",     icon: "⊞", label: "Certificates" },
+      { id: "certs",          icon: "⊞", label: "Certificates" },
+      { id: "network-scans", icon: "◮", label: "Network Scans" },
     ],
   },
   {

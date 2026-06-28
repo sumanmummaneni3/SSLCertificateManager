@@ -12,6 +12,7 @@ import { ResetPasswordScreen }    from "./screens/ResetPasswordScreen.jsx";
 import { OrgSetup }               from "./screens/OrgSetup.jsx";
 import { FirstTarget }            from "./screens/FirstTarget.jsx";
 import { InviteAcceptScreen }     from "./screens/InviteAcceptScreen.jsx";
+import { AnonScanDashboard }      from "./screens/AnonScanDashboard.jsx";
 
 // All application styles live in src/styles/global.css (imported in main.jsx).
 // API client → src/lib/api.js | Helpers → src/lib/helpers.js | Validation → src/lib/validation.js
@@ -23,8 +24,10 @@ export default function App() {
   const [meData, setMeData]   = useState(null);
   const [, setTargets] = useState(null);
   // launch | org-setup | first-target | app | invite |
-  // post-register | forgot-password | verify-email | reset-password
+  // post-register | forgot-password | verify-email | reset-password | anon-scan
   const [phase, setPhase]     = useState("launch");
+  // RFC 0011: viewToken from /scan/:viewToken URL; cleared after claim
+  const [anonViewToken, setAnonViewToken] = useState(null);
   const [loading, setLoading] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   // Stored email for post-registration screen
@@ -113,6 +116,18 @@ export default function App() {
       setOrgData(org);
       setMeData(me);
 
+      // RFC 0011: If the user just signed up/in from the anon scan page, claim the session.
+      if (anonViewToken) {
+        try {
+          await api.anon.claimSession(anonViewToken, t);
+          toast("Scan claimed — run a full network scan to see details.", "success");
+        } catch {
+          // Non-fatal: session may already be claimed or expired
+        } finally {
+          setAnonViewToken(null);
+        }
+      }
+
       if (ctx.fromInvite) {
         const tgts = await api.getTargets(t);
         setTargets(tgts?.content || []);
@@ -159,6 +174,17 @@ export default function App() {
     const urlInvite = params.get("invite");
     const pathname = window.location.pathname;
     const isInvitePath = pathname === "/invite";
+
+    // RFC 0011: Detect anonymous scan dashboard: /scan/:viewToken
+    if (pathname.startsWith("/scan/")) {
+      const viewToken = pathname.replace("/scan/", "").split("/")[0];
+      if (viewToken) {
+        window.history.replaceState({}, "", "/");
+        setAnonViewToken(viewToken);
+        setPhase("anon-scan");
+        return;
+      }
+    }
 
     if (pathname === "/auth/verify-email") {
       const verifyToken = params.get("token");
@@ -264,6 +290,12 @@ export default function App() {
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
       {phase === "app"          && <AppShell token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} onExpireSession={expireSession} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
+      {phase === "anon-scan" && anonViewToken && (
+        <AnonScanDashboard
+          viewToken={anonViewToken}
+          onSignUp={() => setPhase("launch")}
+        />
+      )}
       <Toast toasts={toasts} />
     </>
   );

@@ -143,4 +143,40 @@ export const api = {
   // RFC 0009 — per-cert revocation deep-check toggle (BE-12, FE-3)
   patchCertRevocationDeepCheck: (orgId, certId, enabled, token) =>
     api.call("PATCH", `/api/v1/organizations/${orgId}/certificates/${certId}/revocation-deep-check`, { enabled }, token),
+
+  // RFC 0011 — Network scan endpoints (authenticated)
+  networkScans: {
+    create: (token, orgId, body) =>
+      api.call("POST", `/api/v1/organizations/${orgId}/network-scans`, body, token),
+
+    list: (token, orgId, page = 0, size = 20) =>
+      api.call("GET", `/api/v1/organizations/${orgId}/network-scans?page=${page}&size=${size}`, null, token),
+
+    get: (token, orgId, scanId) =>
+      api.call("GET", `/api/v1/organizations/${orgId}/network-scans/${scanId}`, null, token),
+
+    listEndpoints: (token, orgId, scanId, { state, deviceClass, page = 0, size = 50 } = {}) => {
+      const params = new URLSearchParams({ page, size });
+      if (state)       params.set("state", state);
+      if (deviceClass) params.set("deviceClass", deviceClass);
+      return api.call("GET",
+        `/api/v1/organizations/${orgId}/network-scans/${scanId}/endpoints?${params}`,
+        null, token);
+    },
+
+    cancel: (token, orgId, scanId) =>
+      api.call("DELETE", `/api/v1/organizations/${orgId}/network-scans/${scanId}`, null, token),
+  },
+
+  // RFC 0011 — Anonymous scan endpoints (no auth required)
+  anon: {
+    getSession: (viewToken) =>
+      api.call("GET", `/api/v1/anon/sessions/${viewToken}`),  // no token arg — public endpoint
+
+    claimSession: (viewToken, token) =>
+      api.call("POST", `/api/v1/anon/sessions/${viewToken}/claim`, null, token),
+
+    deleteSession: (viewToken) =>
+      api.call("DELETE", `/api/v1/anon/sessions/${viewToken}`),
+  },
 };

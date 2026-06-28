@@ -1367,3 +1367,107 @@ tr:hover td { background: color-mix(in srgb, var(--color-primary) 3%, transparen
   color: #ff8a8a;
   line-height: 1.5;
 }
+
+/* ── RFC 0011 — PORT CHIPS (device open port tags) ── */
+.port-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--accent);
+  margin: 0 2px 2px 0;
+}
+
+/* ── RFC 0011 — SCAN PROGRESS BAR ── */
+.scan-progress-track {
+  height: 8px;
+  background: var(--border2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.scan-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+/* ── RFC 0011 — ANON DASHBOARD ── */
+.anon-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.anon-content {
+  flex: 1;
+  padding: 2.5rem 2rem;
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.summary-chips {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+
+.summary-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  min-width: 100px;
+  text-align: center;
+  flex: 1 1 100px;
+}
+
+.summary-chip-value {
+  font-family: var(--font-head);
+  font-size: 1.8rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.summary-chip-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 6px;
+}
+
+.anon-cta-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 2rem;
+  text-align: center;
+  margin-bottom: 2rem;
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--color-bg) 40%, transparent);
+}
+
+.anon-cta-title {
+  font-family: var(--font-head);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.anon-cta-sub {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 1.5rem;
+}

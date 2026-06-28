@@ -17,6 +17,8 @@ import { MspOrgsView }           from "@/panels/msp/OrgsView.jsx";
 import { MspTargetsView }        from "@/panels/msp/TargetsView.jsx";
 import { PlatformOrgsView }      from "@/panels/platform/OrgsView.jsx";
 import { PlatformOrgDetailView } from "@/panels/platform/OrgDetailView.jsx";
+import { NetworkScansView }      from "@/panels/network-scans/index.jsx";
+import { NetworkScanDetailView } from "@/panels/network-scans/NetworkScanDetailView.jsx";
 
 export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExpireSession }) {
   const [dash, setDash]           = useState(null);
@@ -58,6 +60,9 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
   }, []);
 
   const [selectedCertId, setSelectedCertId] = useState(initialCertId || null);
+  const [selectedScanId, setSelectedScanId]       = useState(null);
+  const [networkScans, setNetworkScans]           = useState([]);
+  const [networkScansLoading, setNetworkScansLoading] = useState(false);
   const [certs, setCerts]         = useState([]);
   const [certsLoading, setCertsLoading] = useState(false);
   const [agents, setAgents]       = useState([]);
@@ -120,10 +125,25 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
     finally { setLocationsLoading(false); }
   }, [token, toast]);
 
+  const loadNetworkScans = useCallback(async () => {
+    setNetworkScansLoading(true);
+    try {
+      const data = await api.networkScans.list(token, org?.id);
+      setNetworkScans(data?.content || []);
+    } catch (e) {
+      toast("Failed to load network scans: " + e.message, "error");
+    } finally {
+      setNetworkScansLoading(false);
+    }
+  }, [token, org?.id, toast]);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (view === "certs")     loadCerts();     }, [view, loadCerts]);
-  useEffect(() => { if (view === "agents")    loadAgents();    }, [view, loadAgents]);
+  useEffect(() => { if (view === "agents" || view === "network-scans") loadAgents(); }, [view, loadAgents]);
   useEffect(() => { if (view === "locations") loadLocations(); }, [view, loadLocations]);
+  useEffect(() => {
+    if (view === "network-scans" || view === "network-scan-detail") loadNetworkScans();
+  }, [view, loadNetworkScans]);
 
   const triggerScan = async (target) => {
     if (target.isPrivate && !target.agentId) {
@@ -254,6 +274,35 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
             onBack={() => {
               setView("certs");
               loadCerts();
+            }}
+          />
+        )}
+        {view === "network-scans" && (
+          <NetworkScansView
+            scans={networkScans}
+            loading={networkScansLoading}
+            token={token}
+            org={org}
+            me={me}
+            toast={toast}
+            agents={agents}
+            onRefresh={loadNetworkScans}
+            onSelectScan={(scanId) => {
+              setSelectedScanId(scanId);
+              setView("network-scan-detail");
+            }}
+          />
+        )}
+        {view === "network-scan-detail" && selectedScanId && (
+          <NetworkScanDetailView
+            scanId={selectedScanId}
+            orgId={org?.id}
+            token={token}
+            me={me}
+            toast={toast}
+            onBack={() => {
+              setView("network-scans");
+              loadNetworkScans();
             }}
           />
         )}
