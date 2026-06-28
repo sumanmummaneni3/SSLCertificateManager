@@ -37,6 +37,12 @@ public class Agent extends BaseEntity {
     @Builder.Default
     private List<String> allowedCidrs = new ArrayList<>();
 
+    /** Subnets auto-discovered by the agent at registration/heartbeat (RFC 0012). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "discovered_subnets", columnDefinition = "jsonb")
+    @Builder.Default
+    private List<String> discoveredSubnets = new ArrayList<>();
+
     @Column(name = "max_targets", nullable = false)
     @Builder.Default
     private Integer maxTargets = 50;

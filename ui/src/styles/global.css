@@ -1471,3 +1471,155 @@ tr:hover td { background: color-mix(in srgb, var(--color-primary) 3%, transparen
   font-size: 0.82rem;
   margin-bottom: 1.5rem;
 }
+
+/* ── RFC 0011 — ANON ACTIVE STATE (no results yet) ── */
+
+.anon-active-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 2.5rem;
+  text-align: center;
+  max-width: 520px;
+  width: 100%;
+}
+
+.anon-active-heading {
+  font-family: var(--font-head);
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.anon-active-sub {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin-bottom: 1.75rem;
+}
+
+.anon-active-instructions {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.4rem;
+  text-align: left;
+  margin-bottom: 2rem;
+}
+
+.anon-active-instructions-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.65rem;
+}
+
+.anon-active-steps {
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.anon-active-steps li {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.anon-active-steps-alt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.anon-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.anon-link:hover { text-decoration: underline; }
+.anon-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.anon-active-cmd {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent);
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+}
+
+/* Indeterminate progress bar */
+.anon-active-progress-wrap {
+  margin-bottom: 0.5rem;
+}
+
+.anon-active-progress-track {
+  position: relative;
+  height: 4px;
+  background: var(--border2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.anon-active-progress-bar {
+  position: absolute;
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: anon-scan-slide 1.8s ease-in-out infinite;
+}
+
+@keyframes anon-scan-slide {
+  0%   { left: -40%; }
+  70%  { left: 100%; }
+  100% { left: 100%; }
+}
+
+.anon-active-progress-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* ── RFC 0011 — PARTIAL RESULTS BANNER (ACTIVE + devices > 0) ── */
+
+.anon-partial-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 1.5rem;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+  border-radius: var(--radius);
+}
+
+.anon-partial-banner-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.anon-partial-banner-bar {
+  position: absolute;
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: anon-scan-slide 1.8s ease-in-out infinite;
+}
+
+.anon-partial-banner-label {
+  font-size: 0.78rem;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

@@ -96,7 +96,7 @@ export function AgentsView({ agents, loading, token, onRefresh, toast, me }) {
                   <th>Name</th>
                   <th>Status</th>
                   <th>Targets</th>
-                  <th>Allowed CIDRs</th>
+                  <th>Discovered Subnets</th>
                   <th>Last Seen</th>
                   <th>Registered</th>
                   <th></th>
@@ -114,11 +114,15 @@ export function AgentsView({ agents, loading, token, onRefresh, toast, me }) {
                     <td><Badge type={agentStatusColor(a.status)}>{a.status}</Badge></td>
                     <td className="mono">{a.currentTargetCount ?? 0} / {a.maxTargets}</td>
                     <td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {(a.allowedCidrs || []).map((c) => (
-                          <span key={c} className="badge badge-domain" style={{ fontSize: "0.68rem" }}>{c}</span>
-                        ))}
-                      </div>
+                      {(a.discoveredSubnets || []).length > 0 ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {(a.discoveredSubnets || []).map((c) => (
+                            <span key={c} className="badge badge-domain" style={{ fontSize: "0.68rem" }}>{c}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>Waiting for heartbeat…</span>
+                      )}
                     </td>
                     <td className="mono" style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
                       {fmtRelative(a.lastSeenAt)}

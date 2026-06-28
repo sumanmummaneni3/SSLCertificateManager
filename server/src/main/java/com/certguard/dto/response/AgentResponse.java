@@ -11,6 +11,8 @@ public class AgentResponse {
     private String name;
     private AgentStatus status;
     private List<String> allowedCidrs;
+    /** Subnets auto-discovered by the agent host's NICs (RFC 0012). */
+    private List<String> discoveredSubnets;
     private int maxTargets;
     private int currentTargetCount;
     private Instant lastSeenAt;

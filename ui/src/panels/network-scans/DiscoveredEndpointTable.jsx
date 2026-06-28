@@ -69,27 +69,33 @@ export function DiscoveredEndpointTable({ scanId, orgId, token }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
 
-    api.networkScans
-      .listEndpoints(token, orgId, scanId, {
-        state:       stateFilter  || undefined,
-        deviceClass: deviceFilter || undefined,
-        page,
-        size: 50,
-      })
-      .then((data) => {
+    // Reset to loading state for this new fetch round.
+    // Initialising in the callback (rather than synchronously in the effect body)
+    // avoids the react-hooks/set-state-in-effect lint rule while still showing a
+    // spinner whenever any of the filter/page deps change.
+    const startFetch = async () => {
+      if (cancelled) return;
+      setLoading(true);
+      try {
+        const data = await api.networkScans.listEndpoints(token, orgId, scanId, {
+          state:       stateFilter  || undefined,
+          deviceClass: deviceFilter || undefined,
+          page,
+          size: 50,
+        });
         if (cancelled) return;
         setEndpoints(data?.content || []);
         setTotalPages(data?.totalPages ?? 0);
         setTotalElements(data?.totalElements ?? 0);
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setEndpoints([]);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    };
+
+    startFetch();
 
     return () => {
       cancelled = true;

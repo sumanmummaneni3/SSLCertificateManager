@@ -144,8 +144,11 @@ export const api = {
   patchCertRevocationDeepCheck: (orgId, certId, enabled, token) =>
     api.call("PATCH", `/api/v1/organizations/${orgId}/certificates/${certId}/revocation-deep-check`, { enabled }, token),
 
-  // RFC 0011 — Network scan endpoints (authenticated)
+  // RFC 0011/0012 — Network scan endpoints (authenticated)
   networkScans: {
+    // body: { agentId, portProfile, customPorts?, cidr? }
+    // RFC 0012: cidr is optional — omit it to let the server fan-out across all
+    // discovered subnets.  Callers should not include the key when cidr is null/undefined.
     create: (token, orgId, body) =>
       api.call("POST", `/api/v1/organizations/${orgId}/network-scans`, body, token),
 
@@ -170,6 +173,9 @@ export const api = {
 
   // RFC 0011 — Anonymous scan endpoints (no auth required)
   anon: {
+    createSession: () =>
+      api.call("POST", "/api/v1/anon/sessions"),  // unauthenticated; server rate-limits by IP
+
     getSession: (viewToken) =>
       api.call("GET", `/api/v1/anon/sessions/${viewToken}`),  // no token arg — public endpoint
 

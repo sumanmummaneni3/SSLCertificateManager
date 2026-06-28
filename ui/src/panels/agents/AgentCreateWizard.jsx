@@ -1,23 +1,20 @@
 import { useState } from "react";
 import { api } from "@/lib/api.js";
-import { AGENT_NAME_RE, validateCidrs } from "@/lib/validation.js";
+import { AGENT_NAME_RE } from "@/lib/validation.js";
 import { Spinner } from "@/components/index.js";
 
 export function AgentCreateWizard({ token, locations, onClose, onCreated, toast }) {
-  const [agentName, setAgentName]     = useState("");
-  const [cidrs, setCidrs]             = useState("");
-  const [maxTargets, setMaxTargets]   = useState("50");
-  const [locationId, setLocationId]   = useState("");
-  const [loading, setLoading]         = useState(false);
-  const [errors, setErrors]           = useState({});
+  const [agentName, setAgentName]   = useState("");
+  const [maxTargets, setMaxTargets] = useState("50");
+  const [locationId, setLocationId] = useState("");
+  const [loading, setLoading]       = useState(false);
+  const [errors, setErrors]         = useState({});
 
   const validate = () => {
     const e = {};
     if (!AGENT_NAME_RE.test(agentName.trim())) {
       e.agentName = "Name must be 3–64 characters and contain only A-Za-z0-9 space _ . -";
     }
-    const cidrErr = validateCidrs(cidrs);
-    if (cidrErr) e.cidrs = cidrErr;
     const mt = parseInt(maxTargets);
     if (!maxTargets || isNaN(mt) || mt < 1) e.maxTargets = "Must be at least 1";
     return e;
@@ -30,9 +27,9 @@ export function AgentCreateWizard({ token, locations, onClose, onCreated, toast 
     setLoading(true);
     try {
       const body = {
-        agentName: agentName.trim(),
-        allowedCidrs: cidrs.split(",").map((s) => s.trim()).filter(Boolean),
-        maxTargets: parseInt(maxTargets),
+        agentName:    agentName.trim(),
+        allowedCidrs: [],          // RFC 0012: subnets are auto-discovered; no manual CIDR required
+        maxTargets:   parseInt(maxTargets),
         ...(locationId ? { locationId } : {}),
       };
       const result = await api.createAgent(body, token);
@@ -55,12 +52,17 @@ export function AgentCreateWizard({ token, locations, onClose, onCreated, toast 
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="acw-title">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem" }}>
           <div className="modal-title" id="acw-title">Deploy New Agent</div>
-          <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: "1rem", lineHeight: 1 }}
-            onClick={onClose} aria-label="Close">✕</button>
+          <button
+            className="btn-ghost"
+            style={{ padding: "4px 8px", fontSize: "1rem", lineHeight: 1 }}
+            onClick={onClose}
+            aria-label="Close"
+          >✕</button>
         </div>
         <p className="modal-sub">
-          Configure the agent. An encrypted installer bundle will be generated and
-          a one-time install key will be shown — download the bundle and store the key securely.
+          Configure the agent. An encrypted installer bundle will be generated and a one-time
+          install key will be shown — download the bundle and store the key securely. The agent
+          will automatically report its discovered subnets after its first heartbeat.
         </p>
 
         {errors.submit && (
@@ -89,29 +91,6 @@ export function AgentCreateWizard({ token, locations, onClose, onCreated, toast 
           )}
         </div>
 
-        <div className="field">
-          <label htmlFor="acw-cidrs">
-            Allowed CIDRs <span style={{ color: "var(--red)" }}>*</span>
-          </label>
-          <input
-            id="acw-cidrs"
-            value={cidrs}
-            onChange={(e) => { setCidrs(e.target.value); setErrors((v) => ({ ...v, cidrs: undefined })); }}
-            placeholder="192.168.1.0/24, 10.0.0.0/8"
-            aria-invalid={!!errors.cidrs}
-            aria-describedby={errors.cidrs ? "acw-cidrs-err" : "acw-cidrs-hint"}
-          />
-          {errors.cidrs ? (
-            <div id="acw-cidrs-err" style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: 4 }} role="alert">
-              {errors.cidrs}
-            </div>
-          ) : (
-            <div id="acw-cidrs-hint" style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 4 }}>
-              Comma-separated IPv4 CIDRs the agent is permitted to scan.
-            </div>
-          )}
-        </div>
-
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
           <div className="field">
             <label htmlFor="acw-max">
@@ -133,7 +112,9 @@ export function AgentCreateWizard({ token, locations, onClose, onCreated, toast 
             )}
           </div>
           <div className="field">
-            <label htmlFor="acw-loc">Location <span style={{ color: "var(--muted)", fontWeight: 400 }}>(optional)</span></label>
+            <label htmlFor="acw-loc">
+              Location <span style={{ color: "var(--muted)", fontWeight: 400 }}>(optional)</span>
+            </label>
             <select id="acw-loc" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
               <option value="">— None —</option>
               {(locations || []).map((l) => (
@@ -148,7 +129,7 @@ export function AgentCreateWizard({ token, locations, onClose, onCreated, toast 
           <button
             className="btn btn-primary"
             onClick={handleSubmit}
-            disabled={loading || !agentName.trim() || !cidrs.trim() || !maxTargets}
+            disabled={loading || !agentName.trim() || !maxTargets}
           >
             {loading ? <><Spinner /> Creating...</> : "Create Agent"}
           </button>

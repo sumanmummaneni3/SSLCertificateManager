@@ -16,6 +16,7 @@ import com.certguard.service.chain.ChainValidationResult;
 import com.certguard.service.chain.ChainValidationService;
 import com.certguard.service.revocation.RevocationCheckService;
 import com.certguard.service.revocation.RevocationResult;
+import com.certguard.util.Rfc1918Util;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -116,15 +117,21 @@ public class AgentService {
             agent = agentRepository.findById(matchedToken.getAgentId())
                     .orElseGet(() -> Agent.builder().organization(org).build());
             agent.setName(request.getAgentName());
-            agent.setAllowedCidrs(request.getAllowedCidrs());
+            agent.setAllowedCidrs(request.getAllowedCidrs() != null
+                    ? request.getAllowedCidrs() : new ArrayList<>());
             agent.setMaxTargets(request.getMaxTargets());
         } else {
             agent = Agent.builder()
                     .organization(org)
                     .name(request.getAgentName())
-                    .allowedCidrs(request.getAllowedCidrs())
+                    .allowedCidrs(request.getAllowedCidrs() != null
+                            ? request.getAllowedCidrs() : new ArrayList<>())
                     .maxTargets(request.getMaxTargets())
                     .build();
+        }
+        // RFC 0012: persist discovered subnets reported by the agent at registration time.
+        if (request.getDiscoveredSubnets() != null && !request.getDiscoveredSubnets().isEmpty()) {
+            agent.setDiscoveredSubnets(request.getDiscoveredSubnets());
         }
         agent.setAgentKeyHash(agentKeyHash);
         agent.setStatus(AgentStatus.ACTIVE);

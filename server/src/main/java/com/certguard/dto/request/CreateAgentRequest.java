@@ -20,9 +20,11 @@ public class CreateAgentRequest {
              message = "agentName must be 3–64 characters: letters, digits, spaces, hyphens, dots, underscores")
     private String agentName;
 
-    /** CIDR ranges this agent is permitted to scan. At least one required. */
-    @NotNull
-    @Size(min = 1, message = "At least one allowedCidr must be specified")
+    /**
+     * CIDR ranges this agent is permitted to scan.
+     * Optional since RFC 0012 — agent self-reports discovered subnets instead.
+     * When empty the agent falls back to RFC1918 + discoveredSubnets validation.
+     */
     private List<String> allowedCidrs = new ArrayList<>();
 
     /** Maximum number of targets the agent may hold. */

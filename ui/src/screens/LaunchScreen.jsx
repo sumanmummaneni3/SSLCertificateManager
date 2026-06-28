@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "@/lib/api.js";
 import { Spinner } from "@/components/index.js";
 
-export function LaunchScreen({ onToken, onPostRegister, onForgotPassword, returnToCertId }) {
+export function LaunchScreen({ onToken, onPostRegister, onForgotPassword, returnToCertId, onScanWithoutAccount }) {
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
   const [loading, setLoading]           = useState(false);
@@ -340,7 +340,20 @@ export function LaunchScreen({ onToken, onPostRegister, onForgotPassword, return
         )}
       </div>
 
-      <p className="text-muted text-sm" style={{ marginTop: "2rem" }}>
+      {onScanWithoutAccount && (
+        <p className="text-muted text-sm" style={{ marginTop: "1.5rem", textAlign: "center" }}>
+          No account?{" "}
+          <button
+            className="btn-ghost"
+            onClick={onScanWithoutAccount}
+            style={{ display: "inline", padding: "0 2px", fontSize: "inherit", color: "var(--accent)" }}
+          >
+            Scan your network for free →
+          </button>
+        </p>
+      )}
+
+      <p className="text-muted text-sm" style={{ marginTop: "1rem" }}>
         API — <span className="text-accent">{window.location.origin}</span>
       </p>
     </div>

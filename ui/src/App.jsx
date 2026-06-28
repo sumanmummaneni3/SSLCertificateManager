@@ -13,6 +13,7 @@ import { OrgSetup }               from "./screens/OrgSetup.jsx";
 import { FirstTarget }            from "./screens/FirstTarget.jsx";
 import { InviteAcceptScreen }     from "./screens/InviteAcceptScreen.jsx";
 import { AnonScanDashboard }      from "./screens/AnonScanDashboard.jsx";
+import { ScanLandingPage }        from "./screens/ScanLandingPage.jsx";
 
 // All application styles live in src/styles/global.css (imported in main.jsx).
 // API client → src/lib/api.js | Helpers → src/lib/helpers.js | Validation → src/lib/validation.js
@@ -24,7 +25,7 @@ export default function App() {
   const [meData, setMeData]   = useState(null);
   const [, setTargets] = useState(null);
   // launch | org-setup | first-target | app | invite |
-  // post-register | forgot-password | verify-email | reset-password | anon-scan
+  // post-register | forgot-password | verify-email | reset-password | anon-scan | anon-landing
   const [phase, setPhase]     = useState("launch");
   // RFC 0011: viewToken from /scan/:viewToken URL; cleared after claim
   const [anonViewToken, setAnonViewToken] = useState(null);
@@ -175,6 +176,13 @@ export default function App() {
     const pathname = window.location.pathname;
     const isInvitePath = pathname === "/invite";
 
+    // RFC 0011: Detect anonymous scan landing page: /scan (no viewToken)
+    if (pathname === "/scan" || pathname === "/scan/") {
+      window.history.replaceState({}, "", "/");
+      setPhase("anon-landing");
+      return;
+    }
+
     // RFC 0011: Detect anonymous scan dashboard: /scan/:viewToken
     if (pathname.startsWith("/scan/")) {
       const viewToken = pathname.replace("/scan/", "").split("/")[0];
@@ -279,6 +287,7 @@ export default function App() {
           onPostRegister={(email) => { setPendingEmail(email); setPhase("post-register"); }}
           onForgotPassword={() => setPhase("forgot-password")}
           returnToCertId={returnToCertId}
+          onScanWithoutAccount={() => setPhase("anon-landing")}
         />
       )}
       {phase === "session-expired" && <SessionExpiredScreen message={sessionExpiredMsg} onSignIn={goToLaunch} />}
@@ -290,6 +299,16 @@ export default function App() {
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
       {phase === "app"          && <AppShell token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} onExpireSession={expireSession} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
+      {phase === "anon-landing" && (
+        <ScanLandingPage
+          onSessionCreated={(viewToken) => {
+            window.history.pushState({}, "", `/scan/${viewToken}`);
+            setAnonViewToken(viewToken);
+            setPhase("anon-scan");
+          }}
+          onSignIn={() => setPhase("launch")}
+        />
+      )}
       {phase === "anon-scan" && anonViewToken && (
         <AnonScanDashboard
           viewToken={anonViewToken}

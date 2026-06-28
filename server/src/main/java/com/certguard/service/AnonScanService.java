@@ -110,8 +110,21 @@ public class AnonScanService {
                 rawViewToken,
                 session.getScanExpiresAt(),
                 session.getViewExpiresAt(),
-                serverBaseUrl + "/scan/" + rawViewToken
+                serverBaseUrl + "/scan/" + rawViewToken,
+                serverBaseUrl + "/api/v1/anon/download?token=" + rawScanToken
         );
+    }
+
+    /**
+     * Looks up an active anon session by raw scanToken (used by the download endpoint
+     * to validate the token before serving the agent ZIP).
+     *
+     * Returns {@link Optional#empty()} if the token is unknown or the session has been
+     * soft-deleted; the caller decides whether that maps to a 404 or 401.
+     */
+    public Optional<AnonScanSession> findSessionByScanToken(String rawScanToken) {
+        return sessionRepository.findByScanTokenHash(sha256Hex(rawScanToken))
+                .filter(s -> s.getStatus() != AnonSessionStatus.DELETED);
     }
 
     // ── Agent interaction ─────────────────────────────────────────────────────
