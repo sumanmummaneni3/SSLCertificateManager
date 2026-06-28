@@ -80,6 +80,7 @@ services:
       ALERT_THRESHOLD_CRITICAL_DAYS: ${ALERT_THRESHOLD_CRITICAL_DAYS:-7}
       JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseContainerSupport"
       MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+      SPRING_PROFILES_ACTIVE:     ${SPRING_PROFILES_ACTIVE:-dev}
       APP_DEV_MODE:               ${APP_DEV_MODE:-false}
       PLATFORM_ADMIN_EMAILS:      ${PLATFORM_ADMIN_EMAILS:-}
       RENEWAL_SERVICE_URL:        http://renewal-service:8444

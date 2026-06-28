@@ -18,8 +18,8 @@ import java.util.UUID;
  */
 public record AgentNetworkResultsBatch(
         @NotNull UUID networkScanId,
-        int chunkIndex,
-        int totalChunks,
+        Integer chunkIndex,
+        Integer totalChunks,
         long timestamp,
         @NotBlank String hmac,
         @NotNull List<HostResult> hosts
@@ -31,7 +31,7 @@ public record AgentNetworkResultsBatch(
     ) {}
 
     public record PortResult(
-            @Min(1) @Max(65535) int port,
+            @Min(1) @Max(65535) Integer port,
             @NotNull EndpointPortState state,
             /** Base64-DER encoded chain, leaf-first. Present only when state == OPEN_TLS. */
             List<String> chainB64,

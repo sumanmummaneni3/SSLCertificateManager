@@ -66,10 +66,11 @@ public class AnonScanService {
     private static final int    RATE_LIMIT_MAX      = 5;
     private static final long   RATE_LIMIT_WINDOW_MS = 24L * 60 * 60 * 1000;
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final AnonScanSessionRepository sessionRepository;
     private final AnonDiscoveredSubnetRepository subnetRepository;
     private final AnonDiscoveredDeviceRepository deviceRepository;
-    private final ObjectMapper objectMapper;
 
     // ── Session creation ──────────────────────────────────────────────────────
 
@@ -208,7 +209,7 @@ public class AnonScanService {
 
             if (dto.banners() != null && !dto.banners().isEmpty()) {
                 try {
-                    device.setBanners(objectMapper.writeValueAsString(dto.banners()));
+                    device.setBanners(OBJECT_MAPPER.writeValueAsString(dto.banners()));
                 } catch (Exception e) {
                     log.warn("Failed to serialize device banners: {}", e.getMessage());
                 }
@@ -244,6 +245,9 @@ public class AnonScanService {
         AnonScanSession session = sessionRepository.findByViewTokenHash(hash)
                 .orElseThrow(() -> new ResourceNotFoundException("Session not found"));
 
+        if (session.getStatus() == AnonSessionStatus.DELETED) {
+            throw new ResourceNotFoundException("Session not found");
+        }
         if (Instant.now().isAfter(session.getViewExpiresAt())) {
             throw new ResourceNotFoundException("Session has expired");
         }
@@ -450,7 +454,7 @@ public class AnonScanService {
     private Map<String, String> parseBanners(String json) {
         if (json == null) return null;
         try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
+            return OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, String>>() {});
         } catch (Exception e) {
             return null;
         }

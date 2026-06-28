@@ -54,6 +54,7 @@ public class DiscoveredEndpoint extends BaseEntity {
      * Banner map as a JSON string (http_server, http_title, ssh_version, tls_cn, etc.).
      * Parse with ObjectMapper where needed; stored as JSONB.
      */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String banners;
 

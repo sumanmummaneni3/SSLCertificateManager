@@ -53,6 +53,7 @@ public class AnonDiscoveredDevice {
     private int[] openPorts = new int[0];
 
     /** Banner map as JSON string: http_server, http_title, ssh_version, tls_cn, tls_o. */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String banners;
 

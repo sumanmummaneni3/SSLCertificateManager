@@ -49,6 +49,8 @@ public class NetworkScanService {
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 500;
     private static final int DEFAULT_TLS_TIMEOUT_MS = 3000;
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final NetworkScanRepository networkScanRepository;
     private final DiscoveredEndpointRepository endpointRepository;
     private final AgentRepository agentRepository;
@@ -57,7 +59,6 @@ public class NetworkScanService {
     private final ChainValidationService chainValidationService;
     private final RevocationCheckService revocationCheckService;
     private final ExpiryEvaluationService expiryEvaluationService;
-    private final ObjectMapper objectMapper;
 
     // ── Create ────────────────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ public class NetworkScanService {
 
                 if (portResult.banners() != null && !portResult.banners().isEmpty()) {
                     try {
-                        endpoint.setBanners(objectMapper.writeValueAsString(portResult.banners()));
+                        endpoint.setBanners(OBJECT_MAPPER.writeValueAsString(portResult.banners()));
                     } catch (Exception e) {
                         log.warn("Failed to serialize banners for {}:{}: {}", hostResult.ip(), portResult.port(), e.getMessage());
                     }
@@ -428,7 +429,7 @@ public class NetworkScanService {
         Map<String, String> banners = null;
         if (ep.getBanners() != null) {
             try {
-                banners = objectMapper.readValue(ep.getBanners(),
+                banners = OBJECT_MAPPER.readValue(ep.getBanners(),
                         new TypeReference<Map<String, String>>() {});
             } catch (Exception e) {
                 log.warn("Failed to parse banners JSON for endpoint {}", ep.getId());

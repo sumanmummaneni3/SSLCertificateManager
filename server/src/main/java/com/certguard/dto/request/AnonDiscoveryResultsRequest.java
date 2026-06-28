@@ -29,7 +29,7 @@ public record AnonDiscoveryResultsRequest(
             @NotBlank String subnetCidr,
             DeviceClass deviceClass,
             @NotNull List<@Min(1) @Max(65535) Integer> openPorts,
-            int tlsPortCount,
+            Integer tlsPortCount,
             Map<String, String> banners,
             List<String> tlsSubjects,
             Instant tlsExpiryMin
