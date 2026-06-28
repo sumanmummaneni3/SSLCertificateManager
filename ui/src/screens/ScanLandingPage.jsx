@@ -29,6 +29,34 @@ function extractViewToken(input) {
  * navigate to the dashboard.
  */
 function DownloadStep({ sessionData, onViewResults }) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      // Build the download URL relative to the current origin so it routes
+      // through Vite's proxy in dev and works same-origin on VPS.
+      const url = `/api/v1/anon/download?token=${encodeURIComponent(sessionData.scanToken)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = "certguard-scanner.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      setDownloadError("Download failed — please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <section
       className="scan-download-step"
@@ -49,14 +77,17 @@ function DownloadStep({ sessionData, onViewResults }) {
 
       {/* Primary download CTA */}
       <div className="scan-download-cta-wrap">
-        <a
+        <button
           className="btn btn-primary scan-landing-cta-btn"
-          href={sessionData.downloadUrl}
-          download
+          onClick={handleDownload}
+          disabled={downloading}
           aria-label="Download certguard-scanner.zip"
         >
-          Download certguard-scanner.zip
-        </a>
+          {downloading ? "Downloading…" : "Download certguard-scanner.zip"}
+        </button>
+        {downloadError && (
+          <p className="alert-error" style={{ marginTop: 8 }}>{downloadError}</p>
+        )}
       </div>
 
       {/* Run command */}
