@@ -41,6 +41,40 @@ public class SslScanner {
     // In-memory serial cache: targetId -> last scanned serial number
     private final Map<String, String> serialCache = new ConcurrentHashMap<>();
 
+    /**
+     * Probes host:port for TLS without using the targetId-keyed serial cache.
+     * Used by PortSweepScanner to test discovered endpoints that have no registered Target.
+     *
+     * Returns the peer certificate chain if the TLS handshake succeeds.
+     * Returns null if the connection succeeds but TLS handshake fails (OPEN_NO_TLS signal).
+     * Returns null on any connection-level error (caller already confirmed TCP is open).
+     */
+    public X509Certificate[] probe(String host, int port) {
+        return probe(host, port, 3);
+    }
+
+    /**
+     * Probes host:port for TLS with a configurable timeout in seconds.
+     * Reuses the two-pass BC JSSE + JVM TLS 1.3 handshake logic but bypasses
+     * the targetId serial cache entirely (discovered endpoints have no Target).
+     */
+    public X509Certificate[] probe(String host, int port, int timeoutSeconds) {
+        try {
+            return fetchChain(host, port, timeoutSeconds);
+        } catch (javax.net.ssl.SSLException e) {
+            // Port is open (TCP succeeded) but TLS handshake failed → OPEN_NO_TLS
+            log.debug("TLS probe — no TLS on {}:{}: {}", host, port, e.getMessage());
+            return null;
+        } catch (java.io.IOException e) {
+            // Connection error during handshake — treat as non-TLS
+            log.debug("TLS probe — I/O error on {}:{}: {}", host, port, e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.debug("TLS probe — failed on {}:{}: {}", host, port, e.getMessage());
+            return null;
+        }
+    }
+
     public ScanResult scan(ScanJob job, int timeoutSeconds) {
         log.info("Scanning {}:{} (job: {})", job.getHost(), job.getPort(), job.getJobId());
 

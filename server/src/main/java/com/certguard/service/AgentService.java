@@ -48,6 +48,7 @@ public class AgentService {
     private final CertificateRecordRepository certRepository;
     private final OrganizationRepository orgRepository;
     private final AgentHmacService hmacService;
+    private final NetworkScanService networkScanService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final SubscriptionGuard subscriptionGuard;
     private final ExpiryEvaluationService expiryEvaluationService;
@@ -171,7 +172,7 @@ public class AgentService {
         });
         scanJobRepository.saveAll(pending);
 
-        return pending.stream().map(job -> {
+        List<ScanJobResponse> certJobs = pending.stream().map(job -> {
             Optional<CertificateRecord> lastCert = certRepository
                     .findTopByTargetIdOrderByScannedAtDesc(job.getTarget().getId());
             return ScanJobResponse.builder()
@@ -183,6 +184,15 @@ public class AgentService {
                     .lastCertificateId(lastCert.map(BaseEntity::getId).orElse(null))
                     .build();
         }).collect(Collectors.toList());
+
+        // RFC 0011: merge any PENDING network scan jobs for this agent
+        List<ScanJobResponse> networkJobs = networkScanService.pollNetworkJobs(agent);
+        if (!networkJobs.isEmpty()) {
+            List<ScanJobResponse> combined = new ArrayList<>(certJobs);
+            combined.addAll(networkJobs);
+            return combined;
+        }
+        return certJobs;
     }
 
     @Transactional

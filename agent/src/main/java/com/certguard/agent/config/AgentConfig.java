@@ -236,6 +236,29 @@ public class AgentConfig {
     public int scanTimeoutSeconds()  { return integer("certguard.agent.scan-timeout-seconds", 10); }
     public int scanThreads()         { return integer("certguard.agent.scan-threads", 5); }
 
+    // ── RFC 0011 — mode + anonymous session ──────────────────────────────────
+
+    /**
+     * Operating mode of this agent instance.
+     * Reads "certguard.agent.mode"; defaults to AUTHENTICATED.
+     */
+    public AgentMode getMode() {
+        String raw = props.getProperty("certguard.agent.mode", "AUTHENTICATED").trim().toUpperCase();
+        try {
+            return AgentMode.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            return AgentMode.AUTHENTICATED;
+        }
+    }
+
+    /**
+     * Raw anonymous scan token for ANONYMOUS mode.
+     * Reads "certguard.agent.anon.scan-token".
+     */
+    public String getAnonScanToken() {
+        return props.getProperty("certguard.agent.anon.scan-token", "");
+    }
+
     private String require(String key) {
         String val = props.getProperty(key);
         if (val == null || val.isBlank())

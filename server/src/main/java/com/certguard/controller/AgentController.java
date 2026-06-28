@@ -3,6 +3,7 @@ package com.certguard.controller;
 import com.certguard.client.RenewalServiceClient;
 import com.certguard.dto.request.AgentCsrSubmitRequest;
 import com.certguard.dto.request.AgentJobReportRequest;
+import com.certguard.dto.request.AgentNetworkResultsBatch;
 import com.certguard.dto.request.AgentScanResultRequest;
 import com.certguard.dto.response.AgentResponse;
 import com.certguard.dto.response.DeliveryJobResponse;
@@ -16,6 +17,7 @@ import com.certguard.security.CertGuardUserPrincipal;
 import com.certguard.security.TenantContext;
 import com.certguard.service.AgentJobService;
 import com.certguard.service.AgentService;
+import com.certguard.service.NetworkScanService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -46,6 +48,7 @@ public class AgentController {
     private final AgentJobService agentJobService;
     private final AgentJobRepository agentJobRepository;
     private final RenewalServiceClient renewalServiceClient;
+    private final NetworkScanService networkScanService;
 
     // ── Admin endpoints (JWT auth) ─────────────────────────────
 
@@ -169,6 +172,31 @@ public class AgentController {
         String agentKey = (String) request.getAttribute("authenticatedAgentKey");
         agentService.submitResult(agent, resultRequest, agentKey);
         return ResponseEntity.ok().build();
+    }
+
+    // ── RFC 0011: Network scan batch results ─────────────────────────────────
+
+    /**
+     * POST /api/v1/agent/network-results
+     * Agent submits a batch of host/port scan results for a network sweep.
+     * Guarded by AgentAuthFilter (X-Agent-Key authentication).
+     * HMAC over "{networkScanId}:{chunkIndex}:{hostCount}:{timestamp}".
+     */
+    @PostMapping("/network-results")
+    public ResponseEntity<Map<String, Object>> submitNetworkResults(
+            @RequestBody @Valid AgentNetworkResultsBatch batch,
+            HttpServletRequest request) {
+
+        Agent agent     = (Agent) request.getAttribute("authenticatedAgent");
+        String agentKey = (String) request.getAttribute("authenticatedAgentKey");
+        networkScanService.ingestBatchResults(batch, agent, agentKey);
+
+        boolean isComplete = batch.chunkIndex() == batch.totalChunks() - 1;
+        return ResponseEntity.accepted().body(Map.of(
+                "accepted",      batch.hosts().size(),
+                "networkScanId", batch.networkScanId(),
+                "status",        isComplete ? "COMPLETE" : "IN_PROGRESS"
+        ));
     }
 
     // ── RFC 0004: Certificate renewal/delivery endpoints ────

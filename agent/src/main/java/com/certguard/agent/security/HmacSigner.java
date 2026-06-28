@@ -27,6 +27,18 @@ public class HmacSigner {
 
     private static final String ALGORITHM = "HmacSHA256";
 
+    /**
+     * Signs an arbitrary string payload with the given key.
+     * Used for NETWORK_SCAN batch HMAC where the payload is constructed by the caller.
+     * Returns a Base64-encoded HMAC-SHA256 digest, matching server-side AgentHmacService.
+     */
+    public static String signRaw(String payload, String key) throws Exception {
+        Mac mac = Mac.getInstance(ALGORITHM);
+        mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), ALGORITHM));
+        byte[] digest = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+        return Base64.getEncoder().encodeToString(digest);
+    }
+
     public static String sign(ScanResult result, String agentKey) throws Exception {
         String payload = buildPayload(result);
 

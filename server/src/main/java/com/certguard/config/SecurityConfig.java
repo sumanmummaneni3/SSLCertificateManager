@@ -1,6 +1,8 @@
 package com.certguard.config;
 
+import com.certguard.repository.AnonScanSessionRepository;
 import com.certguard.security.AgentAuthFilter;
+import com.certguard.security.AnonScanAuthFilter;
 import com.certguard.security.InternalServiceAuthFilter;
 import com.certguard.security.JwtAuthenticationFilter;
 import com.certguard.security.SalesAuthFilter;
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -37,6 +40,7 @@ public class SecurityConfig {
     private final ApplicationContext applicationContext;
     private final SalesAuthFilter salesAuthFilter;
     private final InternalServiceAuthFilter internalServiceAuthFilter;
+    private final AnonScanSessionRepository anonScanSessionRepository;
 
     @Value("${app.dev-mode:false}")
     private boolean devMode;
@@ -49,18 +53,21 @@ public class SecurityConfig {
                           OAuth2AuthenticationSuccessHandler oAuth2SuccessHandler,
                           ApplicationContext applicationContext,
                           SalesAuthFilter salesAuthFilter,
-                          InternalServiceAuthFilter internalServiceAuthFilter) {
+                          InternalServiceAuthFilter internalServiceAuthFilter,
+                          AnonScanSessionRepository anonScanSessionRepository) {
         this.jwtAuthenticationFilter     = jwtAuthenticationFilter;
         this.oAuth2UserService           = oAuth2UserService;
         this.oAuth2SuccessHandler        = oAuth2SuccessHandler;
         this.applicationContext          = applicationContext;
         this.salesAuthFilter             = salesAuthFilter;
         this.internalServiceAuthFilter   = internalServiceAuthFilter;
+        this.anonScanSessionRepository   = anonScanSessionRepository;
     }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         AgentAuthFilter agentAuthFilter = applicationContext.getBean(AgentAuthFilter.class);
+        AnonScanAuthFilter anonScanAuthFilter = new AnonScanAuthFilter(anonScanSessionRepository);
 
         http
             .csrf(csrf -> csrf.disable())
@@ -87,6 +94,16 @@ public class SecurityConfig {
                     // OAuth2
                     .requestMatchers("/oauth2/**").permitAll()
                     .requestMatchers("/login/oauth2/**").permitAll()
+                    // RFC 0011 Part B — anonymous scan (public paths, no JWT)
+                    .requestMatchers(HttpMethod.POST,   "/api/v1/anon/sessions").permitAll()
+                    .requestMatchers(HttpMethod.GET,    "/api/v1/anon/download").permitAll()
+                    .requestMatchers(HttpMethod.GET,    "/api/v1/anon/sessions/*").permitAll()
+                    .requestMatchers(HttpMethod.DELETE, "/api/v1/anon/sessions/*").permitAll()
+                    // AnonScanAuthFilter guards these, but Spring Security must permit them first
+                    .requestMatchers(HttpMethod.GET,    "/api/v1/anon/jobs").permitAll()
+                    .requestMatchers(HttpMethod.POST,   "/api/v1/anon/discovery-results").permitAll()
+                    // Claim requires JWT (user must be signed in)
+                    .requestMatchers(HttpMethod.POST,   "/api/v1/anon/sessions/*/claim").authenticated()
                     // Internal Sales API — authenticated via SalesAuthFilter
                     .requestMatchers("/api/internal/**").authenticated()
                     // Internal service-to-service API — authenticated via InternalServiceAuthFilter
@@ -98,6 +115,7 @@ public class SecurityConfig {
             .addFilterBefore(salesAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(internalServiceAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(agentAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(anonScanAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // API requests must never be redirected to an OAuth2 login page.
             // Return 401 JSON so the frontend can handle it cleanly.

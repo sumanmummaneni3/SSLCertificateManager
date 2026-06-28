@@ -20,9 +20,9 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 class SecurityConfigCorsTest {
 
     private SecurityConfig buildConfig(boolean devMode, String rawOrigins) {
-        // SecurityConfig requires 6 collaborators; pass nulls — we only invoke
+        // SecurityConfig requires 7 collaborators; pass nulls — we only invoke
         // corsConfigurationSource() which does not use any of them.
-        SecurityConfig cfg = new SecurityConfig(null, null, null, null, null, null);
+        SecurityConfig cfg = new SecurityConfig(null, null, null, null, null, null, null);
         ReflectionTestUtils.setField(cfg, "devMode", devMode);
         ReflectionTestUtils.setField(cfg, "corsAllowedOriginsRaw", rawOrigins);
         return cfg;
