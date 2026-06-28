@@ -1,6 +1,7 @@
 package com.certguard.agent;
 
 import com.certguard.agent.config.AgentConfig;
+import com.certguard.agent.config.AgentMode;
 import com.certguard.agent.http.*;
 import com.certguard.agent.scanner.SslScanner;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -44,8 +45,10 @@ public class AgentMain {
         CloseableHttpClient http = clientFactory.build();
         ServerApiClient api = new ServerApiClient(config, http);
 
-        // 3. Register if not already done
-        if (!config.isRegistered()) {
+        // 3. Register if not already done (skip for ANONYMOUS mode — no registration needed)
+        if (config.getMode() == AgentMode.ANONYMOUS) {
+            log.info("ANONYMOUS mode — skipping registration, using scan token");
+        } else if (!config.isRegistered()) {
             log.info("Agent not registered — starting registration...");
             RegistrationService registration = new RegistrationService(config, api);
             registration.register();
