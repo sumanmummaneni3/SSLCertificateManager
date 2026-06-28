@@ -80,7 +80,8 @@ public class AnonScanController {
      * Returns 404 if the token is unknown or the session has been deleted.
      */
     @GetMapping(value = "/download", produces = "application/zip")
-    public ResponseEntity<byte[]> downloadBundle(@RequestParam("token") String token) throws Exception {
+    public ResponseEntity<byte[]> downloadBundle(@RequestParam("token") String token,
+                                                  HttpServletRequest request) throws Exception {
         if (token == null || token.isBlank()) {
             return ResponseEntity.badRequest().build();
         }
@@ -93,7 +94,12 @@ public class AnonScanController {
             return ResponseEntity.notFound().build();
         }
 
-        String props = "certguard.server.url=" + serverBaseUrl + "\n"
+        // Derive the base URL from the incoming request so the generated
+        // application.properties always points back to the real server,
+        // regardless of how app.server.base-url is configured.
+        String effectiveBaseUrl = deriveBaseUrl(request);
+
+        String props = "certguard.server.url=" + effectiveBaseUrl + "\n"
                 + "certguard.agent.mode=ANONYMOUS\n"
                 + "certguard.agent.anon.scan-token=" + token + "\n"
                 + "certguard.agent.scan-timeout-seconds=5\n"
@@ -106,7 +112,7 @@ public class AnonScanController {
                 + "   java -jar certguard-agent.jar\n"
                 + "\n"
                 + "The agent will scan your local network and post results to CertGuard.\n"
-                + "Results are available at: " + serverBaseUrl + "/scan/<viewToken>\n"
+                + "Results are available at: " + effectiveBaseUrl + "/scan/<viewToken>\n"
                 + "Results are automatically deleted after 7 days.\n"
                 + "No IP addresses are stored outside your network.\n";
 
@@ -190,6 +196,28 @@ public class AnonScanController {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Derives the server base URL from the incoming request, honouring
+     * X-Forwarded-Proto and X-Forwarded-Host set by reverse proxies/gateways.
+     * Falls back to request.getScheme() + serverName + port.
+     * Used to stamp application.properties in the agent download bundle so the
+     * agent always calls back to the same host the user downloaded from.
+     */
+    private String deriveBaseUrl(HttpServletRequest request) {
+        String proto = request.getHeader("X-Forwarded-Proto");
+        if (proto == null || proto.isBlank()) proto = request.getScheme();
+
+        String host = request.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) {
+            int port = request.getServerPort();
+            String name = request.getServerName();
+            boolean defaultPort = ("https".equals(proto) && port == 443)
+                               || ("http".equals(proto)  && port == 80);
+            host = defaultPort ? name : name + ":" + port;
+        }
+        return proto + "://" + host;
+    }
 
     /** Resolves client IP from X-Forwarded-For or remote address. Does NOT store the result. */
     private String resolveClientIp(HttpServletRequest request) {
