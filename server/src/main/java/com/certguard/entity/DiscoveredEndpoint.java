@@ -7,6 +7,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -34,6 +35,7 @@ public class DiscoveredEndpoint extends BaseEntity {
     private UUID orgId;
 
     /** IPv4 address stored as INET in PostgreSQL. */
+    @ColumnTransformer(write = "CAST(? AS inet)")
     @Column(nullable = false, columnDefinition = "inet")
     private String ip;
 
