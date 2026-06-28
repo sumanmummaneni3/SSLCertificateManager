@@ -376,18 +376,33 @@ export function AnonScanDashboard({ viewToken, onSignUp }) {
   useEffect(() => {
     if (!session || session.status !== "ACTIVE") return;
 
-    const id = setInterval(async () => {
+    const poll = async () => {
       try {
         const data = await api.anon.getSession(viewToken);
         setSession(data);
         sessionStatusRef.current = data?.status;
       } catch {
-        // Non-fatal — keep polling; the interval will stop naturally once
-        // status transitions out of ACTIVE on the next successful response.
+        // Non-fatal — keep polling
       }
-    }, 5000);
+    };
 
-    return () => clearInterval(id);
+    const id = setInterval(poll, 5000);
+
+    // Re-poll immediately when the browser tab re-gains focus (Chrome throttles
+    // setInterval to ~1 min in backgrounded tabs, so results wouldn't appear
+    // until the user switched back).
+    const onVisible = () => {
+      if (document.visibilityState === "visible" &&
+          sessionStatusRef.current === "ACTIVE") {
+        poll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [session?.status, viewToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteConfirm = async () => {

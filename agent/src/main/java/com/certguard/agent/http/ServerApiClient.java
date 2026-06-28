@@ -288,7 +288,7 @@ public class ServerApiClient {
             List<Integer> openPorts = new ArrayList<>();
             List<String> tlsSubjects = new ArrayList<>();
             int tlsPortCount = 0;
-            long tlsExpiryMin = Long.MAX_VALUE;
+            java.time.Instant tlsExpiryMinInstant = null;
             DeviceClass bestClass = DeviceClass.UNKNOWN;
 
             for (PortSweepScanner.PortScanResult p : host.ports()) {
@@ -298,10 +298,10 @@ public class ServerApiClient {
                     if (p.chain() != null && p.chain().length > 0) {
                         X509Certificate leaf = p.chain()[0];
                         tlsSubjects.add(leaf.getSubjectX500Principal().getName());
-                        long daysLeft = java.time.Duration.between(
-                                java.time.Instant.now(),
-                                leaf.getNotAfter().toInstant()).toDays();
-                        if (daysLeft < tlsExpiryMin) tlsExpiryMin = daysLeft;
+                        java.time.Instant notAfter = leaf.getNotAfter().toInstant();
+                        if (tlsExpiryMinInstant == null || notAfter.isBefore(tlsExpiryMinInstant)) {
+                            tlsExpiryMinInstant = notAfter;
+                        }
                     }
                 }
                 if (p.deviceClass() != null && p.deviceClass() != DeviceClass.UNKNOWN) {
@@ -318,7 +318,7 @@ public class ServerApiClient {
             dm.put("openPorts",    openPorts);
             dm.put("tlsPortCount", tlsPortCount);
             dm.put("tlsSubjects",  tlsSubjects);
-            dm.put("tlsExpiryMin", tlsExpiryMin == Long.MAX_VALUE ? null : (int) tlsExpiryMin);
+            dm.put("tlsExpiryMin", tlsExpiryMinInstant != null ? tlsExpiryMinInstant.toString() : null);
             deviceList.add(dm);
         }
 
