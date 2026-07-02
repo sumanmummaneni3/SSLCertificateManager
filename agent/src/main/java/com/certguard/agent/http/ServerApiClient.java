@@ -348,16 +348,25 @@ public class ServerApiClient {
 
     /**
      * POST /api/v1/agent/results
-     * Submits a FULL or DELTA scan result with HMAC signature.
+     * Submits a FULL, DELTA, or ERROR scan result with HMAC signature.
+     *
+     * ERROR results carry errorMessage and no cert fields (RFC 0013 §5).
      */
     public void submitResult(ScanResult result, String hmac) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("jobId",         result.getJobId());
         body.put("targetId",      result.getTargetId());
         body.put("scanType",      result.getScanType());
-        body.put("serialNumber",  result.getSerialNumber());
-        body.put("notAfter",      result.getNotAfter().toString());
         body.put("hmacSignature", hmac);
+
+        if ("ERROR".equals(result.getScanType())) {
+            // ERROR: no cert data; include errorMessage for server-side retry logic.
+            body.put("errorMessage", result.getErrorMessage());
+        } else {
+            // FULL and DELTA require serial and notAfter.
+            body.put("serialNumber", result.getSerialNumber());
+            body.put("notAfter",     result.getNotAfter().toString());
+        }
 
         if ("FULL".equals(result.getScanType())) {
             body.put("commonName",         result.getCommonName());
@@ -369,7 +378,10 @@ public class ServerApiClient {
             body.put("subjectAltNames",    result.getSubjectAltNames());
             body.put("chainDepth",         result.getChainDepth());
             body.put("publicCertB64",      result.getPublicCertB64());
-        } else {
+            if (result.getChainB64() != null && !result.getChainB64().isEmpty()) {
+                body.put("chainB64", result.getChainB64());
+            }
+        } else if ("DELTA".equals(result.getScanType())) {
             body.put("certificateId", result.getLastCertificateId());
         }
 

@@ -140,14 +140,22 @@ public class PollLoop {
         }
     }
 
-    /** Certificate scan — the original flow unchanged. */
+    /**
+     * Certificate scan.
+     *
+     * On ERROR (scan failure), the result is now submitted to the server (RFC 0013 §5)
+     * instead of being silently dropped. The server increments attempts and re-queues
+     * the job up to max-attempts, then marks it FAILED. Without this, a failing pool
+     * job would loop PENDING -> CLAIMED -> stale-reset -> PENDING indefinitely.
+     */
     private void processCertScanJob(ScanJob job) {
         try {
             ScanResult result = scanner.scan(job, config.scanTimeoutSeconds());
 
             if (result.getType() == ScanResult.Type.ERROR) {
-                log.warn("Scan error — job: {}, host: {}, reason: {}",
+                log.warn("Scan error — job: {}, host: {}, reason: {} — submitting ERROR result to server",
                         job.getJobId(), job.getHost(), result.getErrorMessage());
+                submitError(job, result);
                 return;
             }
 
@@ -157,7 +165,29 @@ public class PollLoop {
         } catch (Exception e) {
             log.error("Failed to process cert job {} ({}:{}): {}",
                     job.getJobId(), job.getHost(), job.getPort(), e.getMessage(), e);
+            // Best-effort ERROR submission so the server can increment attempts.
+            ScanResult errResult = buildErrorResult(job, e.getMessage());
+            submitError(job, errResult);
         }
+    }
+
+    private void submitError(ScanJob job, ScanResult errResult) {
+        try {
+            String hmac = HmacSigner.sign(errResult, config.agentKey());
+            api.submitResult(errResult, hmac);
+        } catch (Exception submitEx) {
+            log.error("Failed to submit ERROR result for job {} ({}:{}): {}",
+                    job.getJobId(), job.getHost(), job.getPort(), submitEx.getMessage());
+        }
+    }
+
+    private ScanResult buildErrorResult(ScanJob job, String message) {
+        ScanResult r = new ScanResult();
+        r.setType(ScanResult.Type.ERROR);
+        r.setJobId(job.getJobId());
+        r.setTargetId(job.getTargetId());
+        r.setErrorMessage(message != null ? message : "Unknown error");
+        return r;
     }
 
     /**
