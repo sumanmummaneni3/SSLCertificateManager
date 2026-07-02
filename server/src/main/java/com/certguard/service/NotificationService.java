@@ -65,6 +65,9 @@ public class NotificationService {
     @Value("${app.ui-base-url:${app.base-url:http://localhost:5173}}")
     private String uiBaseUrl;
 
+    @Value("${app.platform-admin.emails:}")
+    private String platformAdminEmails;
+
     private final OrganizationRepository orgRepository;
     private final UserRepository userRepository;
 
@@ -535,6 +538,45 @@ public class NotificationService {
         }
         return "[CertGuard] " + ctx.severity() + ": " + ctx.host() + ":" + ctx.port()
                 + " expires in " + ctx.daysLeft() + " day(s)";
+    }
+
+    /**
+     * Platform-admin alert: the PUBLIC_POOL scan job queue is starving (no scanner polling).
+     * Reuses the agent-offline notification shape (RFC 0013 §5).
+     *
+     * Sends to the configured platform-admin email list (app.platform-admin.emails).
+     * Logs a WARN in all cases so the alert is visible in structured logs.
+     */
+    @Async
+    public void dispatchPoolStarvationAlert(long pendingCount, long oldestAgeMinutes) {
+        log.warn("[POOL STARVATION] {} PUBLIC_POOL job(s) pending > {} min — no scanner is polling",
+                pendingCount, oldestAgeMinutes);
+
+        if (platformAdminEmails == null || platformAdminEmails.isBlank()) {
+            log.warn("Pool starvation detected but app.platform-admin.emails is empty — "
+                    + "configure it to receive starvation alerts");
+            return;
+        }
+
+        for (String email : platformAdminEmails.split(",")) {
+            String trimmed = email.trim();
+            if (trimmed.isBlank()) continue;
+            String subject = "[CertGuard] SCANNER POOL STARVATION: "
+                    + pendingCount + " job(s) pending > " + oldestAgeMinutes + " min";
+
+            org.thymeleaf.context.Context ctx = new org.thymeleaf.context.Context();
+            ctx.setVariable("pendingCount",      pendingCount);
+            ctx.setVariable("oldestAgeMinutes",  oldestAgeMinutes);
+            ctx.setVariable("baseUrl",           baseUrl);
+
+            if (devMode) {
+                log.info("[DEV] Would send pool starvation alert to {} — {} jobs, oldest {}m",
+                        trimmed, pendingCount, oldestAgeMinutes);
+                continue;
+            }
+            // Reuse agent-offline template (same information shape; future: dedicated template).
+            sendMimeEmail(trimmed, subject, "agent-offline", ctx, "pool-starvation");
+        }
     }
 
     private String resolveRenewalContactEmail(InternalRenewalNotificationRequest req) {

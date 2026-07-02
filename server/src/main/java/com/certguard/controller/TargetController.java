@@ -42,7 +42,7 @@ public class TargetController {
     @PreAuthorize("hasAnyRole('ADMIN','ENGINEER','PLATFORM_ADMIN')")
     public ResponseEntity<TargetResponse> create(@Valid @RequestBody CreateTargetRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(targetService.createTarget(TenantContext.getOrgId(), req));
+                .body(targetService.createTarget(TenantContext.getOrgId(), req, agentService));
     }
 
     @PutMapping("/{id}")

@@ -108,6 +108,11 @@ app:
     # evaluation time against the target's prior lastScannedAt (RFC 0008 §5).
     force-scan-debounce-seconds: ${ALERT_FORCE_SCAN_DEBOUNCE_SECONDS:120}
   scanning:
+    # RFC 0013 §7: scanning mode controls the public-target scan strategy.
+    # DIRECT (default) — in-process SslScannerService handles all public scans.
+    # HYBRID            — enqueue pool jobs; fall back to in-process if job is stale > 10 min.
+    # POOL              — pool only; in-process scanner disabled.
+    mode: ${APP_SCANNING_MODE:DIRECT}
     public:
       thread-pool-size: 20
       connect-timeout-ms: 10000
@@ -121,6 +126,15 @@ app:
       schedule-cron: ${PRIVATE_SCAN_SCHEDULE_CRON:0 0 3 * * *}
       # Number of targets enqueued per transaction to bound transaction size (RFC 0008 §6.4).
       enqueue-batch-size: ${PRIVATE_SCAN_ENQUEUE_BATCH_SIZE:500}
+    pool:
+      # Maximum jobs claimed per poll cycle by a PLATFORM_SCANNER agent (RFC 0013 §3).
+      claim-batch: ${SCANNER_POOL_CLAIM_BATCH:25}
+      # Maximum ERROR-result attempts before a job is marked FAILED (RFC 0013 §5).
+      max-attempts: ${SCANNER_POOL_MAX_ATTEMPTS:3}
+      # HYBRID mode: minutes a PUBLIC_POOL job may stay PENDING before in-process fallback (RFC 0013 §7).
+      fallback-pending-minutes: ${SCANNER_POOL_FALLBACK_PENDING_MINUTES:10}
+      # Pool starvation: alert platform admins if any PUBLIC_POOL job is PENDING > this many minutes (RFC 0013 §5).
+      starvation-alert-minutes: ${SCANNER_POOL_STARVATION_ALERT_MINUTES:15}
   revocation:
     # Master switch — set false to disable all revocation checks globally.
     enabled: ${APP_REVOCATION_ENABLED:true}

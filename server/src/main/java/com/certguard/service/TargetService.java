@@ -7,6 +7,7 @@ import com.certguard.dto.response.ScanStatusResponse;
 import com.certguard.dto.response.TargetResponse;
 import com.certguard.entity.*;
 import com.certguard.enums.HostType;
+import com.certguard.enums.ScanningMode;
 import com.certguard.exception.QuotaExceededException;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
@@ -14,6 +15,7 @@ import java.util.Map;
 import com.certguard.util.HostTypeDetector;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,9 @@ public class TargetService {
     private final SslScannerService sslScannerService;
     private final SubscriptionGuard subscriptionGuard;
 
+    @Value("${app.scanning.mode:DIRECT}")
+    private String scanningMode;
+
     @Transactional(readOnly = true)
     public Page<TargetResponse> listTargets(UUID orgId, Pageable pageable) {
         Page<Target> page = targetRepository.findAllByOrganizationId(orgId, pageable);
@@ -61,7 +66,8 @@ public class TargetService {
     }
 
     @Transactional
-    public TargetResponse createTarget(UUID orgId, CreateTargetRequest request) {
+    public TargetResponse createTarget(UUID orgId, CreateTargetRequest request,
+                                        AgentService agentService) {
         subscriptionGuard.assertScansAllowed(orgId);
         enforceTargetQuota(orgId);
         String host = request.getHost().trim().toLowerCase();
@@ -120,7 +126,13 @@ public class TargetService {
         }
 
         if (!isPrivate) {
-            sslScannerService.scanTargetAsync(target);
+            // RFC 0013 §2: route initial scan through pool if mode != DIRECT.
+            ScanningMode mode = parseScanningMode();
+            if (mode == ScanningMode.DIRECT) {
+                sslScannerService.scanTargetAsync(target);
+            } else {
+                agentService.enqueuePublicPoolJob(target, AgentService.TRIGGER_SCHEDULED);
+            }
         }
 
         log.info("Target created: {} [{}] :{} private={}", host, hostType, target.getPort(), isPrivate);
@@ -193,8 +205,15 @@ public class TargetService {
 
     /**
      * Triggers a scan for a target.
-     * - Public target → direct SSL scan via SslScannerService (synchronous)
-     * - Private target → queue an agent_scan_job (async, agent picks up within poll interval)
+     *
+     * <p>Public targets:
+     *   - DIRECT mode (default) → synchronous in-process scan via SslScannerService
+     *   - HYBRID/POOL mode      → enqueue a PUBLIC_POOL job (async, result via poll)
+     *
+     * <p>Private targets: always queue an AGENT_PINNED job (unchanged).
+     *
+     * RFC 0013 §2: "TargetService.triggerScan public path enqueues PUBLIC_POOL job with
+     * trigger_source=USER when mode != DIRECT."
      */
     @Transactional
     public String triggerScan(UUID orgId, UUID targetId,
@@ -204,19 +223,34 @@ public class TargetService {
         Target target = findTargetForOrg(orgId, targetId);
 
         if (!target.getIsPrivate()) {
-            // Public — scan directly
-            sslScannerService.scanTarget(target);
-            return "Scan triggered for " + target.getHost();
+            ScanningMode mode = parseScanningMode();
+            if (mode == ScanningMode.DIRECT) {
+                // DIRECT: synchronous in-process scan (existing behaviour).
+                sslScannerService.scanTarget(target);
+                return "Scan triggered for " + target.getHost();
+            } else {
+                // HYBRID / POOL: enqueue a PUBLIC_POOL job with USER trigger.
+                agentService.enqueuePublicPoolJob(target, AgentService.TRIGGER_USER);
+                return "Scan queued for " + target.getHost()
+                        + " — result available within the next poll cycle";
+            }
         }
 
         // Private — queue job for agent.
-        // Pass TRIGGER_USER so the agent path selects EvaluationMode.FORCE (RFC 0008 §6.3).
         if (target.getAgent() == null) {
             throw new IllegalStateException(
                 "Private target has no assigned agent. Assign an agent before scanning.");
         }
         agentService.queueScanJob(target, AgentService.TRIGGER_USER);
         return "Scan job queued for agent '" + target.getAgent().getName() + "'";
+    }
+
+    private ScanningMode parseScanningMode() {
+        try {
+            return ScanningMode.valueOf(scanningMode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ScanningMode.DIRECT;
+        }
     }
 
     /**
