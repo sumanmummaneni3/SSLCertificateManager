@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -36,6 +37,7 @@ class TargetServiceTest {
     @Mock LocationRepository locationRepository;
     @Mock SslScannerService sslScannerService;
     @Mock SubscriptionGuard subscriptionGuard;
+    @Mock AgentService agentService;
 
     @InjectMocks TargetService targetService;
 
@@ -57,6 +59,8 @@ class TargetServiceTest {
                 .maxCertificateQuota(10)
                 .status(SubscriptionStatus.ACTIVE)
                 .build();
+        // @Value fields are not injected by Mockito @InjectMocks — wire defaults manually.
+        ReflectionTestUtils.setField(targetService, "scanningMode", "DIRECT");
     }
 
     @Nested
@@ -81,7 +85,7 @@ class TargetServiceTest {
             when(targetRepository.save(any(Target.class))).thenReturn(savedTarget);
             when(certRepository.findTopByTargetIdOrderByScannedAtDesc(any())).thenReturn(Optional.empty());
 
-            TargetResponse response = targetService.createTarget(orgId, req);
+            TargetResponse response = targetService.createTarget(orgId, req, agentService);
 
             assertThat(response.getHost()).isEqualTo("example.com");
             assertThat(response.getPort()).isEqualTo(443);
@@ -100,7 +104,7 @@ class TargetServiceTest {
             when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(2L);
             when(targetRepository.existsByOrganizationIdAndHostAndPort(orgId, "dup.example.com", 443)).thenReturn(true);
 
-            assertThatThrownBy(() -> targetService.createTarget(orgId, req))
+            assertThatThrownBy(() -> targetService.createTarget(orgId, req, agentService))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Target already exists");
         }
@@ -119,7 +123,7 @@ class TargetServiceTest {
             when(subscriptionRepository.findByOrganizationId(orgId)).thenReturn(Optional.of(tightSub));
             when(targetRepository.countByOrganizationIdIn(anyCollection())).thenReturn(2L);
 
-            assertThatThrownBy(() -> targetService.createTarget(orgId, req))
+            assertThatThrownBy(() -> targetService.createTarget(orgId, req, agentService))
                     .isInstanceOf(QuotaExceededException.class)
                     .hasMessageContaining("quota");
         }
@@ -137,7 +141,7 @@ class TargetServiceTest {
             when(targetRepository.existsByOrganizationIdAndHostAndPort(any(), any(), anyInt())).thenReturn(false);
             when(organizationRepository.findById(orgId)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> targetService.createTarget(orgId, req))
+            assertThatThrownBy(() -> targetService.createTarget(orgId, req, agentService))
                     .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessageContaining("Organization not found");
         }
