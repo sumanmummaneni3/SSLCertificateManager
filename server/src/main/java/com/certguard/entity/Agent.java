@@ -2,6 +2,7 @@ package com.certguard.entity;
 
 import com.certguard.config.JsonListConverter;
 import com.certguard.enums.AgentStatus;
+import com.certguard.enums.AgentType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -56,6 +57,17 @@ public class Agent extends BaseEntity {
     @Column(nullable = false, columnDefinition = "agent_status")
     @Builder.Default
     private AgentStatus status = AgentStatus.PENDING;
+
+    /**
+     * Agent type: customer-deployed vs platform-operated scanner.
+     * Authoritative server-side — determines which job pool the agent claims from
+     * and which security checks apply in submitResult (RFC 0013 §1, §4).
+     */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "agent_type", nullable = false, columnDefinition = "agent_type")
+    @Builder.Default
+    private AgentType agentType = AgentType.CUSTOMER;
 
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
