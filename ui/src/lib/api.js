@@ -116,6 +116,11 @@ export const api = {
   resendVerification:   (email) => api.call("POST", "/api/auth/resend-verification", { email }),
   forgotPassword:       (email) => api.call("POST", "/api/auth/forgot-password", { email }),
   resetPassword:        (data)  => api.call("POST", "/api/auth/reset-password", data),
+  // RFC 0013 — scan-status endpoint (works for both private and public targets
+  // once the server routes public targets through the job queue)
+  getLatestScanStatus: (targetId, token, opts) =>
+    api.call("GET", `/api/v1/targets/${targetId}/scan-status`, null, token, opts),
+
   // Platform admin endpoints
   admin: {
     listOrgs:    (token) => api.call("GET", "/api/v1/admin/orgs", null, token),
@@ -125,6 +130,11 @@ export const api = {
     updateQuota: (token, orgId, body) => api.call("PUT", `/api/v1/admin/orgs/${orgId}/quota`, body, token),
     getAuditLog: (token, params) => api.call("GET", `/api/v1/admin/audit?${new URLSearchParams(params)}`, null, token),
     promoteMsp:  (token, orgId) => api.call("PATCH", `/api/v1/admin/orgs/${orgId}/promote-msp`, null, token),
+    // RFC 0013 — platform scanner pool metrics
+    // GET /api/v1/admin/scanner-pool
+    // Response: { scanners: [{id, name, status, lastSeenAt, jobsClaimedTotal, jobsClaimedLastHour}],
+    //             backlog: { pendingCount, oldestPendingAgeMinutes } }
+    getScannerPool: (token) => api.call("GET", "/api/v1/admin/scanner-pool", null, token),
   },
   // Certificate renewal endpoints
   getCert:          (certId, token) => api.call("GET",  `/api/v1/certificates/${certId}`, null, token),

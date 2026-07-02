@@ -17,6 +17,7 @@ import { MspOrgsView }           from "@/panels/msp/OrgsView.jsx";
 import { MspTargetsView }        from "@/panels/msp/TargetsView.jsx";
 import { PlatformOrgsView }      from "@/panels/platform/OrgsView.jsx";
 import { PlatformOrgDetailView } from "@/panels/platform/OrgDetailView.jsx";
+import { ScannerPoolView }       from "@/panels/platform/ScannerPoolView.jsx";
 import { NetworkScansView }      from "@/panels/network-scans/index.jsx";
 import { NetworkScanDetailView } from "@/panels/network-scans/NetworkScanDetailView.jsx";
 
@@ -145,6 +146,9 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
     if (view === "network-scans" || view === "network-scan-detail") loadNetworkScans();
   }, [view, loadNetworkScans]);
 
+  // RFC 0013 §9 — public scans are now async (queued into the cloud scanner pool)
+  // so both private and public targets get the "Scan queued" toast + deferred reload.
+  // Private targets need an assigned agent; public targets use the shared scanner pool.
   const triggerScan = async (target) => {
     if (target.isPrivate && !target.agentId) {
       toast("Assign an agent to this target before scanning", "error");
@@ -155,9 +159,12 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
       await api.scanTarget(target.id, token);
       const msg = target.isPrivate
         ? `Scan job queued for agent "${target.agentName}" — results in ~30s`
-        : `Scan triggered for ${target.host}`;
+        : `Scan queued for ${target.host} — cloud scanner will pick it up shortly`;
       toast(msg, "info");
-      setTimeout(() => { load(); setScanning((s) => ({ ...s, [target.id]: false })); }, 10000);
+      // Reload after ~15 s for public targets (pool claim interval) and 10 s for private.
+      // Reuse the single reload path for both — no duplicate poller.
+      const delay = target.isPrivate ? 10_000 : 15_000;
+      setTimeout(() => { load(); setScanning((s) => ({ ...s, [target.id]: false })); }, delay);
     } catch (e) {
       toast("Scan failed: " + e.message, "error");
       setScanning((s) => ({ ...s, [target.id]: false }));
@@ -340,6 +347,10 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
             onExit={exitImpersonation}
             me={me}
           />
+        )}
+        {/* RFC 0013 §9 — scanner fleet + pool backlog (platform-admin only) */}
+        {view === "platform-admin-scanner-pool" && (
+          <ScannerPoolView token={token} toast={toast} />
         )}
       </div>
 
