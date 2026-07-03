@@ -7,6 +7,7 @@ import com.certguard.dto.request.OrgTransferRequest;
 import com.certguard.dto.request.OrgTransferUndoRequest;
 import com.certguard.dto.response.OrgMigrationResponse;
 import com.certguard.dto.response.OrgResponse;
+import com.certguard.dto.response.ScannerPoolResponse;
 import com.certguard.entity.PlatformAdminAudit;
 import com.certguard.service.AdminService;
 import com.certguard.service.OrgMigrationService;
@@ -129,6 +130,16 @@ public class AdminController {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ResponseEntity.ok(adminService.listAuditEvents(orgId, from, to, pageable));
+    }
+
+    /**
+     * Platform-global (not org-scoped) view of the PLATFORM_SCANNER agent fleet and the
+     * PUBLIC_POOL job backlog (RFC 0013 §9). Same PLATFORM_ADMIN guard as the rest of
+     * this controller (class-level {@code @PreAuthorize}).
+     */
+    @GetMapping("/scanner-pool")
+    public ResponseEntity<ScannerPoolResponse> getScannerPool() {
+        return ResponseEntity.ok(adminService.getScannerPool());
     }
 
     // ── RFC 0010: MSP→MSP organisation migration ──────────────────────────────

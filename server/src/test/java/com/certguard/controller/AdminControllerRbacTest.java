@@ -152,6 +152,52 @@ class AdminControllerRbacTest {
         }
     }
 
+    // ── GET /api/v1/admin/scanner-pool (RFC 0013 §9) ─────────────────────────
+
+    @Nested
+    class ScannerPoolEndpoint {
+
+        @Test
+        void scannerPool_asViewer_returns403() throws Exception {
+            mockMvc.perform(get("/api/v1/admin/scanner-pool")
+                            .header("Authorization", "Bearer " + viewerToken))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        void scannerPool_asAdmin_returns403() throws Exception {
+            mockMvc.perform(get("/api/v1/admin/scanner-pool")
+                            .header("Authorization", "Bearer " + adminToken))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        void scannerPool_asEngineer_returns403() throws Exception {
+            mockMvc.perform(get("/api/v1/admin/scanner-pool")
+                            .header("Authorization", "Bearer " + engineerToken))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        void scannerPool_withoutAuth_returns401() throws Exception {
+            mockMvc.perform(get("/api/v1/admin/scanner-pool"))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        void scannerPool_asPlatformAdmin_returns200WithContractShape() throws Exception {
+            mockMvc.perform(get("/api/v1/admin/scanner-pool")
+                            .header("Authorization", "Bearer " + platformAdminToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.scanners").isArray())
+                    .andExpect(jsonPath("$.backlog").exists())
+                    .andExpect(jsonPath("$.backlog.pendingCount").exists())
+                    .andExpect(jsonPath("$.backlog.oldestPendingAgeMinutes").exists())
+                    .andExpect(jsonPath("$.backlog.claimedCount").exists())
+                    .andExpect(jsonPath("$.backlog.failedLast24h").exists());
+        }
+    }
+
     // ── X-Acting-As-Org without reason on write ───────────────────────────────
 
     @Nested
