@@ -3,6 +3,7 @@ package com.certguard.service;
 import com.certguard.dto.request.CreateTargetRequest;
 import com.certguard.dto.response.TargetResponse;
 import com.certguard.entity.*;
+import com.certguard.enums.ScanJobStatus;
 import com.certguard.enums.SubscriptionStatus;
 import com.certguard.enums.OrgType;
 import com.certguard.exception.QuotaExceededException;
@@ -15,8 +16,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -212,6 +218,72 @@ class TargetServiceTest {
             verify(mockScanner).scanTarget(target);
             verifyNoInteractions(mockAgent);
             assertThat(result).contains("Scan triggered");
+        }
+    }
+
+    @Nested
+    class ListTargetsPendingScanQueuedAt {
+
+        @Test
+        void batchLoadsOldestPendingJobCreatedAt_oneQueryNotPerTarget() {
+            UUID target1Id = UUID.randomUUID();
+            UUID target2Id = UUID.randomUUID();
+
+            Target target1 = Target.builder()
+                    .organization(org).host("t1.example.com").port(443).isPrivate(false).enabled(true)
+                    .build();
+            ReflectionTestUtils.setField(target1, "id", target1Id);
+            Target target2 = Target.builder()
+                    .organization(org).host("t2.example.com").port(443).isPrivate(false).enabled(true)
+                    .build();
+            ReflectionTestUtils.setField(target2, "id", target2Id);
+
+            Page<Target> page = new PageImpl<>(List.of(target1, target2));
+            when(targetRepository.findAllByOrganizationId(eq(orgId), any(Pageable.class))).thenReturn(page);
+            when(certRepository.findLatestByTargetIds(anyList())).thenReturn(List.of());
+
+            Instant oldestCreatedAt = Instant.now().minus(15, ChronoUnit.MINUTES);
+            AgentScanJob pendingJobForTarget1 = AgentScanJob.builder()
+                    .agent(null).target(target1).orgId(orgId)
+                    .status(ScanJobStatus.PENDING)
+                    .jobKind(AgentScanJob.KIND_PUBLIC_POOL)
+                    .build();
+            ReflectionTestUtils.setField(pendingJobForTarget1, "createdAt", oldestCreatedAt);
+
+            // Only target1 has a pending job — target2 must resolve to null.
+            when(scanJobRepository.findPendingJobsForTargetIds(anyList()))
+                    .thenReturn(List.of(pendingJobForTarget1));
+
+            Page<TargetResponse> result = targetService.listTargets(orgId, Pageable.unpaged());
+
+            TargetResponse response1 = result.getContent().stream()
+                    .filter(r -> r.getId().equals(target1Id)).findFirst().orElseThrow();
+            TargetResponse response2 = result.getContent().stream()
+                    .filter(r -> r.getId().equals(target2Id)).findFirst().orElseThrow();
+
+            assertThat(response1.getPendingScanQueuedAt()).isEqualTo(oldestCreatedAt);
+            assertThat(response2.getPendingScanQueuedAt()).isNull();
+
+            // Batch call happens exactly once for the whole page — no N+1.
+            verify(scanJobRepository, times(1)).findPendingJobsForTargetIds(anyList());
+        }
+
+        @Test
+        void noPendingJobs_pendingScanQueuedAtIsNull() {
+            UUID targetId = UUID.randomUUID();
+            Target target = Target.builder()
+                    .organization(org).host("t.example.com").port(443).isPrivate(false).enabled(true)
+                    .build();
+            ReflectionTestUtils.setField(target, "id", targetId);
+
+            Page<Target> page = new PageImpl<>(List.of(target));
+            when(targetRepository.findAllByOrganizationId(eq(orgId), any(Pageable.class))).thenReturn(page);
+            when(certRepository.findLatestByTargetIds(anyList())).thenReturn(List.of());
+            when(scanJobRepository.findPendingJobsForTargetIds(anyList())).thenReturn(List.of());
+
+            Page<TargetResponse> result = targetService.listTargets(orgId, Pageable.unpaged());
+
+            assertThat(result.getContent().get(0).getPendingScanQueuedAt()).isNull();
         }
     }
 

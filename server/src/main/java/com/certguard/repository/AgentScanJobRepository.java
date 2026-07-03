@@ -143,4 +143,36 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
           AND status IN ('PENDING', 'CLAIMED')
         """, nativeQuery = true)
     boolean existsActivePoolJobForTarget(@Param("targetId") UUID targetId);
+
+    /**
+     * All PENDING jobs (any job_kind) for the given target ids, ordered oldest-first.
+     * Used to batch-load {@code pendingScanQueuedAt} for target list/detail responses
+     * (RFC 0013 §9) — callers keep the first occurrence per target id from this
+     * ascending-ordered list to get the oldest PENDING job's createdAt.
+     */
+    @Query("SELECT j FROM AgentScanJob j WHERE j.target.id IN :targetIds AND j.status = 'PENDING' " +
+           "ORDER BY j.createdAt ASC")
+    List<AgentScanJob> findPendingJobsForTargetIds(@Param("targetIds") List<UUID> targetIds);
+
+    // ── Scanner-pool admin endpoint (RFC 0013 §9) ──────────────────────────────
+
+    /** Jobs claimed by a given agent within the given window — used for jobsClaimedLastHour. */
+    long countByAgentIdAndClaimedAtAfter(UUID agentId, Instant after);
+
+    /** All-time completed job count for a given agent — used for totalJobsCompleted. */
+    long countByAgentIdAndStatus(UUID agentId, ScanJobStatus status);
+
+    /** PUBLIC_POOL jobs currently CLAIMED (in-flight) — scanner-pool backlog.claimedCount. */
+    @Query(value = """
+        SELECT COUNT(*) FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'CLAIMED'
+        """, nativeQuery = true)
+    long countClaimedPoolJobs();
+
+    /** PUBLIC_POOL jobs that reached FAILED since the given instant — backlog.failedLast24h. */
+    @Query(value = """
+        SELECT COUNT(*) FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'FAILED' AND completed_at > :since
+        """, nativeQuery = true)
+    long countFailedPoolJobsSince(@Param("since") Instant since);
 }
