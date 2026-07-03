@@ -11,6 +11,7 @@ import com.certguard.enums.CertStatus;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
+import com.certguard.util.ScanSourceMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -146,6 +147,8 @@ public class CertificateService {
                         ? cert.getChainValidationError().name() : null)
                 // Derived convenience
                 .onHold(cert.isOnHold())
+                // RFC 0013 §9: scan provenance (omitted for legacy records)
+                .scanSource(ScanSourceMapper.fromCertificateRecord(cert))
                 .build();
     }
 }

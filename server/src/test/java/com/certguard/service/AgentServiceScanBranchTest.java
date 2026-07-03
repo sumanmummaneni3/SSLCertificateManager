@@ -151,7 +151,7 @@ class AgentServiceScanBranchTest {
             verify(certPersistenceService).persistFull(
                     any(), eq(customerAgent), any(), any(), any(),
                     any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                    any(), any());
+                    any(), any(), eq(com.certguard.enums.ScanSourceType.CUSTOMER_AGENT));
         }
 
         @Test

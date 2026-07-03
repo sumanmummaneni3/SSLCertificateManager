@@ -10,6 +10,7 @@ import com.certguard.enums.AgentStatus;
 import com.certguard.enums.AgentType;
 import com.certguard.enums.CertStatus;
 import com.certguard.enums.ScanJobStatus;
+import com.certguard.enums.ScanSourceType;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.AgentHmacService;
@@ -322,6 +323,15 @@ public class AgentService {
     private void processResult(Agent agent, Target target, AgentScanResultRequest req,
                                ExpiryEvaluationService.EvaluationMode evalMode,
                                Instant previousLastScannedAt) {
+        // RFC 0013 §9: provenance is derived from the SUBMITTING agent's type, which
+        // assertPoolSubmitSecurity/assertPinnedSubmitSecurity have already validated
+        // matches the job kind — PLATFORM_SCANNER claimed a PUBLIC_POOL job (⇒ cloud
+        // scanner, identity not exposed), CUSTOMER claimed an AGENT_PINNED job (⇒ named
+        // customer agent).
+        ScanSourceType scanSourceType = agent.getAgentType() == AgentType.PLATFORM_SCANNER
+                ? ScanSourceType.CLOUD_SCANNER
+                : ScanSourceType.CUSTOMER_AGENT;
+
         if ("FULL".equals(req.getScanType())) {
             byte[] ocspStaple = decodeOcspStaple(req.getOcspStapleB64());
             certPersistenceService.persistFull(
@@ -331,13 +341,13 @@ public class AgentService {
                     req.getKeyAlgorithm(), req.getKeySize(), req.getSignatureAlgorithm(),
                     req.getSubjectAltNames(), req.getChainDepth(),
                     req.getPublicCertB64(), req.getChainB64(), ocspStaple,
-                    evalMode, previousLastScannedAt);
+                    evalMode, previousLastScannedAt, scanSourceType);
         } else if ("DELTA".equals(req.getScanType())) {
             if (req.getCertificateId() == null)
                 throw new IllegalArgumentException("DELTA result must include certificateId");
             certPersistenceService.persistDelta(
                     target, req.getCertificateId(), req.getNotAfter(),
-                    evalMode, previousLastScannedAt);
+                    evalMode, previousLastScannedAt, scanSourceType);
         } else {
             throw new IllegalArgumentException("Unknown scanType: " + req.getScanType());
         }

@@ -4,6 +4,7 @@ import com.certguard.entity.Agent;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
+import com.certguard.enums.ScanSourceType;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.service.chain.ChainValidationResult;
 import com.certguard.service.chain.ChainValidationService;
@@ -88,6 +89,10 @@ public class CertificatePersistenceService {
      * @param ocspStapleBytes      raw OCSP staple bytes; null if none
      * @param evalMode             SCHEDULED or FORCE (for RFC 0008 notification logic)
      * @param previousLastScannedAt prior lastScannedAt of target (force-scan debounce)
+     * @param scanSourceType       persisted provenance for the scanSource API field
+     *                             (RFC 0013 §9); never null for post-V42 call sites —
+     *                             callers always know whether they are the cloud
+     *                             scanner or a customer agent.
      */
     @Transactional
     public void persistFull(Target target,
@@ -106,7 +111,8 @@ public class CertificatePersistenceService {
                             List<String> chainB64,
                             byte[] ocspStapleBytes,
                             ExpiryEvaluationService.EvaluationMode evalMode,
-                            Instant previousLastScannedAt) {
+                            Instant previousLastScannedAt,
+                            ScanSourceType scanSourceType) {
 
         CertificateRecord record = certRepository
                 .findByTargetIdAndSerialNumber(target.getId(), serialNumber)
@@ -128,6 +134,7 @@ public class CertificatePersistenceService {
         record.setPublicCertB64(publicCertB64);
         record.setScannedByAgent(scannedByAgent);
         record.setScannedAt(Instant.now());
+        record.setScanSourceType(scanSourceType);
 
         // Chain validation + revocation.
         X509Certificate[] chain = buildChain(chainB64, publicCertB64);
@@ -160,6 +167,9 @@ public class CertificatePersistenceService {
      * @param newNotAfter          updated expiry date
      * @param evalMode             SCHEDULED or FORCE
      * @param previousLastScannedAt prior lastScannedAt
+     * @param scanSourceType       persisted provenance for the scanSource API field
+     *                             (RFC 0013 §9); reflects the actor of THIS delta
+     *                             completion (may differ from the original FULL scan).
      * @throws com.certguard.exception.ResourceNotFoundException if the record is not found
      */
     @Transactional
@@ -167,7 +177,8 @@ public class CertificatePersistenceService {
                              java.util.UUID certificateId,
                              Instant newNotAfter,
                              ExpiryEvaluationService.EvaluationMode evalMode,
-                             Instant previousLastScannedAt) {
+                             Instant previousLastScannedAt,
+                             ScanSourceType scanSourceType) {
 
         CertificateRecord existing = certRepository.findById(certificateId)
                 .orElseThrow(() -> new com.certguard.exception.ResourceNotFoundException(
@@ -175,6 +186,7 @@ public class CertificatePersistenceService {
 
         existing.setExpiryDate(newNotAfter);
         existing.setScannedAt(Instant.now());
+        existing.setScanSourceType(scanSourceType);
 
         // RFC 0009: DELTA — run revocation on the STORED leaf, not a re-sent chain.
         X509Certificate[] chain = buildChain(null, existing.getPublicCertB64());

@@ -13,6 +13,7 @@ import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import java.util.Map;
 import com.certguard.util.HostTypeDetector;
+import com.certguard.util.ScanSourceMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,7 +63,20 @@ public class TargetService {
                         c -> c,
                         (existing, replacement) -> existing));  // keep first (latest)
 
-        return page.map(target -> toResponse(target, latestCertByTarget.get(target.getId())));
+        // Batch-load the oldest PENDING job's createdAt per target in one query (RFC 0013 §9)
+        // — avoids N+1 for the pendingScanQueuedAt "scan delayed" hint.
+        Map<UUID, Instant> pendingScanQueuedAtByTarget = scanJobRepository
+                .findPendingJobsForTargetIds(targetIds)
+                .stream()
+                // Ordered ASC by createdAt; keep only the first (oldest) occurrence per targetId.
+                .collect(Collectors.toMap(
+                        j -> j.getTarget().getId(),
+                        AgentScanJob::getCreatedAt,
+                        (existing, replacement) -> existing));
+
+        return page.map(target -> toResponse(target,
+                latestCertByTarget.get(target.getId()),
+                pendingScanQueuedAtByTarget.get(target.getId())));
     }
 
     @Transactional
@@ -272,6 +286,7 @@ public class TargetService {
                 .createdAt(job.getCreatedAt())
                 .claimedAt(job.getClaimedAt())
                 .completedAt(job.getCompletedAt())
+                .scanSource(ScanSourceMapper.fromCompletedJob(job))
                 .build();
     }
 
@@ -350,20 +365,32 @@ public class TargetService {
     }
 
     /**
-     * Single-target overload used by getTarget() and createTarget() — loads the
-     * latest cert record with a per-target query (acceptable for single lookups).
+     * Single-target overload used by getTarget(), createTarget(), updateTarget(), and
+     * updateNotificationChannels() — loads the latest cert record and the oldest PENDING
+     * job with per-target queries (acceptable for single lookups; listTargets() batches
+     * both instead).
      */
     private TargetResponse toResponse(Target target) {
         Optional<CertificateRecord> latestCert = certRepository
                 .findTopByTargetIdOrderByScannedAtDesc(target.getId());
-        return toResponse(target, latestCert.orElse(null));
+        // Guard against a null id (defensive — target.getId() is always populated once
+        // persisted, but List.of() rejects null and this overload may be called with a
+        // freshly-built, not-yet-flushed entity in some unit-test doubles).
+        Instant pendingScanQueuedAt = target.getId() == null ? null : scanJobRepository
+                .findPendingJobsForTargetIds(List.of(target.getId()))
+                .stream()
+                .findFirst() // ascending createdAt order — first is oldest
+                .map(AgentScanJob::getCreatedAt)
+                .orElse(null);
+        return toResponse(target, latestCert.orElse(null), pendingScanQueuedAt);
     }
 
     /**
-     * Overload used by listTargets() — accepts a pre-loaded cert to avoid N+1.
-     * {@code latestCert} may be null when no cert has been scanned yet.
+     * Overload used by listTargets() — accepts pre-loaded/batched values to avoid N+1.
+     * {@code latestCert} and {@code pendingScanQueuedAt} may be null.
      */
-    private TargetResponse toResponse(Target target, CertificateRecord latestCert) {
+    private TargetResponse toResponse(Target target, CertificateRecord latestCert,
+                                       Instant pendingScanQueuedAt) {
         CertificateSummary certSummary = (latestCert != null) ? toCertSummary(latestCert) : null;
 
         return TargetResponse.builder()
@@ -380,6 +407,7 @@ public class TargetService {
                 .locationName(target.getLocation() != null ? target.getLocation().getName() : null)
                 .notificationChannels(target.getNotificationChannels())
                 .latestCertificate(certSummary)
+                .pendingScanQueuedAt(pendingScanQueuedAt)
                 .build();
     }
 
@@ -388,6 +416,7 @@ public class TargetService {
         return CertificateSummary.builder()
                 .id(cert.getId()).commonName(cert.getCommonName()).issuer(cert.getIssuer())
                 .expiryDate(cert.getExpiryDate()).daysRemaining(days).status(cert.getStatus())
+                .scanSource(ScanSourceMapper.fromCertificateRecord(cert))
                 .build();
     }
 }

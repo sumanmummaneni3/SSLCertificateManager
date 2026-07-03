@@ -1,6 +1,7 @@
 package com.certguard.dto.response;
 
 import com.certguard.enums.CertStatus;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 import lombok.Data;
 
@@ -45,6 +46,13 @@ public class CertificateResponse {
     /** Populated on the single-certificate detail endpoint so the UI can tell whether
      *  the target is agent-managed (target.agentId) and offer renewal. Null on list views. */
     private TargetResponse target;
+
+    /**
+     * Scan provenance (RFC 0013 §9). Omitted entirely (not even {@code null}) for legacy
+     * records with no recorded provenance — see {@code ScanSourceMapper}.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private ScanSource scanSource;
 
     // ── RFC 0009: Revocation fields ────────────────────────────────────────────
 

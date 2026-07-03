@@ -3,6 +3,7 @@ package com.certguard.service;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
+import com.certguard.enums.ScanSourceType;
 import com.certguard.enums.ScanningMode;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
@@ -182,6 +183,9 @@ public class SslScannerService {
         // Extract SANs from leaf.
         List<String> sans = extractSANs(leaf);
 
+        // RFC 0013 §9: both the plain-DIRECT path and the HYBRID fallback path run
+        // in-process on the server — from the tenant's perspective both are
+        // "CertGuard Cloud Scanner", so always stamp CLOUD_SCANNER here.
         certPersistenceService.persistFull(
                 target,
                 null,           // scannedByAgent = null (direct path, not via agent)
@@ -195,7 +199,8 @@ public class SslScannerService {
                 chainB64,
                 scanResult.ocspStaple(),
                 mode,
-                previousLastScannedAt);
+                previousLastScannedAt,
+                ScanSourceType.CLOUD_SCANNER);
 
         // Stamp the target's lastScannedAt and clear any error.
         target.setLastScannedAt(Instant.now());

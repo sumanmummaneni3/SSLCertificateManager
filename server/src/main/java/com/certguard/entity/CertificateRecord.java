@@ -4,6 +4,7 @@ import com.certguard.enums.CertStatus;
 import com.certguard.enums.ChainValidationError;
 import com.certguard.enums.RevocationSource;
 import com.certguard.enums.RevocationStatus;
+import com.certguard.enums.ScanSourceType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -77,6 +78,16 @@ public class CertificateRecord extends BaseEntity {
     @Column(name = "scanned_at", nullable = false)
     @Builder.Default
     private Instant scannedAt = Instant.now();
+
+    /**
+     * Persisted scan provenance (RFC 0013 §9). Null on legacy rows that predate this
+     * column — the application layer omits the {@code scanSource} API field in that
+     * case rather than inferring it from {@link #scannedByAgent}. See ScanSourceMapper.
+     */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "scan_source_type", columnDefinition = "scan_source_type")
+    private ScanSourceType scanSourceType;
 
     /**
      * UTC timestamp of the most recent expiry alert dispatched for this record.
