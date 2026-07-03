@@ -7,9 +7,9 @@
  * Degrades gracefully when the endpoint is not yet deployed (404 → shows
  * "coming soon" notice identical to PlatformOrgsView's api-unavailable state).
  *
- * Assumed response shape (agreed with backend-engineer via SendMessage):
+ * Response shape (ratified contract, ScannerPoolResponse.ScannerInfo):
  *   {
- *     scanners: [{ id, name, status, lastSeenAt, jobsClaimedTotal, jobsClaimedLastHour }],
+ *     scanners: [{ id, name, status, lastSeenAt, totalJobsCompleted, jobsClaimedLastHour }],
  *     backlog:  { pendingCount, oldestPendingAgeMinutes }
  *   }
  */
@@ -189,7 +189,7 @@ export function ScannerPoolView({ token, toast }) {
                       {fmtRelative(s.lastSeenAt)}
                     </td>
                     <td className="mono">{s.jobsClaimedLastHour ?? "—"}</td>
-                    <td className="mono">{s.jobsClaimedTotal ?? "—"}</td>
+                    <td className="mono">{s.totalJobsCompleted ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>

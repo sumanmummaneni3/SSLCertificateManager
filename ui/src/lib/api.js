@@ -132,7 +132,7 @@ export const api = {
     promoteMsp:  (token, orgId) => api.call("PATCH", `/api/v1/admin/orgs/${orgId}/promote-msp`, null, token),
     // RFC 0013 — platform scanner pool metrics
     // GET /api/v1/admin/scanner-pool
-    // Response: { scanners: [{id, name, status, lastSeenAt, jobsClaimedTotal, jobsClaimedLastHour}],
+    // Response: { scanners: [{id, name, status, lastSeenAt, totalJobsCompleted, jobsClaimedLastHour}],
     //             backlog: { pendingCount, oldestPendingAgeMinutes } }
     getScannerPool: (token) => api.call("GET", "/api/v1/admin/scanner-pool", null, token),
   },
