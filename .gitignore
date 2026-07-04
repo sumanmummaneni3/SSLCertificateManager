@@ -48,3 +48,8 @@ server/monitoring/grafana/data/
 !.claude/commands/
 prompty.txt
 ui/*.txt
+
+# Local working docs (not part of the codebase)
+docs/PRD.docx
+marketing/
+server/DEVOXXGENIE.md
