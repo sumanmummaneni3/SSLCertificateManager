@@ -10,6 +10,7 @@ import com.certguard.agent.scanner.EndpointPortState;
 import com.certguard.agent.scanner.PortSweepScanner;
 import com.certguard.agent.scanner.SslScanner;
 import com.certguard.agent.security.HmacSigner;
+import com.certguard.agent.security.PublicAddressGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,12 +144,31 @@ public class PollLoop {
     /**
      * Certificate scan.
      *
-     * On ERROR (scan failure), the result is now submitted to the server (RFC 0013 §5)
-     * instead of being silently dropped. The server increments attempts and re-queues
-     * the job up to max-attempts, then marks it FAILED. Without this, a failing pool
-     * job would loop PENDING -> CLAIMED -> stale-reset -> PENDING indefinitely.
+     * <p>RFC 0013 §4.4 (SSRF guard, agent-side — authoritative): when this job was
+     * claimed from the shared PUBLIC_POOL, the target's address is re-resolved and
+     * validated with {@link PublicAddressGuard} BEFORE any socket is opened. DNS can
+     * change between server-side enqueue and agent-side scan time, so the server-side
+     * check (at enqueue) is defense-in-depth only — this check is authoritative. This
+     * check does NOT apply to AGENT_PINNED jobs: customer agents scan private address
+     * space by design.
+     *
+     * <p>On ERROR (scan failure or SSRF rejection), the result is submitted to the
+     * server (RFC 0013 §5) instead of being silently dropped. The server increments
+     * attempts and re-queues the job up to max-attempts, then marks it FAILED. Without
+     * this, a failing pool job would loop PENDING -> CLAIMED -> stale-reset -> PENDING
+     * indefinitely.
      */
     private void processCertScanJob(ScanJob job) {
+        if (job.isPublicPoolJob()) {
+            String rejectionReason = checkPublicAddressGuard(job.getHost());
+            if (rejectionReason != null) {
+                log.warn("SSRF guard rejected PUBLIC_POOL job — job: {}, host: {}: {} — submitting ERROR result",
+                        job.getJobId(), job.getHost(), rejectionReason);
+                submitError(job, buildErrorResult(job, "PublicAddressGuard rejected target: " + rejectionReason));
+                return;
+            }
+        }
+
         try {
             ScanResult result = scanner.scan(job, config.scanTimeoutSeconds());
 
@@ -188,6 +208,23 @@ public class PollLoop {
         r.setTargetId(job.getTargetId());
         r.setErrorMessage(message != null ? message : "Unknown error");
         return r;
+    }
+
+    /**
+     * RFC 0013 §4.4 — PUBLIC_POOL SSRF guard, extracted as a pure static method so it
+     * is directly unit-testable without constructing a full PollLoop (AgentConfig /
+     * ServerApiClient / SslScanner have no test doubles in this framework-free module).
+     *
+     * @return the rejection reason if the host resolves to a disallowed address, or
+     *         {@code null} if the host is publicly routable and the scan may proceed.
+     */
+    static String checkPublicAddressGuard(String host) {
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(host);
+            return null;
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            return e.getMessage();
+        }
     }
 
     /**

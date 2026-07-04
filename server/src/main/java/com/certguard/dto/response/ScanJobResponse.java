@@ -27,6 +27,15 @@ public class ScanJobResponse {
     private String lastKnownSerialHash;
     private UUID lastCertificateId;
 
+    /**
+     * RFC 0013 §4.4: job kind discriminator — "AGENT_PINNED" or "PUBLIC_POOL".
+     * Authoritative signal the agent uses to decide whether the target-side
+     * PublicAddressGuard SSRF check must run before dialing (PUBLIC_POOL only —
+     * customer agents scan private space by design and must not be blocked).
+     * Null/absent is treated as AGENT_PINNED for backward compatibility.
+     */
+    private String jobKind;
+
     // ── RFC 0011: job type discriminator ─────────────────────────────────────
     /** Null means CERTIFICATE_SCAN (backward-compatible). */
     private String jobType;
