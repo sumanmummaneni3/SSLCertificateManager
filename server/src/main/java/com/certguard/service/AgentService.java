@@ -182,6 +182,7 @@ public class AgentService {
                     .port(job.getTarget().getPort())
                     .lastKnownSerialHash(lastCert.map(c -> sha256Hex(c.getSerialNumber())).orElse(null))
                     .lastCertificateId(lastCert.map(BaseEntity::getId).orElse(null))
+                    .jobKind(AgentScanJob.KIND_AGENT_PINNED)
                     .build();
         }).collect(Collectors.toList());
 
@@ -220,6 +221,7 @@ public class AgentService {
                     .port(job.getTarget().getPort())
                     .lastKnownSerialHash(lastCert.map(c -> sha256Hex(c.getSerialNumber())).orElse(null))
                     .lastCertificateId(lastCert.map(BaseEntity::getId).orElse(null))
+                    .jobKind(AgentScanJob.KIND_PUBLIC_POOL)
                     .build();
         }).collect(Collectors.toList());
     }
@@ -244,6 +246,16 @@ public class AgentService {
         AgentScanJob job = scanJobRepository
                 .findByIdAndAgentId(request.getJobId(), agent.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Scan job not found for this agent"));
+
+        // m1 fix: job_kind/agent_type consistency must be validated on EVERY path,
+        // including ERROR — not just FULL/DELTA. Without this, a compromised
+        // PLATFORM_SCANNER could submit ERROR-only results for its claimed pool jobs
+        // and drive arbitrary targets to FAILED -> UNREACHABLE without any of the
+        // FULL/DELTA path's checks (assertPoolSubmitSecurity) ever running. This is
+        // structurally guaranteed already by findByIdAndAgentId + claim-time stamping,
+        // but is asserted explicitly here as defense-in-depth, matching the pattern
+        // used on the FULL/DELTA path.
+        assertJobKindMatchesAgentType(agent, job);
 
         // ── ERROR path (RFC 0013 §5) ─────────────────────────────────────────
         if ("ERROR".equals(request.getScanType())) {
@@ -295,6 +307,22 @@ public class AgentService {
 
     // ── Security assertions ───────────────────────────────────────────────────
 
+    /**
+     * m1 fix: PUBLIC_POOL jobs must be owned by a PLATFORM_SCANNER, AGENT_PINNED jobs
+     * by a non-PLATFORM_SCANNER (CUSTOMER). Applied on ALL result paths (FULL, DELTA,
+     * ERROR) — previously only the FULL/DELTA path re-validated this.
+     */
+    private void assertJobKindMatchesAgentType(Agent agent, AgentScanJob job) {
+        boolean isPool = AgentScanJob.KIND_PUBLIC_POOL.equals(job.getJobKind());
+        boolean isPlatformScanner = agent.getAgentType() == AgentType.PLATFORM_SCANNER;
+        if (isPool != isPlatformScanner) {
+            throw new SecurityException(
+                    "Job kind / agent type mismatch: job " + job.getId() + " has jobKind="
+                    + job.getJobKind() + " but submitting agent " + agent.getId()
+                    + " has agentType=" + agent.getAgentType());
+        }
+    }
+
     private void assertPinnedSubmitSecurity(Agent agent, Target target) {
         if (target.getAgent() == null || !agent.getId().equals(target.getAgent().getId())) {
             throw new SecurityException("Target is not assigned to this agent");
@@ -328,14 +356,23 @@ public class AgentService {
         // matches the job kind — PLATFORM_SCANNER claimed a PUBLIC_POOL job (⇒ cloud
         // scanner, identity not exposed), CUSTOMER claimed an AGENT_PINNED job (⇒ named
         // customer agent).
-        ScanSourceType scanSourceType = agent.getAgentType() == AgentType.PLATFORM_SCANNER
+        boolean isPlatformScanner = agent.getAgentType() == AgentType.PLATFORM_SCANNER;
+        ScanSourceType scanSourceType = isPlatformScanner
                 ? ScanSourceType.CLOUD_SCANNER
                 : ScanSourceType.CUSTOMER_AGENT;
+
+        // M2 fix: never persist a PLATFORM_SCANNER's identity onto scannedByAgent —
+        // scanSource already correctly nulls agentId/agentName for CLOUD_SCANNER, but
+        // the legacy scannedByAgent FK/scannedByAgentId response field would otherwise
+        // still leak the platform-org scanner's UUID into a customer-org response
+        // (RFC 0013 §9 tenant-boundary rule) and creates a customer-cert →
+        // platform-org-agent FK that has no legitimate use.
+        Agent scannedByAgentForRecord = isPlatformScanner ? null : agent;
 
         if ("FULL".equals(req.getScanType())) {
             byte[] ocspStaple = decodeOcspStaple(req.getOcspStapleB64());
             certPersistenceService.persistFull(
-                    target, agent,
+                    target, scannedByAgentForRecord,
                     req.getSerialNumber(), req.getCommonName(), req.getIssuer(),
                     req.getNotBefore(), req.getNotAfter(),
                     req.getKeyAlgorithm(), req.getKeySize(), req.getSignatureAlgorithm(),
@@ -379,13 +416,26 @@ public class AgentService {
     }
 
     /**
-     * Checks whether the target has had two consecutive FAILED scan jobs.
-     * If so, marks all its certificate records as UNREACHABLE (RFC 0013 §5).
+     * Checks whether the target's two most recent TERMINAL scan jobs were BOTH FAILED
+     * — i.e. genuinely consecutive failures, not just "2 FAILEDs somewhere in history"
+     * (M1 fix). A FAILED → COMPLETED → FAILED sequence must NOT trip this: the most
+     * recent terminal outcome before the latest FAILED was a success, so the streak
+     * was broken. If so, marks all the target's certificate records as UNREACHABLE
+     * (RFC 0013 §5).
+     *
+     * <p>Public so both failure sources can share this exact rule (m2): the agent
+     * ERROR path ({@link #handleErrorResult}) and the HYBRID in-process fallback path
+     * (PublicScanFallbackScheduler) both call this after marking a job FAILED —
+     * they must observe consistent UNREACHABLE hysteresis regardless of which
+     * mechanism produced the failure.
      */
-    private void checkAndMarkUnreachable(Target target) {
-        List<AgentScanJob> lastTwoFailed =
-                scanJobRepository.findLastTwoFailedJobsForTarget(target.getId());
-        if (lastTwoFailed.size() >= 2) {
+    @Transactional
+    public void checkAndMarkUnreachable(Target target) {
+        List<AgentScanJob> lastTwoTerminal =
+                scanJobRepository.findLastTwoTerminalJobsForTarget(target.getId());
+        boolean bothConsecutiveFailed = lastTwoTerminal.size() == 2
+                && lastTwoTerminal.stream().allMatch(j -> j.getStatus() == ScanJobStatus.FAILED);
+        if (bothConsecutiveFailed) {
             certRepository.findAllByTargetId(target.getId()).forEach(cert -> {
                 cert.setStatus(CertStatus.UNREACHABLE);
                 cert.setScannedAt(Instant.now());
@@ -444,10 +494,31 @@ public class AgentService {
 
     /**
      * Enqueues a PUBLIC_POOL scan job for a public target (RFC 0013 §2).
-     * Called by PublicScanEnqueueScheduler and TargetService.triggerScan (public path).
+     * Called by TargetService.createTarget, TargetService.triggerScan (public path),
+     * and PublicScanEnqueueScheduler — this is the single choke point for all three,
+     * so the SSRF guard below applies uniformly regardless of call site.
+     *
+     * <p>PublicAddressGuard runs here (server-side, at enqueue) as defense-in-depth;
+     * DNS can change between enqueue and scan time, so the agent-side check
+     * (PollLoop.processCertScanJob) is the authoritative one (RFC 0013 §4.4). Rejecting
+     * here means a malicious/misconfigured "public" target pointing at internal
+     * infrastructure never reaches the queue at all — callers get a clear
+     * IllegalArgumentException (400) instead of a silently-stuck job.
+     *
+     * @throws IllegalArgumentException if the target's host resolves to a disallowed
+     *         (non-public) address — callers (TargetService) let this propagate so the
+     *         user-facing create/scan request is rejected; PublicScanEnqueueScheduler
+     *         catches it per-target so one bad target doesn't abort the whole sweep.
      */
     @Transactional
     public void enqueuePublicPoolJob(Target target, String triggerSource) {
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(target.getHost());
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            throw new IllegalArgumentException(
+                    "Target '" + target.getHost() + "' cannot be scanned via the platform scanner pool "
+                    + "— it resolves to a non-public address: " + e.getMessage());
+        }
         if (scanJobRepository.existsActivePoolJobForTarget(target.getId())) {
             log.debug("PUBLIC_POOL job already active for target {}", target.getId());
             return;

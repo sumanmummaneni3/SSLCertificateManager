@@ -34,6 +34,7 @@ public class PublicScanFallbackScheduler {
 
     private final AgentScanJobRepository scanJobRepository;
     private final SslScannerService sslScannerService;
+    private final AgentService agentService;
 
     @Value("${app.scanning.mode:DIRECT}")
     private String scanningMode;
@@ -75,6 +76,14 @@ public class PublicScanFallbackScheduler {
                 }
                 scanJobRepository.save(job);
 
+                // m2 fix: wire the same two-consecutive-FAILED hysteresis check the
+                // agent ERROR path uses (AgentService.handleErrorResult) — previously
+                // this scheduler's FAILED path never marked UNREACHABLE, which was
+                // inconsistent between the two failure sources for the same job table.
+                if (job.getStatus() == ScanJobStatus.FAILED) {
+                    agentService.checkAndMarkUnreachable(job.getTarget());
+                }
+
             } catch (Exception e) {
                 log.error("HYBRID fallback failed for job {} (target: {}): {}",
                         job.getId(), job.getTarget().getHost(), e.getMessage());
@@ -82,6 +91,7 @@ public class PublicScanFallbackScheduler {
                 job.setErrorMsg("HYBRID fallback exception: " + truncate(e.getMessage(), 480));
                 job.setCompletedAt(Instant.now());
                 scanJobRepository.save(job);
+                agentService.checkAndMarkUnreachable(job.getTarget());
             }
         }
     }

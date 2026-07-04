@@ -7,6 +7,7 @@ import com.certguard.enums.ScanSourceType;
 import com.certguard.enums.ScanningMode;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
+import com.certguard.security.PublicAddressGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -106,9 +107,21 @@ public class SslScannerService {
      * Executes a HYBRID fallback scan for a stale PUBLIC_POOL job.
      * Called by PublicScanFallbackScheduler when a pool job has been PENDING > 10 min.
      * Returns true if the scan succeeded. RFC 0013 §7.
+     *
+     * <p>PublicAddressGuard runs first: in HYBRID mode this method makes the server
+     * itself open a socket to the target (same as the DIRECT path), so it is just as
+     * much an SSRF vector as the agent-side pool scan and must be guarded identically.
+     * Re-resolves at scan time (not just at enqueue) since DNS can change between the
+     * original enqueue and the fallback firing up to 10+ minutes later.
      */
     @Transactional
     public boolean executeFallbackScan(Target target, Instant previousLastScannedAt) {
+        String rejectionReason = checkPublicAddressGuard(target.getHost());
+        if (rejectionReason != null) {
+            log.warn("HYBRID fallback rejected by PublicAddressGuard for {}:{} — {}",
+                    target.getHost(), target.getPort(), rejectionReason);
+            return false;
+        }
         try {
             ScanChainResult scanResult = fetchCertificateChain(target.getHost(), target.getPort());
             if (scanResult != null && scanResult.chain().length > 0) {
@@ -120,6 +133,23 @@ public class SslScannerService {
             log.warn("Fallback scan failed for {}:{} — {}", target.getHost(), target.getPort(), e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * RFC 0013 §7 — extracted as a pure static method (mirrors
+     * {@code PollLoop.checkPublicAddressGuard} on the agent side) so this invariant is
+     * directly unit-testable without any network I/O or timing assumptions.
+     *
+     * @return the rejection reason if the host resolves to a disallowed address, or
+     *         {@code null} if the host is publicly routable and dialing may proceed.
+     */
+    static String checkPublicAddressGuard(String host) {
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(host);
+            return null;
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            return e.getMessage();
+        }
     }
 
     // ── Internal scanning ─────────────────────────────────────────────────────

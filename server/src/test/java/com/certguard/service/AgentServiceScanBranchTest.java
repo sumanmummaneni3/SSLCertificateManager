@@ -215,6 +215,39 @@ class AgentServiceScanBranchTest {
                     .isInstanceOf(SecurityException.class)
                     .hasMessageContaining("binding mismatch");
         }
+
+        @Test
+        void full_result_from_platform_scanner_does_not_persist_scannedByAgent() {
+            // M2 fix: the platform scanner's identity must never be persisted onto
+            // CertificateRecord.scannedByAgent — that field leaks into the legacy
+            // scannedByAgentId response field, bypassing scanSource's tenant-boundary
+            // null-out (RFC 0013 §9). Verify persistFull is called with a null
+            // scannedByAgent even though the submitting agent is a real Agent entity.
+            UUID targetId = UUID.randomUUID();
+            Target poolTarget = Target.builder()
+                    .organization(org).host("8.8.8.8").port(443).isPrivate(false).enabled(true).build();
+            setId(poolTarget, targetId);
+
+            AgentScanJob job = poolJob(platformAgent, poolTarget);
+            setId(job, UUID.randomUUID());
+
+            AgentScanResultRequest req = fullRequest(job, poolTarget, "FULL");
+            req.setTargetId(targetId);
+
+            when(hmacService.verify(any(), any(), any())).thenReturn(true);
+            when(scanJobRepository.findByIdAndAgentId(job.getId(), platformAgent.getId()))
+                    .thenReturn(Optional.of(job));
+            when(targetRepository.findById(targetId)).thenReturn(Optional.of(poolTarget));
+
+            agentService.submitResult(platformAgent, req, "key");
+
+            ArgumentCaptor<Agent> scannedByAgentCaptor = ArgumentCaptor.forClass(Agent.class);
+            verify(certPersistenceService).persistFull(
+                    any(), scannedByAgentCaptor.capture(), any(), any(), any(),
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), eq(ScanSourceType.CLOUD_SCANNER));
+            assertThat(scannedByAgentCaptor.getValue()).isNull();
+        }
     }
 
     // ── ERROR result path ─────────────────────────────────────────────────────
@@ -248,9 +281,9 @@ class AgentServiceScanBranchTest {
             when(hmacService.verify(any(), any(), any())).thenReturn(true);
             when(scanJobRepository.findByIdAndAgentId(job.getId(), customerAgent.getId()))
                     .thenReturn(Optional.of(job));
-            // no previous failed jobs → not UNREACHABLE
-            when(scanJobRepository.findLastTwoFailedJobsForTarget(privateTarget.getId()))
-                    .thenReturn(List.of(job)); // only 1 failed
+            // no previous terminal jobs → not UNREACHABLE
+            when(scanJobRepository.findLastTwoTerminalJobsForTarget(privateTarget.getId()))
+                    .thenReturn(List.of(job)); // only 1 terminal job so far (itself)
 
             AgentScanResultRequest req = errorRequest(job);
             agentService.submitResult(customerAgent, req, "key");
@@ -274,8 +307,9 @@ class AgentServiceScanBranchTest {
             when(hmacService.verify(any(), any(), any())).thenReturn(true);
             when(scanJobRepository.findByIdAndAgentId(job2.getId(), customerAgent.getId()))
                     .thenReturn(Optional.of(job2));
-            // Simulate repo returning 2 consecutive FAILED jobs (job1 + job2 after save)
-            when(scanJobRepository.findLastTwoFailedJobsForTarget(privateTarget.getId()))
+            // Simulate repo returning the 2 most recent TERMINAL jobs, both FAILED —
+            // genuinely consecutive (M1).
+            when(scanJobRepository.findLastTwoTerminalJobsForTarget(privateTarget.getId()))
                     .thenReturn(List.of(job2, job1));
 
             CertificateRecord cert = CertificateRecord.builder()
@@ -298,15 +332,43 @@ class AgentServiceScanBranchTest {
             when(hmacService.verify(any(), any(), any())).thenReturn(true);
             when(scanJobRepository.findByIdAndAgentId(job.getId(), customerAgent.getId()))
                     .thenReturn(Optional.of(job));
-            // Only 1 FAILED job in history
-            when(scanJobRepository.findLastTwoFailedJobsForTarget(privateTarget.getId()))
+            // Only 1 terminal job in history (itself)
+            when(scanJobRepository.findLastTwoTerminalJobsForTarget(privateTarget.getId()))
                     .thenReturn(List.of(job));
 
             AgentScanResultRequest req = errorRequest(job);
             agentService.submitResult(customerAgent, req, "key");
 
             assertThat(job.getStatus()).isEqualTo(ScanJobStatus.FAILED);
-            // certRepository.findAllByTargetId should NOT be called (< 2 consecutive fails)
+            // certRepository.findAllByTargetId should NOT be called (< 2 terminal jobs)
+            verify(certRepository, never()).findAllByTargetId(any());
+        }
+
+        @Test
+        void failed_completed_failed_sequence_does_not_mark_unreachable() {
+            // M1 fix: a FAILED -> COMPLETED -> FAILED history must NOT trip the hysteresis
+            // — the most recent terminal outcome before the latest FAILED was a SUCCESS,
+            // so the streak was broken. Only genuinely consecutive FAILEDs count.
+            AgentScanJob completedJob = pinnedJob(customerAgent, privateTarget);
+            completedJob.setStatus(ScanJobStatus.COMPLETED);
+            setId(completedJob, UUID.randomUUID());
+
+            AgentScanJob latestFailedJob = pinnedJob(customerAgent, privateTarget);
+            latestFailedJob.setAttempts(2); // about to become 3 = maxAttempts
+            setId(latestFailedJob, UUID.randomUUID());
+
+            when(hmacService.verify(any(), any(), any())).thenReturn(true);
+            when(scanJobRepository.findByIdAndAgentId(latestFailedJob.getId(), customerAgent.getId()))
+                    .thenReturn(Optional.of(latestFailedJob));
+            // Most recent terminal job is the new FAILED one; the one before it COMPLETED.
+            when(scanJobRepository.findLastTwoTerminalJobsForTarget(privateTarget.getId()))
+                    .thenReturn(List.of(latestFailedJob, completedJob));
+
+            AgentScanResultRequest req = errorRequest(latestFailedJob);
+            agentService.submitResult(customerAgent, req, "key");
+
+            assertThat(latestFailedJob.getStatus()).isEqualTo(ScanJobStatus.FAILED);
+            // Must NOT mark UNREACHABLE — the failure streak was broken by a COMPLETED.
             verify(certRepository, never()).findAllByTargetId(any());
         }
 
@@ -358,6 +420,120 @@ class AgentServiceScanBranchTest {
             assertThat(saved.getAgent()).isNull();
             assertThat(saved.getTriggerSource()).isEqualTo(AgentService.TRIGGER_USER);
             assertThat(saved.getStatus()).isEqualTo(ScanJobStatus.PENDING);
+        }
+
+        // ── B2 fix: SSRF guard at enqueue ────────────────────────────────────
+
+        @Test
+        void rejects_target_resolving_to_link_local_metadata_address() {
+            Target ssrfTarget = Target.builder()
+                    .organization(org).host("169.254.169.254").port(443).isPrivate(false).build();
+
+            assertThatThrownBy(() -> agentService.enqueuePublicPoolJob(ssrfTarget, AgentService.TRIGGER_USER))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("169.254.169.254");
+
+            // No job row, and no dedup lookup either — the guard runs BEFORE anything else.
+            verify(scanJobRepository, never()).save(any());
+            verify(scanJobRepository, never()).existsActivePoolJobForTarget(any());
+        }
+
+        @Test
+        void rejects_target_resolving_to_rfc1918_address() {
+            Target ssrfTarget = Target.builder()
+                    .organization(org).host("10.0.0.5").port(443).isPrivate(false).build();
+
+            assertThatThrownBy(() -> agentService.enqueuePublicPoolJob(ssrfTarget, AgentService.TRIGGER_SCHEDULED))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            verify(scanJobRepository, never()).save(any());
+        }
+
+        @Test
+        void rejects_target_resolving_to_loopback_address() {
+            Target ssrfTarget = Target.builder()
+                    .organization(org).host("127.0.0.1").port(8080).isPrivate(false).build();
+
+            assertThatThrownBy(() -> agentService.enqueuePublicPoolJob(ssrfTarget, AgentService.TRIGGER_SCHEDULED))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            verify(scanJobRepository, never()).save(any());
+        }
+
+        @Test
+        void allows_target_resolving_to_public_ip_literal() {
+            Target publicIpTarget = Target.builder()
+                    .organization(org).host("8.8.8.8").port(443).isPrivate(false).build();
+            when(scanJobRepository.existsActivePoolJobForTarget(publicIpTarget.getId()))
+                    .thenReturn(false);
+
+            agentService.enqueuePublicPoolJob(publicIpTarget, AgentService.TRIGGER_SCHEDULED);
+
+            verify(scanJobRepository).save(any());
+        }
+    }
+
+    // ── m1 fix: job-kind/agent-type validation on the ERROR branch ────────────
+
+    @Nested
+    class ErrorBranchJobKindValidation {
+
+        @Test
+        void error_result_for_pool_job_kind_but_customer_agent_throws_security_exception() {
+            // Simulates an inconsistent job row: job_kind=PUBLIC_POOL but the caller
+            // resolved via findByIdAndAgentId is a CUSTOMER agent. Structurally this
+            // shouldn't happen via legitimate claim flows, but m1 requires this to be
+            // explicitly rejected on the ERROR path too — not just FULL/DELTA — as
+            // defense-in-depth against a compromised/misbehaving agent.
+            AgentScanJob job = poolJob(customerAgent, publicTarget);
+
+            when(hmacService.verify(any(), any(), any())).thenReturn(true);
+            when(scanJobRepository.findByIdAndAgentId(job.getId(), customerAgent.getId()))
+                    .thenReturn(Optional.of(job));
+
+            AgentScanResultRequest req = errorRequest(job);
+
+            assertThatThrownBy(() -> agentService.submitResult(customerAgent, req, "key"))
+                    .isInstanceOf(SecurityException.class)
+                    .hasMessageContaining("Job kind / agent type mismatch");
+
+            // handleErrorResult must never run — no attempts increment, no save at all.
+            verify(scanJobRepository, never()).save(any());
+        }
+
+        @Test
+        void error_result_for_pinned_job_kind_but_platform_scanner_throws_security_exception() {
+            AgentScanJob job = pinnedJob(platformAgent, privateTarget);
+
+            when(hmacService.verify(any(), any(), any())).thenReturn(true);
+            when(scanJobRepository.findByIdAndAgentId(job.getId(), platformAgent.getId()))
+                    .thenReturn(Optional.of(job));
+
+            AgentScanResultRequest req = errorRequest(job);
+
+            assertThatThrownBy(() -> agentService.submitResult(platformAgent, req, "key"))
+                    .isInstanceOf(SecurityException.class)
+                    .hasMessageContaining("Job kind / agent type mismatch");
+
+            verify(scanJobRepository, never()).save(any());
+        }
+
+        @Test
+        void error_result_for_consistent_pool_job_and_platform_scanner_proceeds_normally() {
+            // Sanity check: the legitimate PUBLIC_POOL x PLATFORM_SCANNER pairing must
+            // NOT be rejected by the new check.
+            AgentScanJob job = poolJob(platformAgent, publicTarget);
+            job.setAttempts(0);
+
+            when(hmacService.verify(any(), any(), any())).thenReturn(true);
+            when(scanJobRepository.findByIdAndAgentId(job.getId(), platformAgent.getId()))
+                    .thenReturn(Optional.of(job));
+
+            AgentScanResultRequest req = errorRequest(job);
+            agentService.submitResult(platformAgent, req, "key");
+
+            assertThat(job.getAttempts()).isEqualTo(1);
+            verify(scanJobRepository).save(job);
         }
     }
 

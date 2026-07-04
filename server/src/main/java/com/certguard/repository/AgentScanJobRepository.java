@@ -119,17 +119,24 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
     List<AgentScanJob> findStalePoolPendingJobs(@Param("before") Instant before);
 
     /**
-     * Finds the two most recent FAILED jobs for a target in descending order.
-     * Used to determine the two-consecutive-FAILED threshold for UNREACHABLE hysteresis
-     * (RFC 0013 §5).
+     * Finds the two most recent TERMINAL jobs (COMPLETED or FAILED) for a target, in
+     * descending recency order. Used to determine the two-CONSECUTIVE-FAILED threshold
+     * for UNREACHABLE hysteresis (RFC 0013 §5).
+     *
+     * <p>Deliberately includes COMPLETED jobs in the candidate set (not just FAILED) so
+     * the caller can detect a FAILED → COMPLETED → FAILED sequence and correctly NOT
+     * mark UNREACHABLE — the two most recent failures were not consecutive. Only when
+     * BOTH of the two most recent terminal outcomes are FAILED does the caller treat
+     * this as a consecutive-failure streak. PENDING/CLAIMED (non-terminal, in-flight)
+     * jobs are excluded — they are not yet a recorded outcome.
      */
     @Query(value = """
         SELECT * FROM agent_scan_jobs
-        WHERE target_id = :targetId AND status = 'FAILED'
-        ORDER BY completed_at DESC NULLS LAST
+        WHERE target_id = :targetId AND status IN ('COMPLETED', 'FAILED')
+        ORDER BY completed_at DESC NULLS LAST, created_at DESC
         LIMIT 2
         """, nativeQuery = true)
-    List<AgentScanJob> findLastTwoFailedJobsForTarget(@Param("targetId") UUID targetId);
+    List<AgentScanJob> findLastTwoTerminalJobsForTarget(@Param("targetId") UUID targetId);
 
     /**
      * Deduplication check: true if a PUBLIC_POOL job already exists in PENDING or CLAIMED
