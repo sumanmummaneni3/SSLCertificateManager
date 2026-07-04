@@ -3,6 +3,41 @@ import { certBadgeType, certStatusLabel, hostTypeColor, fmtDate } from "@/lib/he
 import { Spinner, Badge, DaysBar } from "@/components/index.js";
 import { TargetNotificationModal } from "@/panels/notifications/TargetNotificationModal.jsx";
 
+// ─── RFC 0013 §9 — SCAN PROVENANCE ───────────────────────────────────────────
+/**
+ * Derives a human-readable provenance string from the `scanSource` field.
+ * `scanSource` may be:
+ *   { type: "CLOUD_SCANNER" }                         → "CertGuard Cloud Scanner"
+ *   { type: "CUSTOMER_AGENT", agentName: "My Agent" } → "agent My Agent"
+ *   null / undefined / unknown shape                   → null (hide label)
+ *
+ * Feature-detect only — never throws.
+ */
+function scanSourceLabel(scanSource) {
+  if (!scanSource) return null;
+  const type = scanSource.type ?? scanSource; // accept plain string too
+  if (type === "CLOUD_SCANNER")  return "CertGuard Cloud Scanner";
+  if (type === "CUSTOMER_AGENT") return `agent ${scanSource.agentName ?? ""}`.trim();
+  return null;
+}
+
+// ─── RFC 0013 §9 — SCAN-DELAYED HINT ─────────────────────────────────────────
+/**
+ * Returns true when the target's latest scan job has been PENDING for more
+ * than 10 minutes (scanner pool busy or offline).
+ *
+ * The backend is expected to include `pendingScanQueuedAt` (ISO timestamp,
+ * nullable) on the target DTO — present only when the current job is PENDING.
+ * If the field is absent the hint is never shown (graceful degradation).
+ */
+const DELAYED_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+function isScanDelayed(target) {
+  const queuedAt = target.pendingScanQueuedAt;
+  if (!queuedAt) return false;
+  return Date.now() - new Date(queuedAt).getTime() > DELAYED_THRESHOLD_MS;
+}
+
 export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit, onRefresh, me, org, token, toast }) {
   const canWrite = me == null || me?.permissions?.canWriteTargets;
   const scansBlocked = me?.permissions?.scansBlocked === true;
@@ -16,7 +51,7 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
           <div className="page-sub">Manage your monitored endpoints</div>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button className="btn btn-secondary btn-sm" onClick={onRefresh}>↻ Refresh</button>
+          <button className="btn btn-secondary btn-sm" onClick={onRefresh}>&#8635; Refresh</button>
           {canWrite && (
             <button
               className="btn btn-primary btn-sm"
@@ -32,7 +67,7 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
       <div className="page-content">
         {targets.length === 0 ? (
           <div className="empty">
-            <div className="empty-icon">🎯</div>
+            <div className="empty-icon">&#127919;</div>
             <div className="empty-title">No targets</div>
             <p className="empty-sub">Add your first endpoint to start monitoring.</p>
             {canWrite && (
@@ -58,6 +93,9 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
               <tbody>
                 {targets.map((t) => {
                   const cert = t.latestCertificate;
+                  const delayed = isScanDelayed(t);
+                  // RFC 0013 §9 — scanSource may live on target or on latest cert
+                  const provenance = scanSourceLabel(t.scanSource ?? cert?.scanSource);
                   return (
                     <tr key={t.id}>
                       {showOrgCol && <td><span className="badge badge-domain">{t.orgName || "—"}</span></td>}
@@ -69,7 +107,7 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
                       <td><Badge type={hostTypeColor(t.hostType)}>{t.hostType || "—"}</Badge></td>
                       <td>
                         <Badge type={t.isPrivate ? "private" : "public"}>
-                          {t.isPrivate ? "🔒 Private" : "🌐 Public"}
+                          {t.isPrivate ? "Private" : "Public"}
                         </Badge>
                         {t.enabled === false && (
                           <Badge type="unknown" style={{ marginLeft: 4 }}>Disabled</Badge>
@@ -96,15 +134,38 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
                           : <Badge type="unknown">No scan</Badge>}
                       </td>
                       <td className="mono">{cert ? fmtDate(cert.expiryDate) : "—"}</td>
-                      <td className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                        {t.lastScannedAt ? fmtDate(t.lastScannedAt) : "Never"}
+                      <td>
+                        <div className="mono" style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+                          {t.lastScannedAt ? fmtDate(t.lastScannedAt) : "Never"}
+                        </div>
+                        {/* RFC 0013 §9 — scan provenance label (hide when field absent) */}
+                        {provenance && (
+                          <div
+                            className="scan-source-label"
+                            title={`Scanned via ${provenance}`}
+                            aria-label={`Scanned via ${provenance}`}
+                          >
+                            via {provenance}
+                          </div>
+                        )}
+                        {/* RFC 0013 §9 — scan-delayed hint (pool busy / offline) */}
+                        {delayed && (
+                          <div
+                            className="scan-delayed-hint"
+                            title="Scan delayed — scanner pool may be busy or offline"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            Scan delayed
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div className="row-actions">
                           {canWrite && (
                             <button className={`scan-btn ${scanning[t.id] ? "scanning" : ""}`}
                               onClick={() => onScan(t)} disabled={scanning[t.id] || scansBlocked}
-                              title={scansBlocked ? "Scans disabled — subscription suspended" : (t.isPrivate ? "Queue scan job for agent" : "Trigger scan")}>
+                              title={scansBlocked ? "Scans disabled — subscription suspended" : (t.isPrivate ? "Queue scan job for agent" : "Queue scan via cloud scanner pool")}>
                               {scanning[t.id] ? <Spinner /> : "⟳"}
                             </button>
                           )}
@@ -116,15 +177,15 @@ export function TargetsView({ targets, onScan, scanning, onAdd, onDelete, onEdit
                             title="Notification settings"
                             aria-label={`Notification settings for ${t.host}:${t.port}`}
                           >
-                            ⚬
+                            &#9702;
                           </button>
                           {canWrite && (
                             <button className="scan-btn" style={{ color: "var(--muted)", borderColor: "rgba(90,96,112,0.3)" }}
-                              onClick={() => onEdit(t)} title="Edit target">✎</button>
+                              onClick={() => onEdit(t)} title="Edit target">&#9998;</button>
                           )}
                           {canWrite && (
                             <button className="scan-btn" style={{ color: "var(--red)", borderColor: "rgba(255,82,82,0.3)" }}
-                              onClick={() => onDelete(t.id)} title="Delete target">✕</button>
+                              onClick={() => onDelete(t.id)} title="Delete target">&#10005;</button>
                           )}
                         </div>
                       </td>

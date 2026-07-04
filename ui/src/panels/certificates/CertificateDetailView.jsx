@@ -36,6 +36,18 @@ export function CertificateDetailView({ certId, orgId, token, me, toast, onBack 
   }, [certId, token]);
 
   const isAgentManaged = !!(cert?.target?.agentId || cert?.target?.agent);
+
+  // RFC 0013 §9 — scan provenance (feature-detect; absent on older backends)
+  // scanSource shape: { type: "CLOUD_SCANNER" | "CUSTOMER_AGENT", agentName?: string }
+  // or a plain string. Returns null when field is absent → label is hidden.
+  const scanProvenance = (() => {
+    const src = cert?.scanSource ?? cert?.target?.scanSource;
+    if (!src) return null;
+    const type = src.type ?? src;
+    if (type === "CLOUD_SCANNER")  return "CertGuard Cloud Scanner";
+    if (type === "CUSTOMER_AGENT") return `agent ${src.agentName ?? ""}`.trim();
+    return null;
+  })();
   const canRequestRenewal = isAgentManaged && !activeRenewal;
 
   const handleRenewalRequested = (renewal) => {
@@ -126,6 +138,18 @@ export function CertificateDetailView({ certId, orgId, token, me, toast, onBack 
 
                 <span className="cert-field-key">Last Scanned</span>
                 <span className="cert-field-val">{fmtDate(cert.scannedAt)}</span>
+
+                {/* RFC 0013 §9 — scan provenance (hidden when field absent) */}
+                {scanProvenance && (
+                  <>
+                    <span className="cert-field-key">Scanned Via</span>
+                    <span className="cert-field-val">
+                      <span className="scan-source-badge" aria-label={`Scanned via ${scanProvenance}`}>
+                        {scanProvenance}
+                      </span>
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 

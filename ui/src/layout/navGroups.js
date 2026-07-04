@@ -36,6 +36,7 @@ export const MSP_GROUP = {
 export const ADMIN_GROUP = {
   label: "Admin",
   items: [
-    { id: "platform-admin-orgs", icon: "◫", label: "All Orgs" },
+    { id: "platform-admin-orgs",          icon: "◫", label: "All Orgs"      },
+    { id: "platform-admin-scanner-pool",  icon: "⬡", label: "Scanner Pool"  },
   ],
 };

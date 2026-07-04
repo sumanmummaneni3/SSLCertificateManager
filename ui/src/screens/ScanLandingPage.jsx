@@ -50,7 +50,7 @@ function DownloadStep({ sessionData, onViewResults }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
-    } catch (e) {
+    } catch {
       setDownloadError("Download failed — please try again.");
     } finally {
       setDownloading(false);

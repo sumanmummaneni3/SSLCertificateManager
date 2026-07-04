@@ -1368,6 +1368,49 @@ tr:hover td { background: color-mix(in srgb, var(--color-primary) 3%, transparen
   line-height: 1.5;
 }
 
+/* ── RFC 0013 — SCAN PROVENANCE LABEL ── */
+/* Appears under "Last Scan" in the target table and as a field in cert detail. */
+.scan-source-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+/* Inline badge variant used in CertificateDetailView cert-field-grid */
+.scan-source-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  border-radius: 4px;
+  padding: 1px 7px;
+}
+
+/* ── RFC 0013 — SCAN-DELAYED HINT ── */
+/* Shown on a target row when the pool job has been PENDING > 10 min. */
+.scan-delayed-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--orange);
+  background: rgba(255, 145, 0, 0.08);
+  border: 1px solid rgba(255, 145, 0, 0.25);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 3px;
+  cursor: default;
+}
+
 /* ── RFC 0011 — PORT CHIPS (device open port tags) ── */
 .port-chip {
   display: inline-block;
