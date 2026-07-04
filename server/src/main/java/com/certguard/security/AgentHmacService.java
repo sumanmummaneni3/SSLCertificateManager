@@ -46,10 +46,15 @@ public class AgentHmacService {
     }
 
     private String buildPayload(AgentScanResultRequest req) {
+        // ERROR results carry no serialNumber or notAfter; use empty string and 0.
+        // Must match HmacSigner.buildPayload() in the agent module.
+        String serial   = req.getSerialNumber() != null ? req.getSerialNumber() : "";
+        long   epochMs  = req.getNotAfter() != null ? req.getNotAfter().toEpochMilli() : 0L;
+
         String base = req.getTargetId().toString() + ":"
                 + req.getScanType() + ":"
-                + req.getSerialNumber() + ":"
-                + req.getNotAfter().toEpochMilli();
+                + serial + ":"
+                + epochMs;
 
         if ("FULL".equals(req.getScanType())) {
             List<String> sans = req.getSubjectAltNames() != null

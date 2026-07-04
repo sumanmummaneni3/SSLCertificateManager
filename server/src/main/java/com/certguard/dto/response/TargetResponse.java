@@ -29,4 +29,11 @@ public class TargetResponse {
     private Instant createdAt;
     private CertificateSummary latestCertificate;
     private Map<String, Object> notificationChannels;
+
+    /**
+     * ISO-8601 instant of the oldest PENDING agent_scan_job for this target, or null
+     * when no PENDING job exists. UI uses this for the "scan delayed" hint (>10 min
+     * age threshold applied client-side). RFC 0013 §9.
+     */
+    private Instant pendingScanQueuedAt;
 }

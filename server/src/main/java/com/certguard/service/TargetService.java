@@ -7,13 +7,16 @@ import com.certguard.dto.response.ScanStatusResponse;
 import com.certguard.dto.response.TargetResponse;
 import com.certguard.entity.*;
 import com.certguard.enums.HostType;
+import com.certguard.enums.ScanningMode;
 import com.certguard.exception.QuotaExceededException;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import java.util.Map;
 import com.certguard.util.HostTypeDetector;
+import com.certguard.util.ScanSourceMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,9 @@ public class TargetService {
     private final SslScannerService sslScannerService;
     private final SubscriptionGuard subscriptionGuard;
 
+    @Value("${app.scanning.mode:DIRECT}")
+    private String scanningMode;
+
     @Transactional(readOnly = true)
     public Page<TargetResponse> listTargets(UUID orgId, Pageable pageable) {
         Page<Target> page = targetRepository.findAllByOrganizationId(orgId, pageable);
@@ -57,11 +63,25 @@ public class TargetService {
                         c -> c,
                         (existing, replacement) -> existing));  // keep first (latest)
 
-        return page.map(target -> toResponse(target, latestCertByTarget.get(target.getId())));
+        // Batch-load the oldest PENDING job's createdAt per target in one query (RFC 0013 §9)
+        // — avoids N+1 for the pendingScanQueuedAt "scan delayed" hint.
+        Map<UUID, Instant> pendingScanQueuedAtByTarget = scanJobRepository
+                .findPendingJobsForTargetIds(targetIds)
+                .stream()
+                // Ordered ASC by createdAt; keep only the first (oldest) occurrence per targetId.
+                .collect(Collectors.toMap(
+                        j -> j.getTarget().getId(),
+                        AgentScanJob::getCreatedAt,
+                        (existing, replacement) -> existing));
+
+        return page.map(target -> toResponse(target,
+                latestCertByTarget.get(target.getId()),
+                pendingScanQueuedAtByTarget.get(target.getId())));
     }
 
     @Transactional
-    public TargetResponse createTarget(UUID orgId, CreateTargetRequest request) {
+    public TargetResponse createTarget(UUID orgId, CreateTargetRequest request,
+                                        AgentService agentService) {
         subscriptionGuard.assertScansAllowed(orgId);
         enforceTargetQuota(orgId);
         String host = request.getHost().trim().toLowerCase();
@@ -120,7 +140,13 @@ public class TargetService {
         }
 
         if (!isPrivate) {
-            sslScannerService.scanTargetAsync(target);
+            // RFC 0013 §2: route initial scan through pool if mode != DIRECT.
+            ScanningMode mode = parseScanningMode();
+            if (mode == ScanningMode.DIRECT) {
+                sslScannerService.scanTargetAsync(target);
+            } else {
+                agentService.enqueuePublicPoolJob(target, AgentService.TRIGGER_SCHEDULED);
+            }
         }
 
         log.info("Target created: {} [{}] :{} private={}", host, hostType, target.getPort(), isPrivate);
@@ -193,8 +219,15 @@ public class TargetService {
 
     /**
      * Triggers a scan for a target.
-     * - Public target → direct SSL scan via SslScannerService (synchronous)
-     * - Private target → queue an agent_scan_job (async, agent picks up within poll interval)
+     *
+     * <p>Public targets:
+     *   - DIRECT mode (default) → synchronous in-process scan via SslScannerService
+     *   - HYBRID/POOL mode      → enqueue a PUBLIC_POOL job (async, result via poll)
+     *
+     * <p>Private targets: always queue an AGENT_PINNED job (unchanged).
+     *
+     * RFC 0013 §2: "TargetService.triggerScan public path enqueues PUBLIC_POOL job with
+     * trigger_source=USER when mode != DIRECT."
      */
     @Transactional
     public String triggerScan(UUID orgId, UUID targetId,
@@ -204,19 +237,34 @@ public class TargetService {
         Target target = findTargetForOrg(orgId, targetId);
 
         if (!target.getIsPrivate()) {
-            // Public — scan directly
-            sslScannerService.scanTarget(target);
-            return "Scan triggered for " + target.getHost();
+            ScanningMode mode = parseScanningMode();
+            if (mode == ScanningMode.DIRECT) {
+                // DIRECT: synchronous in-process scan (existing behaviour).
+                sslScannerService.scanTarget(target);
+                return "Scan triggered for " + target.getHost();
+            } else {
+                // HYBRID / POOL: enqueue a PUBLIC_POOL job with USER trigger.
+                agentService.enqueuePublicPoolJob(target, AgentService.TRIGGER_USER);
+                return "Scan queued for " + target.getHost()
+                        + " — result available within the next poll cycle";
+            }
         }
 
         // Private — queue job for agent.
-        // Pass TRIGGER_USER so the agent path selects EvaluationMode.FORCE (RFC 0008 §6.3).
         if (target.getAgent() == null) {
             throw new IllegalStateException(
                 "Private target has no assigned agent. Assign an agent before scanning.");
         }
         agentService.queueScanJob(target, AgentService.TRIGGER_USER);
         return "Scan job queued for agent '" + target.getAgent().getName() + "'";
+    }
+
+    private ScanningMode parseScanningMode() {
+        try {
+            return ScanningMode.valueOf(scanningMode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ScanningMode.DIRECT;
+        }
     }
 
     /**
@@ -238,6 +286,7 @@ public class TargetService {
                 .createdAt(job.getCreatedAt())
                 .claimedAt(job.getClaimedAt())
                 .completedAt(job.getCompletedAt())
+                .scanSource(ScanSourceMapper.fromCompletedJob(job))
                 .build();
     }
 
@@ -316,20 +365,32 @@ public class TargetService {
     }
 
     /**
-     * Single-target overload used by getTarget() and createTarget() — loads the
-     * latest cert record with a per-target query (acceptable for single lookups).
+     * Single-target overload used by getTarget(), createTarget(), updateTarget(), and
+     * updateNotificationChannels() — loads the latest cert record and the oldest PENDING
+     * job with per-target queries (acceptable for single lookups; listTargets() batches
+     * both instead).
      */
     private TargetResponse toResponse(Target target) {
         Optional<CertificateRecord> latestCert = certRepository
                 .findTopByTargetIdOrderByScannedAtDesc(target.getId());
-        return toResponse(target, latestCert.orElse(null));
+        // Guard against a null id (defensive — target.getId() is always populated once
+        // persisted, but List.of() rejects null and this overload may be called with a
+        // freshly-built, not-yet-flushed entity in some unit-test doubles).
+        Instant pendingScanQueuedAt = target.getId() == null ? null : scanJobRepository
+                .findPendingJobsForTargetIds(List.of(target.getId()))
+                .stream()
+                .findFirst() // ascending createdAt order — first is oldest
+                .map(AgentScanJob::getCreatedAt)
+                .orElse(null);
+        return toResponse(target, latestCert.orElse(null), pendingScanQueuedAt);
     }
 
     /**
-     * Overload used by listTargets() — accepts a pre-loaded cert to avoid N+1.
-     * {@code latestCert} may be null when no cert has been scanned yet.
+     * Overload used by listTargets() — accepts pre-loaded/batched values to avoid N+1.
+     * {@code latestCert} and {@code pendingScanQueuedAt} may be null.
      */
-    private TargetResponse toResponse(Target target, CertificateRecord latestCert) {
+    private TargetResponse toResponse(Target target, CertificateRecord latestCert,
+                                       Instant pendingScanQueuedAt) {
         CertificateSummary certSummary = (latestCert != null) ? toCertSummary(latestCert) : null;
 
         return TargetResponse.builder()
@@ -346,6 +407,7 @@ public class TargetService {
                 .locationName(target.getLocation() != null ? target.getLocation().getName() : null)
                 .notificationChannels(target.getNotificationChannels())
                 .latestCertificate(certSummary)
+                .pendingScanQueuedAt(pendingScanQueuedAt)
                 .build();
     }
 
@@ -354,6 +416,7 @@ public class TargetService {
         return CertificateSummary.builder()
                 .id(cert.getId()).commonName(cert.getCommonName()).issuer(cert.getIssuer())
                 .expiryDate(cert.getExpiryDate()).daysRemaining(days).status(cert.getStatus())
+                .scanSource(ScanSourceMapper.fromCertificateRecord(cert))
                 .build();
     }
 }

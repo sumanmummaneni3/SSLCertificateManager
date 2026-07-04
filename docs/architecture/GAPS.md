@@ -173,6 +173,8 @@ Both scanners install a trust-all `X509TrustManager` (`agent/src/main/java/com/c
 | R14 (new) | Gateway/auth-service split undocumented | medium | **Open** — see N1 |
 | R15 (new) | Bundle download single-use token replay protection | medium | **Verify** — check `AgentBundleService` for atomic consume |
 | R16 (new) | No chain validation / revocation checking; revoked cert reported VALID | **HIGH** | **Open** — see N15; RFC 0009 (revoked `cloud.oopsssl.co.uk` went undetected) |
+| R17 (new) | SSRF guard/connect TOCTOU (DNS rebinding) | low–medium | **Open** — RFC 0013: `PublicAddressGuard` validates resolved addresses, but the subsequent socket connect re-resolves the hostname (agent `PollLoop`→`SslScanner`; server `executeFallbackScan`→`fetchCertificateChain`). A sub-TTL attacker with authoritative DNS could serve a public A-record to the guard and a private one to the connect. Fix: pin the validated `InetAddress` through to the connect instead of re-resolving. Exploitation requires attacker-controlled DNS + an internal TLS speaker; guard still blocks all static/naive cases |
+| R18 (new) | DIRECT-mode in-process scans unguarded | low | **Open** — pre-existing: `SslScannerService.scanTarget`/`scanTargetAsync` (DIRECT mode) dial without `PublicAddressGuard`; outside RFC 0013 PUBLIC_POOL scope. Consider applying the guard to public-target direct scans for parity |
 
 ---
 

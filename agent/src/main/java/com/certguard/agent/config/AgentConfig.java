@@ -259,6 +259,21 @@ public class AgentConfig {
         return props.getProperty("certguard.agent.anon.scan-token", "");
     }
 
+    // ── RFC 0013 §6 — scanner-pool advisory flag ─────────────────────────────
+
+    /**
+     * Advisory-only local hint that this instance is deployed as a platform scanner
+     * (RFC 0013 §6: "New config key agent.scanner-pool=true is advisory only — the
+     * server-side agent_type (set at token-mint time by platform admin) is
+     * authoritative"). NEVER used to gate the PublicAddressGuard SSRF check — that
+     * check is driven exclusively by the per-job jobKind the server sends
+     * (ScanJob.isPublicPoolJob()), since a local misconfiguration here must not be
+     * able to disable or bypass the guard. Used only for local logging/observability.
+     */
+    public boolean isScannerPoolMode() {
+        return bool("certguard.agent.scanner-pool", false);
+    }
+
     private String require(String key) {
         String val = props.getProperty(key);
         if (val == null || val.isBlank())

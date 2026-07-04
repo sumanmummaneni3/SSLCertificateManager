@@ -7,16 +7,14 @@ import com.certguard.dto.response.RegistrationTokenResponse;
 import com.certguard.dto.response.ScanJobResponse;
 import com.certguard.entity.*;
 import com.certguard.enums.AgentStatus;
+import com.certguard.enums.AgentType;
 import com.certguard.enums.CertStatus;
 import com.certguard.enums.ScanJobStatus;
+import com.certguard.enums.ScanSourceType;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.repository.*;
 import com.certguard.security.AgentHmacService;
-import com.certguard.service.chain.ChainValidationResult;
-import com.certguard.service.chain.ChainValidationService;
-import com.certguard.service.revocation.RevocationCheckService;
-import com.certguard.service.revocation.RevocationResult;
-import com.certguard.util.Rfc1918Util;
+import com.certguard.security.PublicAddressGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -26,12 +24,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.ByteArrayInputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.Base64;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -40,6 +34,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class AgentService {
 
     private final AgentRepository agentRepository;
@@ -52,12 +47,13 @@ public class AgentService {
     private final NetworkScanService networkScanService;
     private final BCryptPasswordEncoder passwordEncoder;
     private final SubscriptionGuard subscriptionGuard;
-    private final ExpiryEvaluationService expiryEvaluationService;
-    private final ChainValidationService chainValidationService;
-    private final RevocationCheckService revocationCheckService;
+    private final CertificatePersistenceService certPersistenceService;
 
-    @Value("${app.revocation.shadow:true}")
-    private boolean revocationShadowMode;
+    @Value("${app.scanning.pool.claim-batch:25}")
+    private int poolClaimBatch;
+
+    @Value("${app.scanning.pool.max-attempts:3}")
+    private int maxAttempts;
 
     /** Trigger-source constant used when a job is queued by the user (force/manual scan). */
     public static final String TRIGGER_USER      = "USER";
@@ -110,8 +106,6 @@ public class AgentService {
 
         Organization org = matchedToken.getOrganization();
 
-        // If the token was issued via the bundle flow, update the pre-created PENDING
-        // agent row instead of inserting a new one (prevents duplicate list entries).
         Agent agent;
         if (matchedToken.getAgentId() != null) {
             agent = agentRepository.findById(matchedToken.getAgentId())
@@ -129,7 +123,6 @@ public class AgentService {
                     .maxTargets(request.getMaxTargets())
                     .build();
         }
-        // RFC 0012: persist discovered subnets reported by the agent at registration time.
         if (request.getDiscoveredSubnets() != null && !request.getDiscoveredSubnets().isEmpty()) {
             agent.setDiscoveredSubnets(request.getDiscoveredSubnets());
         }
@@ -137,6 +130,7 @@ public class AgentService {
         agent.setStatus(AgentStatus.ACTIVE);
         agent.setRegisteredAt(Instant.now());
         agent.setLastSeenAt(Instant.now());
+        // agentType is retained: CUSTOMER by default, or PLATFORM_SCANNER if minted as such.
 
         agent = agentRepository.save(agent);
 
@@ -144,20 +138,7 @@ public class AgentService {
         tokenRepository.save(matchedToken);
 
         log.info("Agent registered: {} ({}) for org {}", agent.getName(), agent.getId(), orgId);
-
-        return AgentResponse.builder()
-                .id(agent.getId())
-                .name(agent.getName())
-                .status(agent.getStatus())
-                .allowedCidrs(agent.getAllowedCidrs())
-                .maxTargets(agent.getMaxTargets())
-                .currentTargetCount(0)
-                .registeredAt(agent.getRegisteredAt())
-                .agentKey(plainAgentKey)
-                .createdAt(agent.getCreatedAt())
-                .locationId(agent.getLocation() != null ? agent.getLocation().getId() : null)
-                .locationName(agent.getLocation() != null ? agent.getLocation().getName() : null)
-                .build();
+        return buildAgentResponse(agent, plainAgentKey);
     }
 
     @Transactional
@@ -166,10 +147,22 @@ public class AgentService {
         agentRepository.save(agent);
     }
 
+    /**
+     * Returns pending scan jobs for an agent.
+     *
+     * CUSTOMER agents claim AGENT_PINNED jobs for their assigned targets.
+     * PLATFORM_SCANNER agents claim PUBLIC_POOL jobs from the shared pool.
+     * Network scan jobs are only dispatched to CUSTOMER agents (RFC 0013 §3).
+     */
     @Transactional
     public List<ScanJobResponse> pollJobs(Agent agent) {
-        // Use FOR UPDATE SKIP LOCKED to atomically claim jobs without races.
-        // Cap at max-targets to bound the work per poll cycle.
+        if (agent.getAgentType() == AgentType.PLATFORM_SCANNER) {
+            return pollPoolJobs(agent);
+        }
+        return pollPinnedJobs(agent);
+    }
+
+    private List<ScanJobResponse> pollPinnedJobs(Agent agent) {
         List<AgentScanJob> pending = scanJobRepository.claimPendingJobsWithLock(
                 agent.getId(), agent.getMaxTargets());
         Instant now = Instant.now();
@@ -189,10 +182,11 @@ public class AgentService {
                     .port(job.getTarget().getPort())
                     .lastKnownSerialHash(lastCert.map(c -> sha256Hex(c.getSerialNumber())).orElse(null))
                     .lastCertificateId(lastCert.map(BaseEntity::getId).orElse(null))
+                    .jobKind(AgentScanJob.KIND_AGENT_PINNED)
                     .build();
         }).collect(Collectors.toList());
 
-        // RFC 0011: merge any PENDING network scan jobs for this agent
+        // RFC 0011: merge network scan jobs for CUSTOMER agents only.
         List<ScanJobResponse> networkJobs = networkScanService.pollNetworkJobs(agent);
         if (!networkJobs.isEmpty()) {
             List<ScanJobResponse> combined = new ArrayList<>(certJobs);
@@ -202,6 +196,46 @@ public class AgentService {
         return certJobs;
     }
 
+    /**
+     * Claims PUBLIC_POOL jobs for a platform scanner.
+     * Stamps agent_id on claim for audit + result verification.
+     * DOES NOT merge network scan jobs (RFC 0013 §3).
+     */
+    private List<ScanJobResponse> pollPoolJobs(Agent agent) {
+        List<AgentScanJob> pending = scanJobRepository.claimPublicPoolJobsWithLock(poolClaimBatch);
+        Instant now = Instant.now();
+        pending.forEach(job -> {
+            job.setAgent(agent);
+            job.setStatus(ScanJobStatus.CLAIMED);
+            job.setClaimedAt(now);
+        });
+        scanJobRepository.saveAll(pending);
+
+        return pending.stream().map(job -> {
+            Optional<CertificateRecord> lastCert = certRepository
+                    .findTopByTargetIdOrderByScannedAtDesc(job.getTarget().getId());
+            return ScanJobResponse.builder()
+                    .jobId(job.getId())
+                    .targetId(job.getTarget().getId())
+                    .host(job.getTarget().getHost())
+                    .port(job.getTarget().getPort())
+                    .lastKnownSerialHash(lastCert.map(c -> sha256Hex(c.getSerialNumber())).orElse(null))
+                    .lastCertificateId(lastCert.map(BaseEntity::getId).orElse(null))
+                    .jobKind(AgentScanJob.KIND_PUBLIC_POOL)
+                    .build();
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * Processes a scan result submitted by an agent (FULL, DELTA, or ERROR).
+     *
+     * Security invariants (RFC 0013 §4):
+     *   1. HMAC verified first on all paths.
+     *   2. Job found by id AND agent_id (stamped on claim — prevents cross-agent spoofing).
+     *   3. Job target-id == request.targetId on ALL paths (defense-in-depth / cross-tenant guard).
+     *   4. AGENT_PINNED: target.agent == caller; CIDR validated.
+     *   5. PUBLIC_POOL: agent.agentType == PLATFORM_SCANNER; PublicAddressGuard enforced.
+     */
     @Transactional
     public void submitResult(Agent agent, AgentScanResultRequest request, String plainAgentKey) {
         boolean hmacValid = hmacService.verify(plainAgentKey, request, request.getHmacSignature());
@@ -213,170 +247,214 @@ public class AgentService {
                 .findByIdAndAgentId(request.getJobId(), agent.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Scan job not found for this agent"));
 
+        // m1 fix: job_kind/agent_type consistency must be validated on EVERY path,
+        // including ERROR — not just FULL/DELTA. Without this, a compromised
+        // PLATFORM_SCANNER could submit ERROR-only results for its claimed pool jobs
+        // and drive arbitrary targets to FAILED -> UNREACHABLE without any of the
+        // FULL/DELTA path's checks (assertPoolSubmitSecurity) ever running. This is
+        // structurally guaranteed already by findByIdAndAgentId + claim-time stamping,
+        // but is asserted explicitly here as defense-in-depth, matching the pattern
+        // used on the FULL/DELTA path.
+        assertJobKindMatchesAgentType(agent, job);
+
+        // ── ERROR path (RFC 0013 §5) ─────────────────────────────────────────
+        if ("ERROR".equals(request.getScanType())) {
+            handleErrorResult(agent, job, request);
+            return;
+        }
+
         Target target = targetRepository.findById(request.getTargetId())
                 .orElseThrow(() -> new ResourceNotFoundException("Target not found"));
 
-        if (target.getAgent() == null || !agent.getId().equals(target.getAgent().getId())) {
-            throw new SecurityException("Target is not assigned to this agent");
+        // ── Defense-in-depth: assert job<->target binding on ALL paths (RFC 0013 §4) ──
+        // CRITICAL for PUBLIC_POOL: without this check, a compromised scanner could submit
+        // a result for any org's target (cross-tenant result injection).
+        if (!target.getId().equals(job.getTarget().getId())) {
+            throw new SecurityException(
+                    "Job/target binding mismatch: job targets " + job.getTarget().getId()
+                    + " but result claims " + target.getId());
         }
 
-        validateCidr(target.getHost(), agent.getAllowedCidrs());
-
-        // Capture the previous lastScannedAt BEFORE the scan overwrites it — required for
-        // FORCE debounce in ExpiryEvaluationService (RFC 0008 §5).
         Instant previousLastScannedAt = target.getLastScannedAt();
 
-        // Map job's trigger_source to EvaluationMode (RFC 0008 §6.3).
         ExpiryEvaluationService.EvaluationMode evalMode =
                 TRIGGER_USER.equals(job.getTriggerSource())
                         ? ExpiryEvaluationService.EvaluationMode.FORCE
                         : ExpiryEvaluationService.EvaluationMode.SCHEDULED;
 
-        if ("FULL".equals(request.getScanType())) {
-            processFull(agent, target, request, evalMode, previousLastScannedAt);
-        } else if ("DELTA".equals(request.getScanType())) {
-            processDelta(target, request, evalMode, previousLastScannedAt);
+        if (AgentScanJob.KIND_PUBLIC_POOL.equals(job.getJobKind())) {
+            assertPoolSubmitSecurity(agent, job, target);
+            processResult(agent, target, request, evalMode, previousLastScannedAt);
         } else {
-            throw new IllegalArgumentException("Unknown scanType: " + request.getScanType());
+            assertPinnedSubmitSecurity(agent, target);
+            processResult(agent, target, request, evalMode, previousLastScannedAt);
         }
 
         target.setLastScannedAt(Instant.now());
+        target.setLastErrorMessage(null);
+        target.setLastErrorAt(null);
         targetRepository.save(target);
 
         job.setStatus(ScanJobStatus.COMPLETED);
         job.setResultType(request.getScanType());
         job.setCompletedAt(Instant.now());
+        job.setErrorMsg(null);
         scanJobRepository.save(job);
 
         log.info("Scan result processed — agent: {}, target: {}, type: {}",
                 agent.getName(), target.getHost(), request.getScanType());
     }
 
-    private void processFull(Agent agent, Target target, AgentScanResultRequest req,
-                             ExpiryEvaluationService.EvaluationMode evalMode,
-                             Instant previousLastScannedAt) {
-        CertificateRecord record = certRepository
-                .findByTargetIdAndSerialNumber(target.getId(), req.getSerialNumber())
-                .orElse(CertificateRecord.builder()
-                        .target(target)
-                        .orgId(target.getOrganization().getId())
-                        .serialNumber(req.getSerialNumber())
-                        .build());
+    // ── Security assertions ───────────────────────────────────────────────────
 
-        record.setCommonName(req.getCommonName());
-        record.setIssuer(req.getIssuer());
-        record.setNotBefore(req.getNotBefore());
-        record.setExpiryDate(req.getNotAfter());
-        record.setKeyAlgorithm(req.getKeyAlgorithm());
-        record.setKeySize(req.getKeySize());
-        record.setSignatureAlgorithm(req.getSignatureAlgorithm());
-        record.setSubjectAltNames(req.getSubjectAltNames());
-        record.setChainDepth(req.getChainDepth());
-        record.setPublicCertB64(req.getPublicCertB64());
-        record.setScannedByAgent(agent);
-        record.setScannedAt(Instant.now());
-
-        // RFC 0009: Build chain from chainB64 + leaf, then run chain/revocation checks.
-        X509Certificate[] chain = buildChain(req.getChainB64(), req.getPublicCertB64());
-        ChainValidationResult chainResult = chainValidationService.validate(chain);
-        RevocationResult revResult = revocationCheckService.check(
-                chain, null /* no staple from agent */, record.isRevocationDeepCheck());
-
-        // Persist chain + revocation fields.
-        record.setChainTrusted(chainResult.trusted());
-        record.setChainValidationError(chainResult.error());
-        record.setRevocationStatus(revResult.status());
-        record.setRevocationSource(revResult.source());
-        record.setRevocationCheckedAt(revResult.checkedAt());
-        record.setRevocationReason(revResult.reason());
-        record.setRevocationReasonCode(revResult.reasonCode());
-        record.setRevokedAt(revResult.revokedAt());
-
-        // Status with shadow mode guard.
-        CertStatus newStatus = expiryEvaluationService.determineCertStatus(
-                req.getNotAfter(), revResult, chainResult, target, target.getOrganization().getId());
-        if (revocationShadowMode) {
-            CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
-                    req.getNotAfter(), null, null, target, target.getOrganization().getId());
-            record.setStatus(shadowStatus);
-            if (newStatus == CertStatus.REVOKED || newStatus == CertStatus.INVALID) {
-                log.info("[SHADOW] Agent FULL: would set status={} for cert {} but shadow=true",
-                        newStatus, req.getCommonName());
-            }
-        } else {
-            record.setStatus(newStatus);
+    /**
+     * m1 fix: PUBLIC_POOL jobs must be owned by a PLATFORM_SCANNER, AGENT_PINNED jobs
+     * by a non-PLATFORM_SCANNER (CUSTOMER). Applied on ALL result paths (FULL, DELTA,
+     * ERROR) — previously only the FULL/DELTA path re-validated this.
+     */
+    private void assertJobKindMatchesAgentType(Agent agent, AgentScanJob job) {
+        boolean isPool = AgentScanJob.KIND_PUBLIC_POOL.equals(job.getJobKind());
+        boolean isPlatformScanner = agent.getAgentType() == AgentType.PLATFORM_SCANNER;
+        if (isPool != isPlatformScanner) {
+            throw new SecurityException(
+                    "Job kind / agent type mismatch: job " + job.getId() + " has jobKind="
+                    + job.getJobKind() + " but submitting agent " + agent.getId()
+                    + " has agentType=" + agent.getAgentType());
         }
-
-        certRepository.save(record);
-
-        // Post-scan expiry evaluation (RFC 0008 §7).
-        expiryEvaluationService.evaluateAndNotify(record, evalMode, previousLastScannedAt);
     }
 
-    private void processDelta(Target target, AgentScanResultRequest req,
-                              ExpiryEvaluationService.EvaluationMode evalMode,
-                              Instant previousLastScannedAt) {
-        if (req.getCertificateId() == null)
-            throw new IllegalArgumentException("DELTA result must include certificateId");
-
-        CertificateRecord existing = certRepository.findById(req.getCertificateId())
-                .orElseThrow(() -> new ResourceNotFoundException("Certificate record not found"));
-
-        existing.setExpiryDate(req.getNotAfter());
-        existing.setScannedAt(Instant.now());
-
-        // RFC 0009: DELTA doesn't re-send the cert. Run revocation on the STORED leaf.
-        // This is how between-scan revocations are detected (the motivating incident).
-        X509Certificate[] chain = buildChain(null, existing.getPublicCertB64());
-        RevocationResult revResult = revocationCheckService.check(
-                chain, null /* no staple */, existing.isRevocationDeepCheck());
-
-        // Persist updated revocation fields.
-        existing.setRevocationStatus(revResult.status());
-        existing.setRevocationSource(revResult.source());
-        existing.setRevocationCheckedAt(revResult.checkedAt());
-        existing.setRevocationReason(revResult.reason());
-        existing.setRevocationReasonCode(revResult.reasonCode());
-        existing.setRevokedAt(revResult.revokedAt());
-
-        // Use the previously-recorded chain result (chain didn't change on DELTA).
-        ChainValidationResult storedChain = ChainValidationResult.trusted(
-                existing.getChainDepth() != null ? existing.getChainDepth() : 1);
-        if (Boolean.FALSE.equals(existing.getChainTrusted())) {
-            storedChain = ChainValidationResult.failed(
-                    existing.getChainValidationError(), existing.getChainDepth() != null ? existing.getChainDepth() : 1);
+    private void assertPinnedSubmitSecurity(Agent agent, Target target) {
+        if (target.getAgent() == null || !agent.getId().equals(target.getAgent().getId())) {
+            throw new SecurityException("Target is not assigned to this agent");
         }
+        validateCidr(target.getHost(), agent.getAllowedCidrs());
+    }
 
-        CertStatus newStatus = expiryEvaluationService.determineCertStatus(
-                req.getNotAfter(), revResult, storedChain, target, target.getOrganization().getId());
-        if (revocationShadowMode) {
-            CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
-                    req.getNotAfter(), null, null, target, target.getOrganization().getId());
-            existing.setStatus(shadowStatus);
+    private void assertPoolSubmitSecurity(Agent agent, AgentScanJob job, Target target) {
+        if (!AgentScanJob.KIND_PUBLIC_POOL.equals(job.getJobKind())) {
+            throw new SecurityException("Job is not a PUBLIC_POOL job");
+        }
+        if (agent.getAgentType() != AgentType.PLATFORM_SCANNER) {
+            throw new SecurityException(
+                    "Only PLATFORM_SCANNER agents may submit PUBLIC_POOL results; "
+                    + "agent " + agent.getId() + " has type " + agent.getAgentType());
+        }
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(target.getHost());
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            throw new SecurityException("SSRF guard rejected PUBLIC_POOL target: " + e.getMessage());
+        }
+    }
+
+    // ── Result processing (delegates to CertificatePersistenceService) ────────
+
+    private void processResult(Agent agent, Target target, AgentScanResultRequest req,
+                               ExpiryEvaluationService.EvaluationMode evalMode,
+                               Instant previousLastScannedAt) {
+        // RFC 0013 §9: provenance is derived from the SUBMITTING agent's type, which
+        // assertPoolSubmitSecurity/assertPinnedSubmitSecurity have already validated
+        // matches the job kind — PLATFORM_SCANNER claimed a PUBLIC_POOL job (⇒ cloud
+        // scanner, identity not exposed), CUSTOMER claimed an AGENT_PINNED job (⇒ named
+        // customer agent).
+        boolean isPlatformScanner = agent.getAgentType() == AgentType.PLATFORM_SCANNER;
+        ScanSourceType scanSourceType = isPlatformScanner
+                ? ScanSourceType.CLOUD_SCANNER
+                : ScanSourceType.CUSTOMER_AGENT;
+
+        // M2 fix: never persist a PLATFORM_SCANNER's identity onto scannedByAgent —
+        // scanSource already correctly nulls agentId/agentName for CLOUD_SCANNER, but
+        // the legacy scannedByAgent FK/scannedByAgentId response field would otherwise
+        // still leak the platform-org scanner's UUID into a customer-org response
+        // (RFC 0013 §9 tenant-boundary rule) and creates a customer-cert →
+        // platform-org-agent FK that has no legitimate use.
+        Agent scannedByAgentForRecord = isPlatformScanner ? null : agent;
+
+        if ("FULL".equals(req.getScanType())) {
+            byte[] ocspStaple = decodeOcspStaple(req.getOcspStapleB64());
+            certPersistenceService.persistFull(
+                    target, scannedByAgentForRecord,
+                    req.getSerialNumber(), req.getCommonName(), req.getIssuer(),
+                    req.getNotBefore(), req.getNotAfter(),
+                    req.getKeyAlgorithm(), req.getKeySize(), req.getSignatureAlgorithm(),
+                    req.getSubjectAltNames(), req.getChainDepth(),
+                    req.getPublicCertB64(), req.getChainB64(), ocspStaple,
+                    evalMode, previousLastScannedAt, scanSourceType);
+        } else if ("DELTA".equals(req.getScanType())) {
+            if (req.getCertificateId() == null)
+                throw new IllegalArgumentException("DELTA result must include certificateId");
+            certPersistenceService.persistDelta(
+                    target, req.getCertificateId(), req.getNotAfter(),
+                    evalMode, previousLastScannedAt, scanSourceType);
         } else {
-            existing.setStatus(newStatus);
+            throw new IllegalArgumentException("Unknown scanType: " + req.getScanType());
         }
+    }
 
-        certRepository.save(existing);
+    // ── ERROR handling ────────────────────────────────────────────────────────
 
-        // Post-scan expiry evaluation (RFC 0008 §7).
-        expiryEvaluationService.evaluateAndNotify(existing, evalMode, previousLastScannedAt);
+    private void handleErrorResult(Agent agent, AgentScanJob job, AgentScanResultRequest request) {
+        int newAttempts = job.getAttempts() + 1;
+        job.setAttempts(newAttempts);
+        String errMsg = request.getErrorMessage();
+        if (errMsg != null && errMsg.length() > 500) errMsg = errMsg.substring(0, 500);
+        job.setErrorMsg(errMsg);
+
+        if (newAttempts < maxAttempts) {
+            job.setStatus(ScanJobStatus.PENDING);
+            job.setClaimedAt(null);
+            scanJobRepository.save(job);
+            log.warn("ERROR result for job {} (attempt {}/{}) — re-queuing for target {}",
+                    job.getId(), newAttempts, maxAttempts, job.getTarget().getHost());
+        } else {
+            job.setStatus(ScanJobStatus.FAILED);
+            job.setCompletedAt(Instant.now());
+            scanJobRepository.save(job);
+            log.warn("ERROR result for job {} (attempt {}/{}) — marking FAILED for target {}",
+                    job.getId(), newAttempts, maxAttempts, job.getTarget().getHost());
+            checkAndMarkUnreachable(job.getTarget());
+        }
     }
 
     /**
-     * Queues a scan job for a private target. Defaults to SCHEDULED trigger source
-     * (used by the nightly private-scan sweep). Use the overload with triggerSource
-     * for user-initiated (FORCE) scans.
+     * Checks whether the target's two most recent TERMINAL scan jobs were BOTH FAILED
+     * — i.e. genuinely consecutive failures, not just "2 FAILEDs somewhere in history"
+     * (M1 fix). A FAILED → COMPLETED → FAILED sequence must NOT trip this: the most
+     * recent terminal outcome before the latest FAILED was a success, so the streak
+     * was broken. If so, marks all the target's certificate records as UNREACHABLE
+     * (RFC 0013 §5).
+     *
+     * <p>Public so both failure sources can share this exact rule (m2): the agent
+     * ERROR path ({@link #handleErrorResult}) and the HYBRID in-process fallback path
+     * (PublicScanFallbackScheduler) both call this after marking a job FAILED —
+     * they must observe consistent UNREACHABLE hysteresis regardless of which
+     * mechanism produced the failure.
      */
+    @Transactional
+    public void checkAndMarkUnreachable(Target target) {
+        List<AgentScanJob> lastTwoTerminal =
+                scanJobRepository.findLastTwoTerminalJobsForTarget(target.getId());
+        boolean bothConsecutiveFailed = lastTwoTerminal.size() == 2
+                && lastTwoTerminal.stream().allMatch(j -> j.getStatus() == ScanJobStatus.FAILED);
+        if (bothConsecutiveFailed) {
+            certRepository.findAllByTargetId(target.getId()).forEach(cert -> {
+                cert.setStatus(CertStatus.UNREACHABLE);
+                cert.setScannedAt(Instant.now());
+                certRepository.save(cert);
+            });
+            target.setLastErrorAt(Instant.now());
+            targetRepository.save(target);
+            log.warn("Target UNREACHABLE after 2 consecutive FAILED jobs: {}:{}",
+                    target.getHost(), target.getPort());
+        }
+    }
+
+    // ── Queue helpers ─────────────────────────────────────────────────────────
+
     @Transactional
     public void queueScanJob(Target target) {
         queueScanJob(target.getId(), target.getOrganization().getId(), TRIGGER_SCHEDULED);
     }
 
-    /**
-     * User-facing overload — called from TargetService.triggerScan for manual scans.
-     * Passes TRIGGER_USER so submitResult selects EvaluationMode.FORCE (RFC 0008 §6.3).
-     */
     @Transactional
     public void queueScanJob(Target target, String triggerSource) {
         queueScanJob(target.getId(), target.getOrganization().getId(), triggerSource);
@@ -384,7 +462,6 @@ public class AgentService {
 
     @Transactional
     public void queueScanJob(UUID targetId, UUID orgId) {
-        // Preserve existing callers — default to SCHEDULED.
         queueScanJob(targetId, orgId, TRIGGER_SCHEDULED);
     }
 
@@ -407,6 +484,7 @@ public class AgentService {
         AgentScanJob job = AgentScanJob.builder()
                 .agent(target.getAgent()).target(target).orgId(orgId)
                 .status(ScanJobStatus.PENDING)
+                .jobKind(AgentScanJob.KIND_AGENT_PINNED)
                 .triggerSource(triggerSource)
                 .build();
         scanJobRepository.save(job);
@@ -414,17 +492,54 @@ public class AgentService {
                 target.getHost(), target.getAgent().getName(), triggerSource);
     }
 
+    /**
+     * Enqueues a PUBLIC_POOL scan job for a public target (RFC 0013 §2).
+     * Called by TargetService.createTarget, TargetService.triggerScan (public path),
+     * and PublicScanEnqueueScheduler — this is the single choke point for all three,
+     * so the SSRF guard below applies uniformly regardless of call site.
+     *
+     * <p>PublicAddressGuard runs here (server-side, at enqueue) as defense-in-depth;
+     * DNS can change between enqueue and scan time, so the agent-side check
+     * (PollLoop.processCertScanJob) is the authoritative one (RFC 0013 §4.4). Rejecting
+     * here means a malicious/misconfigured "public" target pointing at internal
+     * infrastructure never reaches the queue at all — callers get a clear
+     * IllegalArgumentException (400) instead of a silently-stuck job.
+     *
+     * @throws IllegalArgumentException if the target's host resolves to a disallowed
+     *         (non-public) address — callers (TargetService) let this propagate so the
+     *         user-facing create/scan request is rejected; PublicScanEnqueueScheduler
+     *         catches it per-target so one bad target doesn't abort the whole sweep.
+     */
+    @Transactional
+    public void enqueuePublicPoolJob(Target target, String triggerSource) {
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(target.getHost());
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            throw new IllegalArgumentException(
+                    "Target '" + target.getHost() + "' cannot be scanned via the platform scanner pool "
+                    + "— it resolves to a non-public address: " + e.getMessage());
+        }
+        if (scanJobRepository.existsActivePoolJobForTarget(target.getId())) {
+            log.debug("PUBLIC_POOL job already active for target {}", target.getId());
+            return;
+        }
+        AgentScanJob job = AgentScanJob.builder()
+                .agent(null)
+                .target(target)
+                .orgId(target.getOrganization().getId())
+                .status(ScanJobStatus.PENDING)
+                .jobKind(AgentScanJob.KIND_PUBLIC_POOL)
+                .triggerSource(triggerSource)
+                .build();
+        scanJobRepository.save(job);
+        log.info("PUBLIC_POOL job enqueued — target: {}, source: {}", target.getHost(), triggerSource);
+    }
+
+    // ── Agent management ──────────────────────────────────────────────────────
+
     public List<AgentResponse> listAgents(UUID orgId) {
         return agentRepository.findAllByOrganizationId(orgId).stream()
-                .map(a -> AgentResponse.builder()
-                        .id(a.getId()).name(a.getName()).status(a.getStatus())
-                        .allowedCidrs(a.getAllowedCidrs()).maxTargets(a.getMaxTargets())
-                        .currentTargetCount(a.getCurrentTargetCount())
-                        .lastSeenAt(a.getLastSeenAt()).registeredAt(a.getRegisteredAt())
-                        .createdAt(a.getCreatedAt())
-                        .locationId(a.getLocation() != null ? a.getLocation().getId() : null)
-                        .locationName(a.getLocation() != null ? a.getLocation().getName() : null)
-                        .build())
+                .map(a -> buildAgentResponse(a, null))
                 .collect(Collectors.toList());
     }
 
@@ -437,11 +552,8 @@ public class AgentService {
         log.warn("Agent revoked: {} ({})", agent.getName(), agentId);
     }
 
-    /**
-     * Resets CLAIMED jobs that have been stuck for more than 10 minutes back to PENDING.
-     * Handles the case where an agent went offline mid-scan.
-     * Runs every 5 minutes.
-     */
+    // ── Schedulers ────────────────────────────────────────────────────────────
+
     @Scheduled(fixedDelay = 300_000)
     @SchedulerLock(name = "AgentService_resetStaleClaimedJobs",
                    lockAtMostFor = "PT5M", lockAtLeastFor = "PT4M")
@@ -465,41 +577,22 @@ public class AgentService {
     @Transactional
     public void cleanupExpiredTokens() {
         List<AgentRegistrationToken> expired = tokenRepository.findExpiredAndUsed(Instant.now());
-        // Skip tokens still linked to a PENDING bundle agent — deleting them would
-        // orphan the agent row and prevent it from ever completing registration.
         List<AgentRegistrationToken> toDelete = expired.stream()
                 .filter(t -> t.getAgentId() == null)
                 .collect(Collectors.toList());
         tokenRepository.deleteAll(toDelete);
     }
 
-    /**
-     * Builds an X509Certificate[] from base64-encoded DER strings (RFC 0009 §3.4).
-     *
-     * <p>Priority: if {@code chainB64} is present and non-empty, use those certs
-     * (leaf first, then intermediates). Otherwise decode {@code leafB64} alone.
-     * Backward-compatible: older agents send only the leaf in publicCertB64.
-     */
-    private X509Certificate[] buildChain(List<String> chainB64, String leafB64) {
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private byte[] decodeOcspStaple(String ocspStapleB64) {
+        if (ocspStapleB64 == null || ocspStapleB64.isBlank()) return null;
         try {
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            if (chainB64 != null && !chainB64.isEmpty()) {
-                X509Certificate[] chain = new X509Certificate[chainB64.size()];
-                for (int i = 0; i < chainB64.size(); i++) {
-                    byte[] der = Base64.getDecoder().decode(chainB64.get(i));
-                    chain[i] = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(der));
-                }
-                return chain;
-            }
-            if (leafB64 != null && !leafB64.isBlank()) {
-                byte[] der = Base64.getDecoder().decode(leafB64);
-                X509Certificate leaf = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(der));
-                return new X509Certificate[]{ leaf };
-            }
+            return Base64.getDecoder().decode(ocspStapleB64);
         } catch (Exception e) {
-            log.warn("Could not build certificate chain from B64: {}", e.getMessage());
+            log.warn("Could not decode ocspStapleB64: {}", e.getMessage());
+            return null;
         }
-        return new X509Certificate[0];
     }
 
     private void validateCidr(String host, List<String> allowedCidrs) {
@@ -537,5 +630,22 @@ public class AgentService {
             for (byte b : hash) sb.append(String.format("%02x", b));
             return sb.toString();
         } catch (Exception e) { return input; }
+    }
+
+    private AgentResponse buildAgentResponse(Agent a, String agentKey) {
+        AgentResponse.AgentResponseBuilder builder = AgentResponse.builder()
+                .id(a.getId())
+                .name(a.getName())
+                .status(a.getStatus())
+                .allowedCidrs(a.getAllowedCidrs())
+                .maxTargets(a.getMaxTargets())
+                .currentTargetCount(a.getCurrentTargetCount())
+                .lastSeenAt(a.getLastSeenAt())
+                .registeredAt(a.getRegisteredAt())
+                .createdAt(a.getCreatedAt())
+                .locationId(a.getLocation() != null ? a.getLocation().getId() : null)
+                .locationName(a.getLocation() != null ? a.getLocation().getName() : null);
+        if (agentKey != null) builder.agentKey(agentKey);
+        return builder.build();
     }
 }

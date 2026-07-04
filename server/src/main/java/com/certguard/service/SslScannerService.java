@@ -3,12 +3,11 @@ package com.certguard.service;
 import com.certguard.entity.CertificateRecord;
 import com.certguard.entity.Target;
 import com.certguard.enums.CertStatus;
+import com.certguard.enums.ScanSourceType;
+import com.certguard.enums.ScanningMode;
 import com.certguard.repository.CertificateRecordRepository;
 import com.certguard.repository.TargetRepository;
-import com.certguard.service.chain.ChainValidationResult;
-import com.certguard.service.chain.ChainValidationService;
-import com.certguard.service.revocation.RevocationResult;
-import com.certguard.service.revocation.RevocationCheckService;
+import com.certguard.security.PublicAddressGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -21,38 +20,59 @@ import javax.net.ssl.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.security.*;
-import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
+/**
+ * In-process SSL scanner — the "DIRECT" scan path (RFC 0013 §7).
+ *
+ * <p>In DIRECT mode (default at merge) this is the only public-scan path and the
+ * scheduledPublicScan cron is active. In HYBRID mode the cron is replaced by
+ * PublicScanEnqueueScheduler; this service is retained as the fallback executor.
+ * In POOL mode this service is disabled entirely.
+ *
+ * <p>The @Transactional self-invocation bug (RFC 0013 §4 / §8) is fixed: persistence
+ * now delegates to CertificatePersistenceService, which is a separate Spring bean
+ * and therefore always runs inside a proper transaction proxy.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class SslScannerService {
 
     private final TargetRepository targetRepository;
     private final CertificateRecordRepository certRepository;
-    private final ExpiryEvaluationService expiryEvaluationService;
-    private final ChainValidationService chainValidationService;
-    private final RevocationCheckService revocationCheckService;
+    private final CertificatePersistenceService certPersistenceService;
 
     @Value("${app.scanning.public.thread-pool-size:20}") private int threadPoolSize;
     @Value("${app.scanning.public.connect-timeout-ms:10000}") private int connectTimeoutMs;
     @Value("${app.scanning.public.retry-max-attempts:3}") private int maxRetries;
-    @Value("${app.revocation.shadow:true}") private boolean revocationShadowMode;
+    @Value("${app.scanning.mode:DIRECT}") private String scanningMode;
 
+    /**
+     * Scheduled public scan — active only in DIRECT mode (RFC 0013 §7).
+     * In HYBRID/POOL modes the PublicScanEnqueueScheduler takes over and this cron
+     * should be disabled (set schedule-cron to a future timestamp or remove the lock).
+     */
     @Scheduled(cron = "${app.scanning.public.schedule-cron}")
     @SchedulerLock(name = "SslScannerService_scheduledPublicScan",
                    lockAtMostFor = "PT30M", lockAtLeastFor = "PT10M")
     public void scheduledPublicScan() {
-        log.info("Starting scheduled public certificate scan");
+        ScanningMode mode = parseScanningMode();
+        if (mode != ScanningMode.DIRECT) {
+            log.debug("scheduledPublicScan skipped — mode={} (pool handles public scans)", mode);
+            return;
+        }
+        log.info("Starting scheduled public certificate scan (DIRECT mode)");
         List<Target> targets = targetRepository.findAllByIsPrivateFalseAndEnabledTrue();
         log.info("Found {} public targets to scan", targets.size());
         scanTargets(targets, ExpiryEvaluationService.EvaluationMode.SCHEDULED);
@@ -60,7 +80,12 @@ public class SslScannerService {
 
     /**
      * User-triggered (FORCE) scan of a single public target.
-     * Captures the target's prior lastScannedAt for the force-scan debounce check.
+     * In DIRECT mode: executes immediately (existing behaviour).
+     * In HYBRID/POOL modes: TargetService.triggerScan routes public scans through the
+     * pool instead, so this method is not called for public targets.
+     *
+     * <p>The self-invocation @Transactional bug is fixed: scanSingleTarget is now an
+     * internal method that calls certPersistenceService (a separate bean) for persistence.
      */
     @Transactional
     public void scanTarget(Target target) {
@@ -71,12 +96,63 @@ public class SslScannerService {
     public void scanTargetAsync(Target target) {
         CompletableFuture.runAsync(() -> {
             try {
-                // Initial scan on new-target creation — treat as SCHEDULED (no prior lastScannedAt).
                 scanSingleTarget(target, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+            } catch (Exception e) {
+                log.error("Async scan failed for {}: {}", target.getHost(), e.getMessage());
             }
-            catch (Exception e) { log.error("Async scan failed for {}: {}", target.getHost(), e.getMessage()); }
         });
     }
+
+    /**
+     * Executes a HYBRID fallback scan for a stale PUBLIC_POOL job.
+     * Called by PublicScanFallbackScheduler when a pool job has been PENDING > 10 min.
+     * Returns true if the scan succeeded. RFC 0013 §7.
+     *
+     * <p>PublicAddressGuard runs first: in HYBRID mode this method makes the server
+     * itself open a socket to the target (same as the DIRECT path), so it is just as
+     * much an SSRF vector as the agent-side pool scan and must be guarded identically.
+     * Re-resolves at scan time (not just at enqueue) since DNS can change between the
+     * original enqueue and the fallback firing up to 10+ minutes later.
+     */
+    @Transactional
+    public boolean executeFallbackScan(Target target, Instant previousLastScannedAt) {
+        String rejectionReason = checkPublicAddressGuard(target.getHost());
+        if (rejectionReason != null) {
+            log.warn("HYBRID fallback rejected by PublicAddressGuard for {}:{} — {}",
+                    target.getHost(), target.getPort(), rejectionReason);
+            return false;
+        }
+        try {
+            ScanChainResult scanResult = fetchCertificateChain(target.getHost(), target.getPort());
+            if (scanResult != null && scanResult.chain().length > 0) {
+                persistViaService(target, scanResult,
+                        ExpiryEvaluationService.EvaluationMode.SCHEDULED, previousLastScannedAt);
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("Fallback scan failed for {}:{} — {}", target.getHost(), target.getPort(), e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * RFC 0013 §7 — extracted as a pure static method (mirrors
+     * {@code PollLoop.checkPublicAddressGuard} on the agent side) so this invariant is
+     * directly unit-testable without any network I/O or timing assumptions.
+     *
+     * @return the rejection reason if the host resolves to a disallowed address, or
+     *         {@code null} if the host is publicly routable and dialing may proceed.
+     */
+    static String checkPublicAddressGuard(String host) {
+        try {
+            PublicAddressGuard.assertPubliclyRoutable(host);
+            return null;
+        } catch (PublicAddressGuard.PublicAddressGuardException e) {
+            return e.getMessage();
+        }
+    }
+
+    // ── Internal scanning ─────────────────────────────────────────────────────
 
     private void scanTargets(List<Target> targets, ExpiryEvaluationService.EvaluationMode mode) {
         ExecutorService executor = Executors.newFixedThreadPool(threadPoolSize);
@@ -91,19 +167,19 @@ public class SslScannerService {
         catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
-    @Transactional
-    protected void scanSingleTarget(Target target,
-                                    ExpiryEvaluationService.EvaluationMode mode,
-                                    Instant previousLastScannedAt) {
+    private void scanSingleTarget(Target target,
+                                  ExpiryEvaluationService.EvaluationMode mode,
+                                  Instant previousLastScannedAt) {
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 ScanChainResult scanResult = fetchCertificateChain(target.getHost(), target.getPort());
                 if (scanResult != null && scanResult.chain().length > 0) {
-                    persistCertificates(target, scanResult, mode, previousLastScannedAt);
+                    persistViaService(target, scanResult, mode, previousLastScannedAt);
                     return;
                 }
             } catch (Exception e) {
-                log.warn("Scan attempt {}/{} failed for {}:{} — {}", attempt, maxRetries, target.getHost(), target.getPort(), e.getMessage());
+                log.warn("Scan attempt {}/{} failed for {}:{} — {}",
+                        attempt, maxRetries, target.getHost(), target.getPort(), e.getMessage());
                 if (attempt == maxRetries) markTargetUnreachable(target, e.getMessage());
                 else sleep(attempt * 2000L);
             }
@@ -111,9 +187,60 @@ public class SslScannerService {
     }
 
     /**
-     * Bundles the TLS peer chain with an optional OCSP staple from the SSL session.
-     * The staple is only available if the server is configured for OCSP stapling.
+     * Delegates certificate persistence to CertificatePersistenceService (RFC 0013 §8).
+     * Fixes the @Transactional self-invocation bug: this call crosses a bean boundary
+     * so Spring's proxy intercepts and the transaction is properly applied.
      */
+    private void persistViaService(Target target, ScanChainResult scanResult,
+                                   ExpiryEvaluationService.EvaluationMode mode,
+                                   Instant previousLastScannedAt) throws Exception {
+        X509Certificate[] chain = scanResult.chain();
+        X509Certificate leaf = chain[0];
+
+        String serial    = leaf.getSerialNumber().toString(16);
+        String cn        = extractCN(leaf.getSubjectX500Principal().getName());
+        String issuer    = leaf.getIssuerX500Principal().getName();
+        String b64       = Base64.getEncoder().encodeToString(leaf.getEncoded());
+        Instant expiry   = leaf.getNotAfter().toInstant();
+        Instant notBefore = leaf.getNotBefore().toInstant();
+
+        // Build chainB64 list (leaf first, then intermediates) for chain validation.
+        List<String> chainB64 = new ArrayList<>();
+        for (X509Certificate cert : chain) {
+            chainB64.add(Base64.getEncoder().encodeToString(cert.getEncoded()));
+        }
+
+        // Extract SANs from leaf.
+        List<String> sans = extractSANs(leaf);
+
+        // RFC 0013 §9: both the plain-DIRECT path and the HYBRID fallback path run
+        // in-process on the server — from the tenant's perspective both are
+        // "CertGuard Cloud Scanner", so always stamp CLOUD_SCANNER here.
+        certPersistenceService.persistFull(
+                target,
+                null,           // scannedByAgent = null (direct path, not via agent)
+                serial, cn, issuer, notBefore, expiry,
+                leaf.getPublicKey().getAlgorithm(),
+                keySize(leaf.getPublicKey()),
+                leaf.getSigAlgName(),
+                sans,
+                chain.length,
+                b64,
+                chainB64,
+                scanResult.ocspStaple(),
+                mode,
+                previousLastScannedAt,
+                ScanSourceType.CLOUD_SCANNER);
+
+        // Stamp the target's lastScannedAt and clear any error.
+        target.setLastScannedAt(Instant.now());
+        target.setLastErrorMessage(null);
+        target.setLastErrorAt(null);
+        targetRepository.save(target);
+    }
+
+    // ── TLS connection ────────────────────────────────────────────────────────
+
     record ScanChainResult(X509Certificate[] chain, byte[] ocspStaple) {}
 
     private ScanChainResult fetchCertificateChain(String host, int port) throws Exception {
@@ -136,100 +263,24 @@ public class SslScannerService {
                 ssl.startHandshake();
                 X509Certificate[] chain = (X509Certificate[]) ssl.getSession().getPeerCertificates();
 
-                // Attempt to extract OCSP staple from the extended session.
                 byte[] staple = null;
                 SSLSession session = ssl.getSession();
                 if (session instanceof ExtendedSSLSession extSession) {
                     List<byte[]> statusResponses = extSession.getStatusResponses();
                     if (statusResponses != null && !statusResponses.isEmpty()) {
-                        staple = statusResponses.get(0); // TLS 1.2: single entry for leaf
+                        staple = statusResponses.get(0);
                     }
                 }
-
                 return new ScanChainResult(chain, staple);
             }
         }
     }
 
-    private void persistCertificates(Target target, ScanChainResult scanResult,
-                                     ExpiryEvaluationService.EvaluationMode mode,
-                                     Instant previousLastScannedAt) {
-        X509Certificate[] chain = scanResult.chain();
-        X509Certificate leaf = chain[0];
-        try {
-            Instant expiry    = leaf.getNotAfter().toInstant();
-            Instant notBefore = leaf.getNotBefore().toInstant();
-            String serial     = leaf.getSerialNumber().toString(16);
-            String cn         = extractCN(leaf.getSubjectX500Principal().getName());
-            String issuer     = leaf.getIssuerX500Principal().getName();
-            String b64        = Base64.getEncoder().encodeToString(leaf.getEncoded());
-
-            CertificateRecord record = certRepository
-                    .findByTargetIdAndSerialNumber(target.getId(), serial)
-                    .orElse(CertificateRecord.builder()
-                            .target(target).orgId(target.getOrganization().getId()).serialNumber(serial).build());
-
-            // RFC 0009: Chain validation (BE-4) and revocation checking (BE-5).
-            ChainValidationResult chainResult = chainValidationService.validate(chain);
-            RevocationResult revResult = revocationCheckService.check(
-                    chain, scanResult.ocspStaple(), record.isRevocationDeepCheck());
-
-            Instant now = Instant.now();
-            record.setCommonName(cn); record.setIssuer(issuer);
-            record.setExpiryDate(expiry); record.setNotBefore(notBefore);
-            record.setPublicCertB64(b64);
-            record.setChainDepth(chain.length);
-
-            // Persist chain fields.
-            record.setChainTrusted(chainResult.trusted());
-            record.setChainValidationError(chainResult.error());
-
-            // Persist revocation fields (always, even in shadow mode — we still record).
-            record.setRevocationStatus(revResult.status());
-            record.setRevocationSource(revResult.source());
-            record.setRevocationCheckedAt(revResult.checkedAt());
-            record.setRevocationReason(revResult.reason());
-            record.setRevocationReasonCode(revResult.reasonCode());
-            record.setRevokedAt(revResult.revokedAt());
-
-            // Status: shadow mode = compute but don't set REVOKED/INVALID.
-            CertStatus newStatus = expiryEvaluationService.determineCertStatus(
-                    expiry, revResult, chainResult, target, target.getOrganization().getId());
-            if (revocationShadowMode) {
-                // Shadow: don't elevate to REVOKED/INVALID; use expiry-only status.
-                CertStatus shadowStatus = expiryEvaluationService.determineCertStatus(
-                        expiry, null, null, target, target.getOrganization().getId());
-                record.setStatus(shadowStatus);
-                if (newStatus == CertStatus.REVOKED || newStatus == CertStatus.INVALID) {
-                    log.info("[SHADOW] Would set status={} for cert {} but shadow=true",
-                            newStatus, cn);
-                }
-            } else {
-                record.setStatus(newStatus);
-            }
-
-            record.setScannedAt(now);
-            certRepository.save(record);
-
-            // Post-scan expiry evaluation (RFC 0008 §7).
-            expiryEvaluationService.evaluateAndNotify(record, mode, previousLastScannedAt);
-
-            // Clear any previous scan error and stamp the successful scan time.
-            target.setLastErrorMessage(null);
-            target.setLastErrorAt(null);
-            target.setLastScannedAt(now);
-            targetRepository.save(target);
-
-            log.info("Certificate saved — CN: {}, Expires: {}, Status: {}, Revocation: {}/{}",
-                    cn, expiry, record.getStatus(), revResult.status(), revResult.source());
-        } catch (CertificateEncodingException e) {
-            log.error("Failed to encode cert for {}: {}", target.getHost(), e.getMessage());
-        }
-    }
-
-    private void markTargetUnreachable(Target target, String errorMessage) {
+    @Transactional
+    public void markTargetUnreachable(Target target, String errorMessage) {
         certRepository.findAllByTargetId(target.getId()).forEach(cert -> {
-            cert.setStatus(CertStatus.UNREACHABLE); cert.setScannedAt(Instant.now());
+            cert.setStatus(CertStatus.UNREACHABLE);
+            cert.setScannedAt(Instant.now());
             certRepository.save(cert);
         });
         target.setLastErrorMessage(errorMessage);
@@ -238,12 +289,48 @@ public class SslScannerService {
         log.warn("Target UNREACHABLE: {}:{} — {}", target.getHost(), target.getPort(), errorMessage);
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private ScanningMode parseScanningMode() {
+        try {
+            return ScanningMode.valueOf(scanningMode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown scanning mode '{}' — defaulting to DIRECT", scanningMode);
+            return ScanningMode.DIRECT;
+        }
+    }
+
     private String extractCN(String dn) {
         for (String part : dn.split(",")) {
             String t = part.trim();
             if (t.startsWith("CN=")) return t.substring(3);
         }
         return dn;
+    }
+
+    private int keySize(PublicKey key) {
+        if (key instanceof java.security.interfaces.RSAPublicKey rsa)
+            return rsa.getModulus().bitLength();
+        if (key instanceof java.security.interfaces.ECPublicKey ec)
+            return ec.getParams().getCurve().getField().getFieldSize();
+        return 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractSANs(X509Certificate cert) {
+        try {
+            java.util.Collection<List<?>> sans = cert.getSubjectAlternativeNames();
+            if (sans == null) return List.of();
+            return sans.stream()
+                    .filter(s -> s.size() >= 2)
+                    .map(s -> {
+                        int type = ((Number) s.get(0)).intValue();
+                        return (type == 2 ? "DNS:" : type == 7 ? "IP:" : "OTHER:") + s.get(1);
+                    })
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private void sleep(long ms) {

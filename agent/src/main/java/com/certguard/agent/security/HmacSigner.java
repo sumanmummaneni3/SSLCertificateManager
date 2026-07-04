@@ -49,10 +49,15 @@ public class HmacSigner {
     }
 
     private static String buildPayload(ScanResult result) {
+        // ERROR results carry no serialNumber/notAfter; use empty string and 0.
+        // Must match AgentHmacService.buildPayload() on the server side (RFC 0013 §5).
+        String serial  = result.getSerialNumber() != null ? result.getSerialNumber() : "";
+        long   epochMs = result.getNotAfter() != null ? result.getNotAfter().toEpochMilli() : 0L;
+
         String base = result.getTargetId()    + ":"
                 + result.getScanType()        + ":"
-                + result.getSerialNumber()    + ":"
-                + result.getNotAfter().toEpochMilli();
+                + serial                      + ":"
+                + epochMs;
 
         if (ScanResult.Type.FULL.name().equals(result.getScanType())) {
             List<String> sans = result.getSubjectAltNames() != null

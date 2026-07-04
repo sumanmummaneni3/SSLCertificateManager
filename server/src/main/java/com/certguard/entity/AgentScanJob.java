@@ -13,8 +13,14 @@ import java.util.UUID;
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class AgentScanJob extends BaseEntity {
 
+    /**
+     * The agent that owns or has claimed this job.
+     * Nullable: PUBLIC_POOL jobs start with agent_id = NULL and are stamped on claim.
+     * AGENT_PINNED jobs still require an agent at insert time (enforced by service layer
+     * and the DB CHECK constraint). RFC 0013 §1.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "agent_id", nullable = false)
+    @JoinColumn(name = "agent_id", nullable = true)
     private Agent agent;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -33,6 +39,11 @@ public class AgentScanJob extends BaseEntity {
     @Column(name = "result_type", length = 10)
     private String resultType;
 
+    /**
+     * Last error message from an ERROR result submission.
+     * Cleared on successful COMPLETED transition.
+     * Reused column from V3 schema — no new column added (RFC 0013 §1).
+     */
     @Column(name = "error_msg", length = 500)
     private String errorMsg;
 
@@ -49,4 +60,27 @@ public class AgentScanJob extends BaseEntity {
     @Column(name = "trigger_source", nullable = false, length = 16)
     @Builder.Default
     private String triggerSource = "SCHEDULED";
+
+    /**
+     * Job kind: 'AGENT_PINNED' (pre-assigned to a specific agent, today's behavior)
+     * or 'PUBLIC_POOL' (claimed by any available platform scanner, RFC 0013 §1).
+     */
+    @Column(name = "job_kind", nullable = false, length = 20)
+    @Builder.Default
+    private String jobKind = "AGENT_PINNED";
+
+    /**
+     * Number of ERROR results submitted for this job.
+     * When attempts >= 3 the job is marked FAILED instead of re-queued.
+     * RFC 0013 §5.
+     */
+    @Column(name = "attempts", nullable = false)
+    @Builder.Default
+    private int attempts = 0;
+
+    /** Convenience constant for the pinned-to-agent job kind. */
+    public static final String KIND_AGENT_PINNED = "AGENT_PINNED";
+
+    /** Convenience constant for the public pool job kind. */
+    public static final String KIND_PUBLIC_POOL  = "PUBLIC_POOL";
 }

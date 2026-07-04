@@ -4,13 +4,19 @@ import com.certguard.dto.admin.AdminOrgDetailDto;
 import com.certguard.dto.admin.AdminOrgDto;
 import com.certguard.dto.admin.AdminOrgTreeDto;
 import com.certguard.dto.response.OrgResponse;
+import com.certguard.dto.response.ScannerPoolResponse;
+import com.certguard.entity.Agent;
+import com.certguard.entity.AgentScanJob;
 import com.certguard.entity.Organization;
 import com.certguard.entity.PlatformAdminAudit;
 import com.certguard.entity.Subscription;
+import com.certguard.enums.AgentType;
 import com.certguard.enums.OrgType;
+import com.certguard.enums.ScanJobStatus;
 import com.certguard.exception.ResourceNotFoundException;
 import com.certguard.entity.User;
 import com.certguard.repository.AgentRepository;
+import com.certguard.repository.AgentScanJobRepository;
 import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.OrganizationRepository;
 import com.certguard.repository.PlatformAdminAuditRepository;
@@ -24,11 +30,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -43,6 +52,7 @@ public class AdminService {
     private final OrgMemberRepository orgMemberRepository;
     private final TargetRepository targetRepository;
     private final AgentRepository agentRepository;
+    private final AgentScanJobRepository scanJobRepository;
     private final PlatformAdminAuditRepository auditRepository;
     private final OrgService orgService;
     private final UserRepository userRepository;
@@ -52,6 +62,7 @@ public class AdminService {
                         OrgMemberRepository orgMemberRepository,
                         TargetRepository targetRepository,
                         AgentRepository agentRepository,
+                        AgentScanJobRepository scanJobRepository,
                         PlatformAdminAuditRepository auditRepository,
                         OrgService orgService,
                         UserRepository userRepository) {
@@ -60,6 +71,7 @@ public class AdminService {
         this.orgMemberRepository  = orgMemberRepository;
         this.targetRepository     = targetRepository;
         this.agentRepository      = agentRepository;
+        this.scanJobRepository    = scanJobRepository;
         this.auditRepository      = auditRepository;
         this.orgService           = orgService;
         this.userRepository       = userRepository;
@@ -162,6 +174,51 @@ public class AdminService {
     public Page<PlatformAdminAudit> listAuditEvents(UUID orgId, Instant from, Instant to,
                                                      Pageable pageable) {
         return auditRepository.findByFilters(orgId, from, to, pageable);
+    }
+
+    // ── Scanner-pool admin endpoint (RFC 0013 §9) ──────────────────────────────
+
+    /**
+     * Platform-global (not org-scoped) view of the PLATFORM_SCANNER agent fleet and
+     * the PUBLIC_POOL job backlog. Backlog counts PUBLIC_POOL jobs only.
+     */
+    public ScannerPoolResponse getScannerPool() {
+        Instant now = Instant.now();
+        Instant oneHourAgo = now.minus(1, ChronoUnit.HOURS);
+
+        List<Agent> scannerAgents = agentRepository.findAllByAgentType(AgentType.PLATFORM_SCANNER);
+        List<ScannerPoolResponse.ScannerInfo> scanners = scannerAgents.stream()
+                .map(a -> ScannerPoolResponse.ScannerInfo.builder()
+                        .id(a.getId())
+                        .name(a.getName())
+                        .status(a.getStatus() != null ? a.getStatus().name() : null)
+                        .lastSeenAt(a.getLastSeenAt())
+                        .jobsClaimedLastHour(
+                                scanJobRepository.countByAgentIdAndClaimedAtAfter(a.getId(), oneHourAgo))
+                        .totalJobsCompleted(
+                                scanJobRepository.countByAgentIdAndStatus(a.getId(), ScanJobStatus.COMPLETED))
+                        .build())
+                .collect(Collectors.toList());
+
+        long pendingCount = scanJobRepository.countStalePoolPendingJobs(now);
+        Optional<AgentScanJob> oldestPending = scanJobRepository.findOldestStalePoolPendingJob(now);
+        long oldestPendingAgeMinutes = oldestPending
+                .map(j -> Duration.between(j.getCreatedAt(), now).toMinutes())
+                .orElse(0L);
+        long claimedCount = scanJobRepository.countClaimedPoolJobs();
+        long failedLast24h = scanJobRepository.countFailedPoolJobsSince(now.minus(24, ChronoUnit.HOURS));
+
+        ScannerPoolResponse.Backlog backlog = ScannerPoolResponse.Backlog.builder()
+                .pendingCount(pendingCount)
+                .oldestPendingAgeMinutes(oldestPendingAgeMinutes)
+                .claimedCount(claimedCount)
+                .failedLast24h(failedLast24h)
+                .build();
+
+        return ScannerPoolResponse.builder()
+                .scanners(scanners)
+                .backlog(backlog)
+                .build();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

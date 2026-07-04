@@ -2,6 +2,7 @@ package com.certguard.repository;
 
 import com.certguard.entity.Agent;
 import com.certguard.enums.AgentStatus;
+import com.certguard.enums.AgentType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -37,4 +38,10 @@ public interface AgentRepository extends JpaRepository<Agent, UUID> {
     void revokeAllForOrg(@Param("orgId") UUID orgId);
 
     long countByOrganizationIdIn(Collection<UUID> orgIds);
+
+    /**
+     * Platform scanner fleet — used by the scanner-pool admin endpoint (RFC 0013 §9).
+     * Not org-scoped: PLATFORM_SCANNER agents live in the reserved platform org.
+     */
+    List<Agent> findAllByAgentType(AgentType agentType);
 }

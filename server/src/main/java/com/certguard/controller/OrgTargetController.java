@@ -2,6 +2,7 @@ package com.certguard.controller;
 
 import com.certguard.dto.request.CreateTargetRequest;
 import com.certguard.dto.response.TargetResponse;
+import com.certguard.service.AgentService;
 import com.certguard.service.TargetService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -17,8 +18,8 @@ import java.util.UUID;
 
 /**
  * Org-scoped target endpoints.
- * <p>
- * Provides MSP admins and platform admins with a multi-tenant URL hierarchy for
+ *
+ * <p>Provides MSP admins and platform admins with a multi-tenant URL hierarchy for
  * target management so they can operate on child orgs without switching context.
  * The path {@code orgId} overrides the caller's TenantContext org, and access is
  * gated by {@code MspAccessGuard} which ensures the caller's home org is either
@@ -29,15 +30,19 @@ import java.util.UUID;
 public class OrgTargetController {
 
     private final TargetService targetService;
+    private final AgentService agentService;
 
-    public OrgTargetController(TargetService targetService) {
+    public OrgTargetController(TargetService targetService, AgentService agentService) {
         this.targetService = targetService;
+        this.agentService = agentService;
     }
 
     /**
      * POST /api/v1/organizations/{orgId}/targets
-     * <p>
-     * Creates a target under the specified org. Callable by ADMIN, ENGINEER, or
+     *
+     * <p>Creates a target under the specified org. In HYBRID/POOL scanning mode the
+     * initial scan for public targets is enqueued as a PUBLIC_POOL job instead of
+     * being run in-process (RFC 0013 §2). Callable by ADMIN, ENGINEER, or
      * PLATFORM_ADMIN provided the caller can access {@code orgId} per
      * {@code MspAccessGuard.canAccessOrg}.
      *
@@ -52,6 +57,6 @@ public class OrgTargetController {
             @PathVariable UUID orgId,
             @Valid @RequestBody CreateTargetRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(targetService.createTarget(orgId, req));
+                .body(targetService.createTarget(orgId, req, agentService));
     }
 }

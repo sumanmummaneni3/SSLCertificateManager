@@ -38,8 +38,38 @@ public class SslScanner {
         // SSLContext.getInstance("TLS") and interfere with pass-2.
     }
 
-    // In-memory serial cache: targetId -> last scanned serial number
-    private final Map<String, String> serialCache = new ConcurrentHashMap<>();
+    /**
+     * In-memory serial cache: targetId -> last scanned serial number.
+     *
+     * <p>Size-bounded to prevent unbounded growth when a platform scanner sees the global
+     * public-target population (RFC 0013 §3). When the cache exceeds MAX_CACHE_SIZE,
+     * oldest entries are evicted via a LinkedHashMap in access-order mode wrapped in a
+     * synchronizedMap. The default CUSTOMER agent (capped at maxTargets) is safe either way.
+     *
+     * <p>TTL: cache entries older than CACHE_TTL_MS are evicted at lookup time — stale
+     * cache hits would cause missed cert changes on long-lived scanners.
+     */
+    private static final int  MAX_CACHE_SIZE  = 50_000;
+    private static final long CACHE_TTL_MS    = 24L * 60 * 60 * 1000; // 24 hours
+
+    /** CacheEntry wraps the serial number with its insertion timestamp. */
+    private static final class CacheEntry {
+        final String serial;
+        final long   insertedMs;
+        CacheEntry(String serial) {
+            this.serial     = serial;
+            this.insertedMs = System.currentTimeMillis();
+        }
+        boolean isExpired() { return System.currentTimeMillis() - insertedMs > CACHE_TTL_MS; }
+    }
+
+    private final Map<String, CacheEntry> serialCache = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>(256, 0.75f, true /* access-order */) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, CacheEntry> eldest) {
+                    return size() > MAX_CACHE_SIZE;
+                }
+            });
 
     /**
      * Probes host:port for TLS without using the targetId-keyed serial cache.
@@ -90,22 +120,25 @@ public class SslScanner {
             Instant notAfter = leaf.getNotAfter().toInstant();
 
             // FULL vs DELTA decision:
-            // DELTA only when BOTH the server AND this agent's cache agree on the serial
-            String cachedSerial  = serialCache.get(job.getTargetId());
+            // DELTA only when BOTH the server AND this agent's cache agree on the serial.
+            CacheEntry cachedEntry = serialCache.get(job.getTargetId());
             String serialHash    = sha256Hex(serial);
             boolean serverHasIt  = job.getLastKnownSerialHash() != null
                                    && job.getLastKnownSerialHash().equals(serialHash);
-            boolean agentHasIt   = serial.equals(cachedSerial);
+            // Treat a TTL-expired cache entry as a miss (force FULL to re-send cert data).
+            boolean agentHasIt   = cachedEntry != null
+                                   && !cachedEntry.isExpired()
+                                   && serial.equals(cachedEntry.serial);
 
             if (serverHasIt && agentHasIt && job.getLastCertificateId() != null) {
                 log.info("DELTA — serial unchanged for {}:{}", job.getHost(), job.getPort());
-                serialCache.put(job.getTargetId(), serial);
+                serialCache.put(job.getTargetId(), new CacheEntry(serial));
                 return delta(job, serial, notAfter);
             }
 
             // FULL scan
             log.info("FULL — new or changed cert for {}:{}", job.getHost(), job.getPort());
-            serialCache.put(job.getTargetId(), serial);
+            serialCache.put(job.getTargetId(), new CacheEntry(serial));
             return full(job, leaf, chain, serial, notAfter);
 
         } catch (Exception e) {

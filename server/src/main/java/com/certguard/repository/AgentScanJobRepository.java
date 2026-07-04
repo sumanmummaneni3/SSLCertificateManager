@@ -21,14 +21,14 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
     boolean existsByTargetIdAndStatusIn(UUID targetId, List<ScanJobStatus> statuses);
 
     /**
-     * Atomically claims up to {@code limit} PENDING jobs for the given agent using
-     * PostgreSQL's {@code FOR UPDATE SKIP LOCKED}. Prevents duplicate-claim races
+     * Atomically claims up to {@code limit} PENDING AGENT_PINNED jobs for the given agent
+     * using PostgreSQL's {@code FOR UPDATE SKIP LOCKED}. Prevents duplicate-claim races
      * when multiple server replicas serve the same agent concurrently.
      * Must be called within an active transaction.
      */
     @Query(value = """
         SELECT * FROM agent_scan_jobs
-        WHERE agent_id = :agentId AND status = 'PENDING'
+        WHERE agent_id = :agentId AND status = 'PENDING' AND job_kind = 'AGENT_PINNED'
         ORDER BY created_at ASC
         LIMIT :limit
         FOR UPDATE SKIP LOCKED
@@ -37,15 +37,42 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
             @Param("agentId") UUID agentId,
             @Param("limit") int limit);
 
-    // Latest job for a target — used by scan-status endpoint
+    /**
+     * Atomically claims up to {@code batch} PENDING PUBLIC_POOL jobs for a platform scanner.
+     *
+     * <p>No agent_id filter — pool jobs have no pre-assigned agent. The caller stamps
+     * agent_id after claiming. Uses FOR UPDATE SKIP LOCKED to prevent duplicate claims
+     * when multiple scanner replicas poll concurrently.
+     *
+     * <p>FIFO ordering (created_at ASC) for v1 — no per-org fair-share yet (RFC 0013 §3,
+     * open question 3: revisit with ORDER BY on org job counts if starvation observed).
+     *
+     * Must be called within an active transaction. RFC 0013 §3.
+     */
+    @Query(value = """
+        SELECT * FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'PENDING'
+        ORDER BY created_at ASC
+        LIMIT :batch
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<AgentScanJob> claimPublicPoolJobsWithLock(@Param("batch") int batch);
+
+    /**
+     * Looks up a job by id while asserting it is currently owned by a specific agent.
+     * Used by submitResult on the AGENT_PINNED path (existing behaviour).
+     */
+    // findByIdAndAgentId already covers this — kept above.
+
+    /** Latest job for a target — used by scan-status endpoint. */
     @Query("SELECT j FROM AgentScanJob j WHERE j.target.id = :targetId ORDER BY j.createdAt DESC")
     List<AgentScanJob> findByTargetIdOrderByCreatedAtDesc(UUID targetId);
 
-    // Stale CLAIMED jobs — reset to PENDING after timeout
+    /** Stale CLAIMED jobs — reset to PENDING after timeout (stale-claim recovery). */
     @Query("SELECT j FROM AgentScanJob j WHERE j.status = 'CLAIMED' AND j.claimedAt < :before")
     List<AgentScanJob> findStaleClaimedJobs(Instant before);
 
-    // Clean up old completed/failed jobs older than retention period
+    /** Clean up old completed/failed jobs older than the retention period. */
     @Modifying
     @Query("DELETE FROM AgentScanJob j WHERE j.status IN ('COMPLETED','FAILED') AND j.createdAt < :before")
     int deleteOldCompletedJobs(Instant before);
@@ -56,4 +83,103 @@ public interface AgentScanJobRepository extends JpaRepository<AgentScanJob, UUID
      */
     @Query("SELECT COUNT(j) FROM AgentScanJob j WHERE j.orgId = :orgId AND j.status IN ('PENDING','CLAIMED')")
     int countInFlightByOrgId(@Param("orgId") UUID orgId);
+
+    /**
+     * Pool starvation check: counts PUBLIC_POOL jobs still PENDING beyond a given age.
+     * Used by the pool-starvation alert scheduler (RFC 0013 §5).
+     */
+    @Query(value = """
+        SELECT COUNT(*) FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'PENDING' AND created_at < :before
+        """, nativeQuery = true)
+    long countStalePoolPendingJobs(@Param("before") Instant before);
+
+    /**
+     * Pool starvation check: finds the oldest PUBLIC_POOL PENDING job created before
+     * the given threshold (returns empty if none). RFC 0013 §5.
+     */
+    @Query(value = """
+        SELECT * FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'PENDING' AND created_at < :before
+        ORDER BY created_at ASC
+        LIMIT 1
+        """, nativeQuery = true)
+    Optional<AgentScanJob> findOldestStalePoolPendingJob(@Param("before") Instant before);
+
+    /**
+     * Finds all PUBLIC_POOL PENDING jobs older than the given threshold.
+     * Used by PublicScanFallbackScheduler in HYBRID mode to run in-process fallback
+     * when no scanner has claimed the job within the stale window (RFC 0013 §7).
+     */
+    @Query(value = """
+        SELECT * FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'PENDING' AND created_at < :before
+        ORDER BY created_at ASC
+        """, nativeQuery = true)
+    List<AgentScanJob> findStalePoolPendingJobs(@Param("before") Instant before);
+
+    /**
+     * Finds the two most recent TERMINAL jobs (COMPLETED or FAILED) for a target, in
+     * descending recency order. Used to determine the two-CONSECUTIVE-FAILED threshold
+     * for UNREACHABLE hysteresis (RFC 0013 §5).
+     *
+     * <p>Deliberately includes COMPLETED jobs in the candidate set (not just FAILED) so
+     * the caller can detect a FAILED → COMPLETED → FAILED sequence and correctly NOT
+     * mark UNREACHABLE — the two most recent failures were not consecutive. Only when
+     * BOTH of the two most recent terminal outcomes are FAILED does the caller treat
+     * this as a consecutive-failure streak. PENDING/CLAIMED (non-terminal, in-flight)
+     * jobs are excluded — they are not yet a recorded outcome.
+     */
+    @Query(value = """
+        SELECT * FROM agent_scan_jobs
+        WHERE target_id = :targetId AND status IN ('COMPLETED', 'FAILED')
+        ORDER BY completed_at DESC NULLS LAST, created_at DESC
+        LIMIT 2
+        """, nativeQuery = true)
+    List<AgentScanJob> findLastTwoTerminalJobsForTarget(@Param("targetId") UUID targetId);
+
+    /**
+     * Deduplication check: true if a PUBLIC_POOL job already exists in PENDING or CLAIMED
+     * state for the given target. Used by PublicScanEnqueueScheduler and the triggerScan
+     * public path to skip re-enqueue (RFC 0013 §2).
+     */
+    @Query(value = """
+        SELECT COUNT(*) > 0 FROM agent_scan_jobs
+        WHERE target_id = :targetId
+          AND job_kind = 'PUBLIC_POOL'
+          AND status IN ('PENDING', 'CLAIMED')
+        """, nativeQuery = true)
+    boolean existsActivePoolJobForTarget(@Param("targetId") UUID targetId);
+
+    /**
+     * All PENDING jobs (any job_kind) for the given target ids, ordered oldest-first.
+     * Used to batch-load {@code pendingScanQueuedAt} for target list/detail responses
+     * (RFC 0013 §9) — callers keep the first occurrence per target id from this
+     * ascending-ordered list to get the oldest PENDING job's createdAt.
+     */
+    @Query("SELECT j FROM AgentScanJob j WHERE j.target.id IN :targetIds AND j.status = 'PENDING' " +
+           "ORDER BY j.createdAt ASC")
+    List<AgentScanJob> findPendingJobsForTargetIds(@Param("targetIds") List<UUID> targetIds);
+
+    // ── Scanner-pool admin endpoint (RFC 0013 §9) ──────────────────────────────
+
+    /** Jobs claimed by a given agent within the given window — used for jobsClaimedLastHour. */
+    long countByAgentIdAndClaimedAtAfter(UUID agentId, Instant after);
+
+    /** All-time completed job count for a given agent — used for totalJobsCompleted. */
+    long countByAgentIdAndStatus(UUID agentId, ScanJobStatus status);
+
+    /** PUBLIC_POOL jobs currently CLAIMED (in-flight) — scanner-pool backlog.claimedCount. */
+    @Query(value = """
+        SELECT COUNT(*) FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'CLAIMED'
+        """, nativeQuery = true)
+    long countClaimedPoolJobs();
+
+    /** PUBLIC_POOL jobs that reached FAILED since the given instant — backlog.failedLast24h. */
+    @Query(value = """
+        SELECT COUNT(*) FROM agent_scan_jobs
+        WHERE job_kind = 'PUBLIC_POOL' AND status = 'FAILED' AND completed_at > :since
+        """, nativeQuery = true)
+    long countFailedPoolJobsSince(@Param("since") Instant since);
 }
