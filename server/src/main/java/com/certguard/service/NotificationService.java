@@ -18,6 +18,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneId;
@@ -101,18 +102,11 @@ public class NotificationService {
         }
 
         String logTarget    = ctx.host() + ":" + ctx.port();
-        String templateName = "CRITICAL".equals(ctx.severity()) ? "expiry-critical" : "expiry-warning";
+        String templateName = expiryTemplateName(ctx);
         String subject      = buildExpirySubjectFromCtx(ctx);
-        String deepLinkUrl  = uiBaseUrl + "/certificates/" + ctx.certId();
 
         org.thymeleaf.context.Context thCtx = new org.thymeleaf.context.Context();
-        thCtx.setVariable("host",            ctx.host());
-        thCtx.setVariable("port",            ctx.port());
-        thCtx.setVariable("daysLeft",        ctx.daysLeft());
-        thCtx.setVariable("severity",        ctx.severity());
-        thCtx.setVariable("baseUrl",         baseUrl);
-        thCtx.setVariable("agentDiscovered", ctx.agentDiscovered());
-        thCtx.setVariable("deepLinkUrl",     deepLinkUrl);
+        buildExpiryTemplateVars(ctx).forEach(thCtx::setVariable);
 
         dispatchEmail(channels, subject, templateName, thCtx, logTarget);
 
@@ -188,24 +182,10 @@ public class NotificationService {
         }
 
         String logTarget = ctx.host() + ":" + ctx.port();
-        String reasonDisplay = ctx.onHold()
-                ? "Suspended (on hold)"
-                : (ctx.revocationReason() != null ? ctx.revocationReason().replace('_', ' ') : "UNSPECIFIED");
-        String subject = "[CertGuard] REVOKED: " + ctx.host() + " — " + reasonDisplay;
-
-        String deepLinkUrl = uiBaseUrl + "/certificates/" + ctx.certId();
+        String subject = buildRevocationSubject(ctx);
 
         org.thymeleaf.context.Context thCtx = new org.thymeleaf.context.Context();
-        thCtx.setVariable("host",          ctx.host());
-        thCtx.setVariable("port",          ctx.port());
-        thCtx.setVariable("reason",        reasonDisplay);
-        thCtx.setVariable("source",        ctx.revocationSource());
-        thCtx.setVariable("revokedAt",     ctx.revokedAt() != null ? FMT.format(ctx.revokedAt()) : "unknown");
-        thCtx.setVariable("onHold",        ctx.onHold());
-        thCtx.setVariable("severity",      ctx.severity());
-        thCtx.setVariable("deepLinkUrl",   deepLinkUrl);
-        thCtx.setVariable("baseUrl",       baseUrl);
-        thCtx.setVariable("highSeverity",  ctx.isHighSeverity());
+        buildRevocationTemplateVars(ctx).forEach(thCtx::setVariable);
 
         if (devMode) {
             log.info("[DEV] Would send revocation alert for {}:{} — reason={} severity={}",
@@ -538,6 +518,148 @@ public class NotificationService {
         }
         return "[CertGuard] " + ctx.severity() + ": " + ctx.host() + ":" + ctx.port()
                 + " expires in " + ctx.daysLeft() + " day(s)";
+    }
+
+    // ── Outbox support (R19 fix) ──────────────────────────────────────────────
+    //
+    // NotificationOutboxService enqueues one outbox row per resolved recipient
+    // address, capturing the exact Thymeleaf variables below as a plain-value
+    // snapshot (never a managed entity) so a delayed retry renders identically
+    // to what an immediate send would have produced. NotificationOutboxScheduler
+    // then replays each row via sendOutboxEmail, which — unlike sendMimeEmail —
+    // does NOT swallow the exception; the caller needs it to record a retry.
+
+    /**
+     * Extracts the enabled email channel's recipient addresses from a resolved
+     * channels map (the same shape {@link #resolveChannels(Target)} returns).
+     * Returns an empty list when the email channel is absent, disabled, or has
+     * no addresses configured — mirrors the early-return conditions inside
+     * {@link #dispatchEmail}.
+     */
+    @SuppressWarnings("unchecked")
+    public List<String> resolveEmailAddresses(Map<String, Object> channels) {
+        if (channels == null || channels.isEmpty()) return List.of();
+
+        Object emailCfg = channels.get("email");
+        if (!(emailCfg instanceof Map)) return List.of();
+        Map<String, Object> cfg = (Map<String, Object>) emailCfg;
+
+        Boolean enabled = (Boolean) cfg.get("enabled");
+        if (!Boolean.TRUE.equals(enabled)) return List.of();
+
+        Object addressesObj = cfg.get("addresses");
+        if (!(addressesObj instanceof List)) return List.of();
+        List<String> addresses = (List<String>) addressesObj;
+        return addresses.isEmpty() ? List.of() : List.copyOf(addresses);
+    }
+
+    /** Public accessor so NotificationOutboxService can build the outbox subject/template_name. */
+    public String buildExpirySubject(ExpiryAlertContext ctx) {
+        return buildExpirySubjectFromCtx(ctx);
+    }
+
+    public String expiryTemplateName(ExpiryAlertContext ctx) {
+        return "CRITICAL".equals(ctx.severity()) ? "expiry-critical" : "expiry-warning";
+    }
+
+    /** Exact Thymeleaf variable snapshot used by {@link #dispatchExpiryAlert(ExpiryAlertContext)}. */
+    public Map<String, Object> buildExpiryTemplateVars(ExpiryAlertContext ctx) {
+        Map<String, Object> vars = new HashMap<>();
+        vars.put("host",            ctx.host());
+        vars.put("port",            ctx.port());
+        vars.put("daysLeft",        ctx.daysLeft());
+        vars.put("severity",        ctx.severity());
+        vars.put("baseUrl",         baseUrl);
+        vars.put("agentDiscovered", ctx.agentDiscovered());
+        vars.put("deepLinkUrl",     uiBaseUrl + "/certificates/" + ctx.certId());
+        return vars;
+    }
+
+    public String buildRevocationSubject(com.certguard.dto.internal.RevocationAlertContext ctx) {
+        return "[CertGuard] REVOKED: " + ctx.host() + " — " + revocationReasonDisplay(ctx);
+    }
+
+    /** Exact Thymeleaf variable snapshot used by {@link #dispatchRevocationAlert}. */
+    public Map<String, Object> buildRevocationTemplateVars(com.certguard.dto.internal.RevocationAlertContext ctx) {
+        Map<String, Object> vars = new HashMap<>();
+        vars.put("host",         ctx.host());
+        vars.put("port",         ctx.port());
+        vars.put("reason",       revocationReasonDisplay(ctx));
+        vars.put("source",       ctx.revocationSource());
+        vars.put("revokedAt",    ctx.revokedAt() != null ? FMT.format(ctx.revokedAt()) : "unknown");
+        vars.put("onHold",       ctx.onHold());
+        vars.put("severity",     ctx.severity());
+        vars.put("deepLinkUrl",  uiBaseUrl + "/certificates/" + ctx.certId());
+        vars.put("baseUrl",      baseUrl);
+        vars.put("highSeverity", ctx.isHighSeverity());
+        return vars;
+    }
+
+    private String revocationReasonDisplay(com.certguard.dto.internal.RevocationAlertContext ctx) {
+        return ctx.onHold()
+                ? "Suspended (on hold)"
+                : (ctx.revocationReason() != null ? ctx.revocationReason().replace('_', ' ') : "UNSPECIFIED");
+    }
+
+    /**
+     * Renders and sends a single outbox row's email. Unlike {@link #sendMimeEmail}, this
+     * method does NOT swallow send failures — {@link NotificationOutboxScheduler} needs the
+     * exception to record a retryable failure (attempts++, backoff, last_error). Not
+     * {@code @Async}: it is invoked synchronously from the scheduler's per-row transaction so
+     * the outcome (SENT vs retry-scheduled) is decided and persisted in the same unit of work.
+     *
+     * <p>{@code devMode} is still honoured (mirrors every other dispatch path in this class):
+     * the send is logged and skipped, counted as a success (no throw) so the row is marked SENT.
+     * The return value tells the caller whether the send was a real SMTP transaction ({@code
+     * false}) or a dev-mode no-op ({@code true}), so {@code processOne} can stamp the row's
+     * {@code last_error} with a marker instead of letting a suppressed send look identical to
+     * a genuine delivery.
+     *
+     * <p>{@code NOT_SUPPORTED} is load-bearing, not decoration. This class is annotated
+     * {@code @Transactional(readOnly = true)} at class level, so without it this method joins
+     * the caller's transaction — and when the send throws, Spring marks that transaction
+     * rollback-only. {@code processOne} catches the exception and writes attempts/last_error/
+     * next_attempt_at, but the commit then rolls those writes back with
+     * {@code UnexpectedRollbackException}. The row stays PENDING with attempts=0 forever:
+     * retried every drain tick, never backing off, never reaching FAILED. Suspending the
+     * transaction keeps the send (which touches no DB) outside that unit of work, so the
+     * failure bookkeeping commits cleanly.
+     *
+     * @return {@code true} if devMode suppressed the send (no SMTP transaction occurred),
+     *         {@code false} if the message was actually handed to the mail sender.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public boolean sendOutboxEmail(String to, String subject, String templateName, Map<String, Object> templateVars) {
+        if (devMode) {
+            log.info("[DEV] Outbox email suppressed — template={} to={} subject={}", templateName, to, subject);
+            return true;
+        }
+
+        org.thymeleaf.context.Context thCtx = new org.thymeleaf.context.Context();
+        if (templateVars != null) {
+            templateVars.forEach(thCtx::setVariable);
+        }
+
+        String htmlBody = templateEngine.process("email/" + templateName, thCtx);
+        String textBody = templateEngine.process("email/" + templateName + ".txt", thCtx);
+
+        try {
+            MimeMessage msg = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            helper.setFrom(fromAddress);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(textBody, htmlBody);
+            mailSender.send(msg);
+        } catch (jakarta.mail.MessagingException e) {
+            // Checked exception from MimeMessageHelper — wrap so callers only need to catch
+            // one unchecked type; mailSender.send() throws org.springframework.mail.MailException
+            // (already unchecked) and propagates as-is.
+            throw new IllegalStateException("Failed to build MIME message for " + to, e);
+        }
+
+        log.info("Outbox email sent to {} template={}", to, templateName);
+        return false;
     }
 
     /**
