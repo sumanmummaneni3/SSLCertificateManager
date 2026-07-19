@@ -13,6 +13,53 @@ services:
   app:
     image: ${GHCR_IMAGE}:latest
     build: !reset null
+    depends_on:
+      mailserver:
+        condition: service_healthy
+    environment:
+      # Self-hosted MTA (see the `mailserver` service below). Deliberately literal —
+      # NOT read from .env — so the retired external-relay MAIL_* entries there are
+      # inert. The app submits unauthenticated plaintext on the private docker
+      # network; the MTA DKIM-signs and delivers directly to recipient MX hosts.
+      MAIL_HOST: mailserver
+      MAIL_PORT: "587"
+      MAIL_USERNAME: ""
+      MAIL_PASSWORD: ""
+      MAIL_SMTP_AUTH: "false"
+      MAIL_SMTP_STARTTLS: "false"
+      MAIL_FROM: no-reply@oopsssl.co.uk
+
+  # ─────────────────────────────────────────
+  # Self-hosted outbound mail server (RFC 0014 Track A, self-hosted variant).
+  # Send-only Postfix + OpenDKIM. No ports published on the host — reachable
+  # ONLY from the docker network, so it cannot function as an open relay.
+  # Delivery REQUIRES the DNS/provider steps in
+  # docs/architecture/runbooks/self-hosted-mail.md (SPF ip4, DKIM TXT, rDNS,
+  # outbound port 25 open) — without them recipients will reject or junk mail.
+  # ─────────────────────────────────────────
+  mailserver:
+    image: boky/postfix:latest
+    container_name: certguard-mailserver
+    restart: unless-stopped
+    environment:
+      # HELO/EHLO identity — must have a matching A record and ideally the VPS rDNS.
+      HOSTNAME: mail.oopsssl.co.uk
+      # Only these sender domains are accepted from the app (and DKIM-signed).
+      ALLOWED_SENDER_DOMAINS: oopsssl.co.uk
+      # Generate a DKIM keypair on first boot (persisted in the volume below).
+      # Publish the printed TXT record — see the runbook.
+      DKIM_AUTOGENERATE: "true"
+      # No RELAYHOST: deliver directly to recipient MX servers over port 25.
+    volumes:
+      - mailserver_dkim:/etc/opendkim/keys
+    healthcheck:
+      test: ["CMD", "sh", "-c", "postfix status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - certguard-net
 
   auth-service:
     image: ${GHCR_AUTH_IMAGE}:latest
@@ -21,3 +68,6 @@ services:
   gateway:
     image: ${GHCR_GATEWAY_IMAGE}:latest
     build: !reset null
+
+volumes:
+  mailserver_dkim:
