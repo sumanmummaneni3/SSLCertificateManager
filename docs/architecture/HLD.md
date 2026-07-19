@@ -114,8 +114,8 @@ graph TB
     REVOKE[TokenRevocationService<br/>Caffeine + RevokedToken table]
     PA_AUDIT[PlatformAdminAuditService<br/>async write per acting-as request]
     CTRL[Controllers:<br/>Agent/AgentProvision/Target/Certificate/<br/>Team/Org/MspClient/Location/Admin/Sales]
-    SVC[Services:<br/>TargetService, AgentService, AgentBundleService,<br/>SslScannerService, NotificationService, InvitationService,<br/>CertificateService, TeamService, OrgAuditService,<br/>SubscriptionGuard]
-    SCHED[Schedulers ShedLock:<br/>ScheduledPublicScan, CertificateExpiryScheduler,<br/>AgentOfflineScheduler, resetStaleClaimedJobs,<br/>cleanupExpiredInstallKeys, TokenRevocationService.cleanupExpired]
+    SVC[Services:<br/>TargetService, AgentService, AgentBundleService,<br/>SslScannerService, NotificationService, InvitationService,<br/>ExpiryEvaluationService, NotificationOutboxService,<br/>NotificationDeliveryStatusService,<br/>CertificateService, TeamService, OrgAuditService,<br/>SubscriptionGuard]
+    SCHED[Schedulers ShedLock:<br/>ScheduledPublicScan, CertificateExpiryScheduler,<br/>PrivateScanScheduler, RevocationRecheckScheduler,<br/>NotificationOutboxScheduler drain + retention purge,<br/>AgentOfflineScheduler, resetStaleClaimedJobs,<br/>cleanupExpiredInstallKeys, TokenRevocationService.cleanupExpired]
     REPO[(JPA Repositories)]
   end
   subgraph Agent["CertGuard Agent (JAR, bundle-installed)"]
@@ -138,7 +138,8 @@ graph TB
   SEC --> REVOKE
   SEC --> PA_AUDIT
   SEC --> CTRL --> SVC --> REPO --> PG
-  SVC --> SMTP
+  SVC -->|enqueue notification_outbox row, same TX as dedup stamp| PG
+  SCHED -->|drain PENDING rows, retry w/ backoff| SMTP
   BU --> CFG
   AM --> PL --> API --> HTTP
   PL --> SC
@@ -244,29 +245,50 @@ Anchors: `TargetService.java:150-167`, `AgentService.java:136-237`, `PollLoop.ja
 
 Stale-job recovery: `AgentService.resetStaleClaimedJobs` resets `CLAIMED` > 10 min back to `PENDING` every 5 minutes — `AgentService.java:300-313`.
 
-### 3.5 Notification Dispatch
+### 3.5 Notification Dispatch (durable outbox — RFC 0014)
+
+Expiry/revocation alert delivery is **outbox-based**: the send-intent is persisted in the
+*same transaction* as the dedup stamp, so an SMTP failure delays delivery but can never
+consume an alert (previously the stamp committed while the async send silently failed —
+GAPS R19).
 
 ```mermaid
 sequenceDiagram
-  participant CRON as Scheduler 0 0 8 * * *
-  participant CES as CertificateExpiryScheduler
+  participant SW as Sweep 0 0 8 * * * / scan write-path
+  participant EES as ExpiryEvaluationService
   participant CR as CertRepo
+  participant OB as notification_outbox (V43/V44)
+  participant OS as NotificationOutboxScheduler (60s drain, ShedLock)
   participant NS as NotificationService
   participant MAIL as JavaMailSender
-  CRON->>CES: checkExpiringCertificates
-  loop per Organization
-    CES->>CR: findExpiringByOrgId(now, now+warn)
-    loop per CertificateRecord
-      CES->>NS: dispatchExpiryAlert(target, daysLeft, severity) [@Async]
-      NS->>NS: read target.notificationChannels.email
-      NS->>MAIL: send (skip if devMode)
+  SW->>EES: evaluateSingle(cert) [dedup/debounce gate]
+  EES->>CR: stampAlertSentAt(certId, now)
+  EES->>OB: INSERT PENDING row per recipient (same TX — atomic with stamp)
+  Note over OB: commit — intent is now durable
+  loop each drain tick
+    OS->>OB: findDueIds(PENDING, next_attempt_at <= now)
+    OS->>NS: sendOutboxEmail(row) [@Transactional NOT_SUPPORTED — send must not join the row TX]
+    NS->>MAIL: render Thymeleaf + send (devMode: suppress, stamp DEV_MODE marker)
+    alt success
+      OS->>OB: status=SENT, sent_at=now
+    else failure
+      OS->>OB: attempts++, last_error, backoff 60s*2^(N-1) clamped 1h, max 200 (~8 days) then FAILED
     end
   end
+  OS->>OB: daily purge — SENT after 30d, FAILED after 90d
 ```
 
-Anchors: `CertificateExpiryScheduler.java:46-93`, `NotificationService.java:47-101`, `application.yml:76-79`.
+Delivery degradation is user-visible: `GET /api/v1/organizations/{orgId}/notifications/delivery-status`
+(`degraded` counts still-retrying PENDING rows *and* FAILED; `lastError` org-admin-only) feeds the
+app-wide `EmailDeliveryBanner` in the UI (3-min poll, fail-quiet).
 
-Agent-offline alerts follow the same shape via `AgentOfflineScheduler.java:53-123`.
+Anchors: `ExpiryEvaluationService.java` (stamp+enqueue), `NotificationOutboxService.java` /
+`NotificationOutboxScheduler.java` (drain/retry/purge), `NotificationService.sendOutboxEmail`
+(NOT_SUPPORTED propagation — load-bearing, regression-tested), migrations `V43`/`V44`,
+`docs/architecture/rfcs/0014-email-delivery.md`.
+
+Agent-offline alerts still dispatch directly via `AgentOfflineScheduler` (not yet routed
+through the outbox — see GAPS).
 
 ## 4. Data Model Overview
 

@@ -1,6 +1,6 @@
 # RFC 0014 — Email/Notification Delivery
 
-**Status**: DRAFT — Track C implemented; Tracks A and B open, with Track A gated on Open Questions §2 (DNS/SPF control) and §4 (volume sizing). Do not treat Track A/B recommendations as ratified.
+**Status**: DRAFT — Track C implemented and **merged to `main` via PR #22 (2026-07-19)**; Tracks A and B open, with Track A gated on Open Questions §2 (DNS/SPF control) and §4 (volume sizing). Do not treat Track A/B recommendations as ratified. Design docs updated same day: HLD §3.5 (outbox dispatch sequence), LLD §1.4/§2/§3/§5, GAPS R19–R25.
 **Author**: architect, assessment dated 2026-07-19. Landed to disk by backend-eng (architect has no Write tool); status addendum by architect via team-lead, same date.
 **Relates to**: RFC 0008 (expiry notification convergence) — this RFC's Track C is the durable-delivery mechanism RFC 0008's dedup design depends on but never had.
 
