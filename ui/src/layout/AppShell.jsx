@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api.js";
 import { Spinner } from "@/components/index.js";
 import { Sidebar } from "./Sidebar.jsx";
+import { EmailDeliveryBanner } from "./EmailDeliveryBanner.jsx";
 import { DashboardView }         from "@/panels/dashboard/index.jsx";
 import { TargetsView }           from "@/panels/targets/index.jsx";
 import { AddTargetModal }        from "@/panels/targets/AddTargetModal.jsx";
@@ -250,6 +251,7 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
             </button>
           </div>
         )}
+        <EmailDeliveryBanner token={token} orgId={org?.id} />
         {view === "dashboard" && (
           <DashboardView dash={dash} targets={targets} onScan={triggerScan}
             scanning={scanning} onAddTarget={() => setShowAdd(true)} me={me} org={org} />
