@@ -51,9 +51,12 @@ spring:
     properties:
       mail:
         smtp:
-          auth: true
+          # Configurable so the app can submit to the self-hosted internal MTA
+          # (docker-compose.prod.yml `mailserver`, no AUTH, plaintext on the
+          # private docker network) as well as to an authenticated public relay.
+          auth: ${MAIL_SMTP_AUTH:true}
           starttls:
-            enable: true
+            enable: ${MAIL_SMTP_STARTTLS:true}
 
 app:
   dev-mode: ${APP_DEV_MODE:false}
