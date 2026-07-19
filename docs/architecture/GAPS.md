@@ -117,8 +117,10 @@ LLD §4.1 "Agent registration" sequence is stale — it describes the old mTLS-C
 ### N10 — Platform-admin `AdminController` is undocumented (low)
 `AdminController.java` at `/api/v1/admin/**` (class-level `@PreAuthorize("hasRole('PLATFORM_ADMIN')")`) consolidates flat list, tree, detail, promote/demote MSP, archive/restore, quota update, and audit feed. Endpoint table in LLD §2 does not list any `/api/v1/admin/**` routes.
 
-### N11 — Cert-expiry alert dedup stamp is broken: `@Async`+boolean (HIGH)
+### N11 — Cert-expiry alert dedup stamp is broken: `@Async`+boolean (HIGH) — **Closed**
 `NotificationService.dispatchExpiryAlert` (`NotificationService.java:93-127`) is `@Async` **and** returns `boolean`; `@EnableAsync` is active (`CertGuardApplication.java:9`). The caller consumes the return synchronously (`CertificateExpiryScheduler.java:88-92`), but the async proxy returns before the body runs, so `certRepository.stampAlertSentAt(...)` (`CertificateRecordRepository.java:63-65`) is never reached → `last_alert_sent_at` is never written → the N8 dedup gate never trips → every in-window cert re-alerts on every daily run (alert storm), and `alertsSent` always logs 0. Fix in RFC 0008 §4 (return `void`; stamp in-transaction; dispatch via AFTER_COMMIT).
+
+**Closed in two stages.** RFC 0008 fixed the stamp (in-transaction, AFTER_COMMIT dispatch) — but that design had the inverse flaw: the stamp was durable while the async send's failures were swallowed, so an SMTP outage silently consumed alerts (expiry suppressed ~23h; transition-gated revocation alerts lost *permanently* — R19). Closed 2026-07-19 by RFC 0014's durable outbox (PR #22): send-intent row inserted in the same transaction as the stamp; drain/retry/backoff via `NotificationOutboxScheduler`. See HLD §3.5.
 
 ### N12 — No post-scan expiry-notification hook (HIGH)
 Neither scan write-path evaluates expiry or notifies: `SslScannerService.persistCertificates:117-149` and `AgentService.processFull/processDelta:208-244` only set `CertStatus` and stamp `lastScannedAt`. Expiry alerts fire **only** from the 08:00 cron (`CertificateExpiryScheduler`), so a manual/force scan never notifies until the next morning. Closed by RFC 0008 §2/§7 (`ExpiryEvaluationService` convergence point called from sweep + both scan paths).
@@ -168,20 +170,28 @@ Both scanners install a trust-all `X509TrustManager` (`agent/src/main/java/com/c
 | R9 | RabbitMQ provisioned, unused | low–medium | **Open** — decide adopt vs remove |
 | R10 | Error model inconsistency | ~~low~~ | **Mostly closed** — minor leaks in dev-only paths |
 | R11 | UI fragility | ~~medium~~ | **N/A** — UI is a separate service |
-| R12 (new) | ShedLock LockProvider may not be wired | **HIGH** | **Verify** — if missing, all `@SchedulerLock` annotations are silently no-ops |
+| R12 (new) | ShedLock LockProvider may not be wired | ~~high~~ | **Closed** — verified 2026-07-19: `SchedulerLockConfig.java:20` exposes `JdbcTemplateLockProvider`; `shedlock` table created by migration V18 |
 | R13 (new) | `CertificateService` / `MspClientService` missing `@Transactional` | low | **Open** — works today but fragile |
 | R14 (new) | Gateway/auth-service split undocumented | medium | **Open** — see N1 |
 | R15 (new) | Bundle download single-use token replay protection | medium | **Verify** — check `AgentBundleService` for atomic consume |
 | R16 (new) | No chain validation / revocation checking; revoked cert reported VALID | **HIGH** | **Open** — see N15; RFC 0009 (revoked `cloud.oopsssl.co.uk` went undetected) |
 | R17 (new) | SSRF guard/connect TOCTOU (DNS rebinding) | low–medium | **Open** — RFC 0013: `PublicAddressGuard` validates resolved addresses, but the subsequent socket connect re-resolves the hostname (agent `PollLoop`→`SslScanner`; server `executeFallbackScan`→`fetchCertificateChain`). A sub-TTL attacker with authoritative DNS could serve a public A-record to the guard and a private one to the connect. Fix: pin the validated `InetAddress` through to the connect instead of re-resolving. Exploitation requires attacker-controlled DNS + an internal TLS speaker; guard still blocks all static/naive cases |
 | R18 (new) | DIRECT-mode in-process scans unguarded | low | **Open** — pre-existing: `SslScannerService.scanTarget`/`scanTargetAsync` (DIRECT mode) dial without `PublicAddressGuard`; outside RFC 0013 PUBLIC_POOL scope. Consider applying the guard to public-target direct scans for parity |
+| R19 (new) | Failed alert emails silently and permanently lost | ~~high~~ | **Closed** — dedup stamp committed while the AFTER_COMMIT async send swallowed failures; revocation alerts (transition-gated) lost forever. Fixed by RFC 0014 durable outbox, PR #22 (2026-07-19); regression test pins the `NOT_SUPPORTED` propagation. Scope: expiry + revocation paths only — see R23 |
+| R20 (new) | No email delivery observability/metrics | medium | **Partially addressed** — delivery-status endpoint + app-wide UI degraded banner shipped (PR #22); still missing: `notification_send_total{result}` counter, outbox-depth gauge (Prometheus/Grafana are already wired), mail health indicator remains disabled |
+| R21 (new) | **No functioning SMTP relay** — `eu-west-2.cp-mta.com` dead | **HIGH (operational)** | **Open** — confirmed dead 2026-07-19. Alerts queue durably in the outbox (~8 days of retries) and the banner reports degraded, but nothing is delivered until a hosted relay (Brevo/Resend/SES) is provisioned + `MAIL_*` env updated (`--force-recreate`, not `restart`). Needs SPF/DKIM on the sending domain. Local MTA rejected: VPS port-25 blocking, zero IP reputation |
+| R22 (new) | `MailConfig` + hardcoded `smtp.auth`/`starttls` block any no-auth/local transport | low | **Open** — startup hard-fails on blank credentials when dev-mode=false; fine for SMTP, but gates future transports. Resolve with the RFC 0014 Track B `EmailSender` SPI |
+| R23 (new) | Non-outbox alert types still fire-and-forget | medium | **Open** — agent-offline, renewal, org-migration and pool-starvation alerts still dispatch via the old `@Async` + swallowed-exception path with per-method devMode branches; an SMTP failure loses them silently. Route through the outbox (natural part of Track B) |
+| R24 (new) | Testcontainers suite never validates hand-written SQL DDL | medium | **Open** — `tctest` profile runs `ddl-auto: create-drop`, discarding every migration index/CHECK/trigger/FK; prod runs `ddl-auto: none`, so *no* environment checks entity↔schema drift. V43 was only validated by a live server run against a scratch DB. Decide: wholesale Flyway-managed test schema vs targeted real-schema subset |
+| R25 (new) | Flyway shares the app HikariCP pool — `CREATE INDEX CONCURRENTLY` deadlocks | low–medium | **Open** — Flyway holds its migration lock open on one pooled connection; CONCURRENTLY (even with `executeInTransaction=false`) waits on it forever (root-caused via `pg_stat_activity` during V44). Documented in V44 + CLAUDE.md; becomes real work the first time a large production table needs a concurrent index |
 
 ---
 
 ## 6. Prioritised Recommendations
 
 ### P0 — verify before next release
-1. **Confirm ShedLock `LockProvider` bean and `shedlock` table in a Flyway migration.** Without these, every `@SchedulerLock` annotation is silently skipped and multi-replica deploys will double-fire all schedulers (R12).
+0. **Provision a replacement SMTP relay** (R21) — the single item standing between the outbox and delivered mail. Everything queues safely until then, but expiry alerts exist to be read.
+1. ~~Confirm ShedLock `LockProvider` bean and `shedlock` table in a Flyway migration~~ — **verified 2026-07-19** (`SchedulerLockConfig.java:20`, migration V18); R12 closed.
 2. **Update HLD §1/§2 to show gateway + auth-service topology** and document the `X-CG-*` header-trust security contract (N1 / R14).
 3. **Confirm bundle download token is atomically consumed** (mark used before returning the bundle, not after) to prevent replay (R15).
 
@@ -207,4 +217,6 @@ Both scanners install a trust-all `X509TrustManager` (`agent/src/main/java/com/c
 - Is RabbitMQ intended for Phase-3 scan dispatch, or will it be removed? (R9)
 - Should ENGINEER-role users be able to mint agent registration tokens and revoke agents, or should that be ADMIN+ only? (`AgentController.java:49,119`)
 - Should the bundle download URL be additionally rate-limited at the nginx layer, or is in-app TTL + single-use token sufficient? (R15)
+- Should `JwtAuthenticationFilter`'s bare-JWT fallback (`:77-84` — authenticates without traversing the gateway; needed for local dev) be profile-gated off in production? Matters for reasoning about gateway bypass.
+- Is `oopsssl.co.uk` DNS under our control for SPF/DKIM, and what alert volume should the replacement relay's free tier be sized for? (R21 / RFC 0014 Open Questions §2, §4)
 - Is true mTLS (client-auth at TLS layer) still a roadmap goal, or is bearer+HMAC+pinned-TLS the permanent design? (R1 closed)

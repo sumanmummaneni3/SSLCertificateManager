@@ -37,6 +37,7 @@
 - `AgentService` — token mint, register (issues client cert & plain agent key — last chance to read), heartbeat, poll, HMAC-verified result processing (FULL/DELTA), queueScanJob, revoke, `resetStaleClaimedJobs`, `cleanupExpiredTokens`. `AgentService.java:46-364`.
 - `SslScannerService` — direct scan with trust-all SSLContext + SNI; retry×3; nightly cron. `SslScannerService.java:43-158`.
 - `CertificateService`, `CertificateExpiryScheduler`, `AgentOfflineScheduler`, `NotificationService`, `InvitationService`, `TeamService`, `LocationService`, `OrgService`, `MspClientService`, `OAuth2UserService`.
+- **Notification outbox (RFC 0014)**: `ExpiryEvaluationService` — dedup/debounce gate, stamps `last_alert_sent_at` and enqueues outbox rows in the same transaction. `NotificationOutboxService` — enqueue (one PENDING row per resolved recipient) + per-row drain `processOne` (own TX; exponential backoff 60s·2^(N−1) clamped 1h; max-attempts 200 → terminal FAILED, kept queryable). `NotificationOutboxScheduler` — 60s ShedLock drain + daily retention purge (SENT 30d / FAILED 90d). `NotificationDeliveryStatusService` — org-scoped aggregate for the delivery-status endpoint; `lastError` populated only for org admins. `NotificationService.sendOutboxEmail` is `@Transactional(NOT_SUPPORTED)` — **load-bearing** (class default `readOnly=true`; joining the drain TX turns send failure into silent rollback of retry bookkeeping — pinned by `NotificationOutboxFailureBookkeepingIntegrationTest`).
 
 ### 1.5 Repositories
 All under `com.certguard.repository.*`; `Spring Data JpaRepository<Entity, UUID>` with org-scoped finders, e.g.:
@@ -72,6 +73,7 @@ Auth legend: **J** = JWT Bearer (`JwtAuthenticationFilter`); **A** = Agent key h
 | GET | `/api/v1/targets/{id}/scan-status` | J | — | `ScanStatusResponse` or null | 404 |
 | GET | `/api/v1/targets/{id}/notifications` | J | — | `Map` | 404 |
 | PUT | `/api/v1/targets/{id}/notifications` | J | `Map<String,Object>` | `TargetResponse` | — |
+| GET | `/api/v1/organizations/{orgId}/notifications/delivery-status` | J (any org member) | — | `{degraded,queuedCount,failedCount,oldestQueuedAt,nextAttemptAt,lastError}` — `lastError` null unless org admin; no recipient addresses | 403 cross-org |
 | GET | `/api/v1/locations` | J | — | `List<LocationResponse>` | — |
 | POST/PUT/DELETE | `/api/v1/locations/{id?}` | J | `CreateLocationRequest` | LocationResponse / 204 | 404 |
 | GET/PUT | `/api/v1/org`, `/api/v1/org/profile`, `/api/v1/org/name` | J | `UpdateOrgProfileRequest` | `OrgResponse` | — |
@@ -125,6 +127,21 @@ erDiagram
   targets ||--o{ certificate_records : has
   targets ||--o{ agent_scan_jobs : queued_for
   locations ||--o{ targets : groups
+  organizations ||--o{ notification_outbox : "org_id (denormalized)"
+
+  notification_outbox {
+    UUID id PK
+    UUID org_id FK
+    TEXT to_address
+    TEXT subject
+    TEXT template_name
+    JSONB template_vars
+    TEXT status "PENDING|SENT|FAILED"
+    INT attempts
+    TEXT last_error
+    TIMESTAMPTZ next_attempt_at
+    TIMESTAMPTZ sent_at
+  }
 
   organizations {
     UUID id PK
@@ -382,7 +399,8 @@ Anchors: `HmacSigner.java:20-30`, `AgentAuthFilter.java:57-109`, `AgentControlle
 | `app.jwt.expiration-ms` | — | 86400000 (24h) | token TTL |
 | `app.base-url` | `APP_BASE_URL` | `http://localhost:8080` | OAuth redirect base |
 | `app.platform-admin.emails` | `PLATFORM_ADMIN_EMAILS` | `""` | allowlist |
-| `app.alert.warning-days` / `critical-days` / `schedule-cron` | `ALERT_*` | 30 / 7 / `0 0 8 * * *` | expiry alerts |
+| `app.alert.warning-days` / `critical-days` / `schedule-cron` / `dedup-hours` | `ALERT_*` | 30 / 7 / `0 0 8 * * *` / 23 | expiry alerts |
+| `app.outbox.*` | `OUTBOX_DRAIN_FIXED_DELAY_MS / BATCH_SIZE / MAX_ATTEMPTS / BACKOFF_BASE_SECONDS / BACKOFF_MAX_SECONDS / PURGE_SCHEDULE_CRON / SENT_RETENTION_DAYS / FAILED_RETENTION_DAYS / PURGE_BATCH_SIZE` | 60000 / 200 / 200 / 60 / 3600 / `0 30 5 * * *` / 30 / 90 / 500 | notification outbox (RFC 0014) — max-attempts×clamp ≈ 8 days of retries |
 | `app.scanning.public.*` | — | pool 20, timeout 10s/15s, 3 retries, cron `0 0 2 * * *` | direct scan |
 | `app.agent.offline-threshold-minutes` | `AGENT_OFFLINE_THRESHOLD_MINUTES` | 10 | agent watchdog |
 | `app.agent.offline-check-interval-ms` | `AGENT_OFFLINE_CHECK_INTERVAL_MS` | 300000 | watchdog cadence |
