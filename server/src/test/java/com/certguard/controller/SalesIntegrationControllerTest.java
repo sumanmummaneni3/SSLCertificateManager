@@ -71,7 +71,12 @@ class SalesIntegrationControllerTest {
     @Autowired SubscriptionRepository subscriptionRepository;
     @Autowired SalesApiKeyRepository salesApiKeyRepository;
     @Autowired BCryptPasswordEncoder passwordEncoder;
-    @Autowired ObjectMapper objectMapper;
+
+    // Spring Boot 4 no longer auto-configures a Jackson 2 (com.fasterxml) ObjectMapper
+    // bean — the default context mapper is Jackson 3's tools.jackson.databind.ObjectMapper.
+    // This is only used to build/parse request/response bodies in tests, so a local
+    // instance is sufficient and avoids depending on a bean Spring no longer provides.
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     MockMvc mockMvc;
 

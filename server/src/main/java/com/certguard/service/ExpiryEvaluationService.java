@@ -16,8 +16,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -41,10 +39,14 @@ import java.util.stream.Collectors;
  * all settings in two queries (target-overrides + org-defaults) before iterating certs.
  * No per-cert DB round-trips for settings.
  *
- * <h3>AFTER_COMMIT dispatch</h3>
- * Stamps {@code last_alert_sent_at} synchronously in the caller's transaction, then
- * registers an AFTER_COMMIT hook to call {@code NotificationService.dispatchExpiryAlert}
- * (still {@code @Async}). SMTP I/O never rolls back the sweep/scan transaction.
+ * <h3>Durable outbox dispatch (R19 fix)</h3>
+ * Stamps {@code last_alert_sent_at} and inserts one {@code notification_outbox} row per
+ * resolved recipient SYNCHRONOUSLY, in the same transaction — see
+ * {@link NotificationOutboxService#enqueueExpiryAlert}. The stamp and the send-intent
+ * now commit atomically, so an SMTP outage can no longer cause the dedup gate to
+ * suppress an alert that was never actually sent (previously this was an AFTER_COMMIT
+ * {@code @Async} call whose failures were only logged). {@link NotificationOutboxScheduler}
+ * performs the actual SMTP I/O later, outside this transaction, with retry/backoff.
  *
  * <h3>FORCE-scan debounce (RFC 0008 §5)</h3>
  * A FORCE evaluation is suppressed when {@code previousLastScannedAt} is more recent
@@ -69,6 +71,7 @@ public class ExpiryEvaluationService {
     }
 
     private final NotificationService notificationService;
+    private final NotificationOutboxService notificationOutboxService;
     private final CertificateRecordRepository certRepository;
     private final NotificationSettingsRepository settingsRepository;
 
@@ -80,9 +83,11 @@ public class ExpiryEvaluationService {
     @Value("${app.revocation.shadow:true}") private boolean revocationShadowMode;
 
     public ExpiryEvaluationService(NotificationService notificationService,
+                                   NotificationOutboxService notificationOutboxService,
                                    CertificateRecordRepository certRepository,
                                    NotificationSettingsRepository settingsRepository) {
         this.notificationService = notificationService;
+        this.notificationOutboxService = notificationOutboxService;
         this.certRepository = certRepository;
         this.settingsRepository = settingsRepository;
     }
@@ -232,24 +237,17 @@ public class ExpiryEvaluationService {
             return;
         }
 
-        // Stamp BEFORE dispatching (synchronously in the caller's transaction).
+        // Stamp BEFORE enqueueing — both commit atomically in this transaction (R19 fix).
         Instant now = Instant.now();
         certRepository.stampRevocationAlertSentAt(cert.getId(), now);
 
         // Pre-resolve all data needed by the email template (P1-A pattern).
         final RevocationAlertContext alertCtx = buildRevocationAlertContext(cert);
 
-        // Dispatch after commit.
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    notificationService.dispatchRevocationAlert(alertCtx);
-                }
-            });
-        } else {
-            notificationService.dispatchRevocationAlert(alertCtx);
-        }
+        // Durable outbox insert — SAME transaction as the stamp above (R19 fix). Revocation
+        // alerts are transition-gated (fire once), so losing this send would be permanent;
+        // the outbox row survives an SMTP outage for NotificationOutboxScheduler to retry.
+        notificationOutboxService.enqueueRevocationAlert(alertCtx);
     }
 
     // ── Core algorithm (RFC 0008 §2.3) ───────────────────────────────────────
@@ -307,24 +305,18 @@ public class ExpiryEvaluationService {
         certRepository.stampAlertSentAt(cert.getId(), now);
 
         // P1-A fix: resolve all entity data WHILE THE SESSION IS STILL OPEN (before commit).
-        // The AFTER_COMMIT callback and the @Async dispatch run on threads with no Hibernate
-        // session; passing a managed entity across that boundary causes LazyInitializationException
-        // on target.getOrganization() / target.getAgent() which silently kills the alert.
-        // Build an ExpiryAlertContext from plain values now, and pass only the context.
+        // Any thread that later reads this data (a queued outbox row, drained by
+        // NotificationOutboxScheduler with no Hibernate session) must never see a managed
+        // entity — target.getOrganization() / target.getAgent() would throw
+        // LazyInitializationException. Build an ExpiryAlertContext from plain values now.
         final ExpiryAlertContext alertCtx = buildAlertContext(cert, (int) daysLeft, severity);
 
-        // Dispatch after commit — SMTP failure never rolls back the sweep/scan transaction.
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    notificationService.dispatchExpiryAlert(alertCtx);
-                }
-            });
-        } else {
-            // No active Spring transaction (e.g., unit tests without a real TX context).
-            notificationService.dispatchExpiryAlert(alertCtx);
-        }
+        // R19 fix: durable outbox insert in the SAME transaction as the stamp above — NOT an
+        // AFTER_COMMIT async dispatch. Previously the stamp was durable but the actual send
+        // was fire-and-forget (NotificationService.sendMimeEmail swallows exceptions), so an
+        // SMTP outage silently dropped the alert for the whole dedup window. Now the send-intent
+        // is as durable as the stamp; NotificationOutboxScheduler drains and retries it later.
+        notificationOutboxService.enqueueExpiryAlert(alertCtx);
 
         return true;
     }

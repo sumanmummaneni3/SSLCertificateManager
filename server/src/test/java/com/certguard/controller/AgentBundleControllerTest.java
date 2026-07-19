@@ -50,7 +50,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ExtendWith(DockerAvailableCondition.class)
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("tctest")
+// "dev" must be active (in addition to app.dev-mode=true) because DevAuthController is
+// gated by @Profile("dev") as a P0 defense-in-depth control (commit 6694f1c) — the
+// dev-token endpoint this suite relies on 404s without it.
+@ActiveProfiles({"dev", "tctest"})
 class AgentBundleControllerTest {
 
     @Container
@@ -78,7 +81,12 @@ class AgentBundleControllerTest {
     AgentBundleService agentBundleService;
 
     @Autowired WebApplicationContext wac;
-    @Autowired ObjectMapper objectMapper;
+
+    // Spring Boot 4 no longer auto-configures a Jackson 2 (com.fasterxml) ObjectMapper
+    // bean — the default context mapper is Jackson 3's tools.jackson.databind.ObjectMapper.
+    // This is only used to build/parse request/response bodies in tests, so a local
+    // instance is sufficient and avoids depending on a bean Spring no longer provides.
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     MockMvc mockMvc;
     String adminToken;
@@ -200,8 +208,22 @@ class AgentBundleControllerTest {
                     .andExpect(status().isBadRequest());
         }
 
+        /**
+         * RFC 0012 demoted allowedCidrs from a required input to an optional manual
+         * override (CreateAgentRequest.allowedCidrs defaults to an empty list; the agent
+         * falls back to self-reported discoveredSubnets + RFC1918 validation). A missing
+         * allowedCidrs is therefore a valid request, not a 400.
+         */
         @Test
-        void createAgent_whenMissingAllowedCidrs_returns400() throws Exception {
+        void createAgent_whenMissingAllowedCidrs_returns201() throws Exception {
+            UUID agentId = UUID.randomUUID();
+            IssueBundleResult mockResult = new IssueBundleResult(
+                    agentId,
+                    "CGK-TESTINSTALLKEY12345",
+                    "https://certguard.example.com/api/v1/agents/" + agentId + "/bundle?dlToken=abc",
+                    Instant.now().plusSeconds(3600));
+            when(agentBundleService.issueBundle(any(), any(), any())).thenReturn(mockResult);
+
             String body = objectMapper.writeValueAsString(Map.of(
                     "agentName",  "valid-agent",
                     "maxTargets", 10
@@ -211,7 +233,7 @@ class AgentBundleControllerTest {
                             .header("Authorization", "Bearer " + adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(body))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isCreated());
         }
     }
 

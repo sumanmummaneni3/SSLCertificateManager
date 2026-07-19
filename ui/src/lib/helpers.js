@@ -101,3 +101,19 @@ export const fmtRelative = (iso) => {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 };
+
+/**
+ * Returns a human-readable countdown to a future ISO timestamp ("in ~5m", "in ~1h", "in ~2d").
+ * Returns null for falsy input; returns "shortly" once the timestamp has passed (clock skew /
+ * imminent retry) rather than a negative duration.
+ */
+export const fmtCountdown = (iso) => {
+  if (!iso) return null;
+  const diff = new Date(iso).getTime() - Date.now();
+  if (diff <= 60000) return "shortly";
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `in ~${mins}m`;
+  const hrs = Math.round(diff / 3600000);
+  if (hrs < 24) return `in ~${hrs}h`;
+  return `in ~${Math.round(hrs / 24)}d`;
+};

@@ -150,6 +150,11 @@ export const api = {
   getTargetNotificationSettings: (targetId, token) => api.call("GET",  `/api/v1/targets/${targetId}/notification-settings`, null, token),
   putTargetNotificationSettings: (targetId, body, token) => api.call("PUT",  `/api/v1/targets/${targetId}/notification-settings`, body, token),
   deleteTargetNotificationSettings: (targetId, token) => api.call("DELETE", `/api/v1/targets/${targetId}/notification-settings`, null, token),
+  // Email delivery outbox status — org-wide "degraded" banner. May 404 until the
+  // backend endpoint lands; callers must fail quiet on error (see EmailDeliveryBanner).
+  // Response: { degraded, queuedCount, failedCount, oldestQueuedAt, nextAttemptAt, lastError }
+  getNotificationDeliveryStatus: (orgId, token) =>
+    api.call("GET", `/api/v1/organizations/${orgId}/notifications/delivery-status`, null, token),
   // RFC 0009 — per-cert revocation deep-check toggle (BE-12, FE-3)
   patchCertRevocationDeepCheck: (orgId, certId, enabled, token) =>
     api.call("PATCH", `/api/v1/organizations/${orgId}/certificates/${certId}/revocation-deep-check`, { enabled }, token),

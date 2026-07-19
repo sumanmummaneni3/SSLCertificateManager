@@ -1,0 +1,47 @@
+-- ============================================================
+-- V44 — Partial index supporting the delivery-status aggregate query
+-- ============================================================
+-- notification_outbox (V43) has no purge path: SENT rows are terminal and
+-- immortal, and the table grows with orgs x targets x recipients x days.
+-- aggregateDeliveryStatus (NotificationOutboxRepository) is a full scan over
+-- every row for an org, SENT included, and is polled by the UI delivery-status
+-- banner every few minutes per active session — its cost grows with total
+-- history, not with the queued/failed subset it actually reports on.
+--
+-- This index only helps once NotificationOutboxRepository.aggregateDeliveryStatus
+-- itself filters "AND o.status <> SENT" (companion code change, same commit) —
+-- a partial index cannot serve a query that still has to visit the rows the
+-- index excludes. Confirmed via EXPLAIN against the updated query.
+--
+-- Retention purge (also this commit, NotificationOutboxScheduler#purgeExpiredRows)
+-- solves the other half: it bounds how large the SENT/FAILED subsets grow in
+-- the first place. This index bounds the cost of querying around them.
+--
+-- Additive only — new file, V43 is not edited (already applied to live DBs).
+--
+-- NOT CONCURRENTLY — tried it, it hangs. Notification_outbox has been
+-- accumulating rows since V43 shipped, so a plain CREATE INDEX's ACCESS
+-- EXCLUSIVE lock is a real (if brief, on the table's current size) concern,
+-- and CONCURRENTLY exists to avoid exactly that. But CONCURRENTLY additionally
+-- requires waiting for every OTHER open transaction on the whole database to
+-- finish before its first pass can complete — and FlywayConfig (see that
+-- class) points Flyway at the app's own shared HikariCP DataSource, not a
+-- dedicated connection. Flyway holds its own migration lock open on one
+-- connection from that pool for the duration of the run; a CONCURRENTLY
+-- statement (which — like V34's ALTER TYPE — needs executeInTransaction=false
+-- to run outside Flyway's transaction wrapper, and therefore checks out a
+-- second connection from the same pool to do so) then waits forever on
+-- Flyway's own still-open lock transaction. Reproduced and confirmed via
+-- pg_stat_activity: Flyway's lock connection sits "idle in transaction"
+-- indefinitely while the CONCURRENTLY connection blocks on wait_event_type
+-- "Lock"/"virtualxid" — a hang, not a slow build. Using CONCURRENTLY safely
+-- here would require Flyway to run off a dedicated, non-pooled connection,
+-- which is a real fix but bigger than this migration; flagged separately.
+-- Plain CREATE INDEX inside Flyway's normal transaction is the safe choice
+-- until that's addressed. The table has not been in production long since
+-- V43 shipped, so the exclusive-lock window is short at this point in time.
+-- ============================================================
+
+CREATE INDEX idx_notification_outbox_org_not_sent
+    ON notification_outbox (org_id)
+    WHERE status <> 'SENT';

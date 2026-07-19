@@ -22,7 +22,11 @@
         <jjwt.version>0.12.6</jjwt.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <lombok.version>1.18.38</lombok.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
+        <!-- 1.21.x required: the docker-java client bundled with 1.20.x negotiates Docker
+             API 1.32, which modern daemons reject ("minimum supported API version is 1.40").
+             DockerAvailableCondition then silently disables every Testcontainers test, so the
+             build reports success while skipping the entire DB/RBAC integration layer. -->
+        <testcontainers.version>1.21.3</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -188,6 +192,23 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- docker-java pings the daemon at API 1.32 during negotiation. Docker
+                         Engine 29+ rejects anything below 1.40, so Testcontainers fails to
+                         find a Docker environment and DockerAvailableCondition silently
+                         disables every container-backed test — the build then reports
+                         success while skipping the whole DB/RBAC integration layer.
+                         Pinning the API version makes negotiation succeed. -->
+                    <argLine>-Dapi.version=1.44</argLine>
+                    <!-- Container-backed tests now actually run, so Ryuk has real containers
+                         to tear down on JVM exit; the 30s default exit window is too short
+                         and surefire kills the fork, failing the build after all tests pass. -->
+                    <forkedProcessExitTimeoutInSeconds>180</forkedProcessExitTimeoutInSeconds>
                 </configuration>
             </plugin>
             <plugin>

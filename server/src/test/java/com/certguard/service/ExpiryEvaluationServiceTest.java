@@ -18,7 +18,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -34,26 +33,26 @@ import static org.mockito.Mockito.*;
 /**
  * Unit tests for ExpiryEvaluationService (RFC 0008 §2 + §3).
  *
- * Transaction synchronisation: TransactionSynchronizationManager is static and
- * thread-local. In tests there is no active transaction, so the service falls
- * through to a direct dispatchExpiryAlert call (the fallback branch) rather than
- * registering an AFTER_COMMIT listener. This lets us verify dispatch with plain
- * Mockito without spinning up a full Spring context.
+ * R19 fix / outbox rewire: stamping and dispatch are now SYNCHRONOUS in the caller's
+ * transaction — evaluateSingle calls {@code notificationOutboxService.enqueueExpiryAlert}
+ * (and evaluateRevocationAndNotify calls {@code enqueueRevocationAlert}) directly, with
+ * no AFTER_COMMIT hook and no {@code notificationService.dispatchExpiryAlert} call. Tests
+ * verify against the outbox service mock, not notificationService.
  *
  * Settings resolution: by default the settingsRepository mocks return empty
  * Optionals/Lists, so the app-yml fallback values (set via ReflectionTestUtils)
  * apply. Individual tests wire specific mocked rows to verify the resolution chain.
  *
- * P1-A: After the fix, dispatchExpiryAlert is called with an ExpiryAlertContext
- * (not a CertificateRecord entity). All verify calls use the context overload.
- * resolveChannels is stubbed in setUp to return an empty map so buildAlertContext
- * does not throw; individual tests stub it with a real channel map when dispatch
- * must reach the notificationService.
+ * P1-A: buildAlertContext builds an ExpiryAlertContext (not a CertificateRecord entity)
+ * BEFORE the (mocked) outbox enqueue call, so lazy entity access never crosses that
+ * boundary. resolveChannels is stubbed in setUp to return a non-empty channel map so
+ * buildAlertContext does not throw and the enqueue call is reached.
  */
 @ExtendWith(MockitoExtension.class)
 class ExpiryEvaluationServiceTest {
 
     @Mock NotificationService notificationService;
+    @Mock NotificationOutboxService notificationOutboxService;
     @Mock CertificateRecordRepository certRepository;
     @Mock NotificationSettingsRepository settingsRepository;
 
@@ -61,7 +60,8 @@ class ExpiryEvaluationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ExpiryEvaluationService(notificationService, certRepository, settingsRepository);
+        service = new ExpiryEvaluationService(
+                notificationService, notificationOutboxService, certRepository, settingsRepository);
         ReflectionTestUtils.setField(service, "warningDays", 30);
         ReflectionTestUtils.setField(service, "criticalDays", 7);
         ReflectionTestUtils.setField(service, "dedupHours", 23);
@@ -130,10 +130,10 @@ class ExpiryEvaluationServiceTest {
         return ns;
     }
 
-    /** Captures the ExpiryAlertContext passed to the context-based dispatch overload. */
+    /** Captures the ExpiryAlertContext passed to the outbox enqueue call. */
     private ExpiryAlertContext captureDispatchedContext() {
         ArgumentCaptor<ExpiryAlertContext> cap = ArgumentCaptor.forClass(ExpiryAlertContext.class);
-        verify(notificationService).dispatchExpiryAlert(cap.capture());
+        verify(notificationOutboxService).enqueueExpiryAlert(cap.capture());
         return cap.getValue();
     }
 
@@ -192,8 +192,10 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            // Must use the context overload — entity overload must NOT be called.
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            // Must go through the outbox enqueue — neither NotificationService dispatch
+            // overload should be called anymore (that path was removed by the R19 fix).
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
             verify(notificationService, never()).dispatchExpiryAlert(
                     any(CertificateRecord.class), anyInt(), anyString());
         }
@@ -255,7 +257,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             // Dispatch still reached.
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         /**
@@ -300,7 +302,7 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -315,7 +317,7 @@ class ExpiryEvaluationServiceTest {
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, never()).enqueueExpiryAlert(any(ExpiryAlertContext.class));
             verify(certRepository, never()).stampAlertSentAt(any(), any());
         }
 
@@ -337,7 +339,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             // Per-target wins → enabled=true → dispatches.
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -348,7 +350,7 @@ class ExpiryEvaluationServiceTest {
             // Both repo calls return empty — fallback (warningDays=30) applies.
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -409,7 +411,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, never()).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -423,7 +425,7 @@ class ExpiryEvaluationServiceTest {
 
             assertThat(count).isZero();
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, never()).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 
@@ -466,7 +468,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, never()).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -517,7 +519,7 @@ class ExpiryEvaluationServiceTest {
 
             assertThat(count).isEqualTo(1); // only inWindow
             verify(certRepository, times(1)).stampAlertSentAt(any(), any());
-            verify(notificationService, times(1)).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, times(1)).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -550,7 +552,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -574,7 +576,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, recentScan);
 
             verify(certRepository, never()).stampAlertSentAt(any(), any());
-            verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService, never()).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -586,7 +588,7 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, oldScan);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
 
         @Test
@@ -597,47 +599,66 @@ class ExpiryEvaluationServiceTest {
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.FORCE, null);
 
             verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 
-    // ── AFTER_COMMIT dispatch wiring ──────────────────────────────────────────
+    // ── R19 fix: synchronous outbox enqueue, no AFTER_COMMIT hook ──────────────
 
+    /**
+     * Regression coverage for the R19 fix: the stamp and the outbox enqueue must commit
+     * atomically in the SAME transaction — no AFTER_COMMIT hook, no {@code @Async} gap where
+     * an SMTP failure could silently drop the alert. These tests assert the enqueue happens
+     * synchronously and unconditionally (with or without an active Spring transaction
+     * synchronization), which is exactly what makes the outbox row as durable as the stamp.
+     */
     @Nested
-    class AfterCommitDispatch {
+    class SynchronousOutboxEnqueue {
 
         @Test
-        void withActiveSynchronization_registersAfterCommitCallback() {
-            TransactionSynchronizationManager.initSynchronization();
+        void withActiveSynchronization_enqueuesSynchronously_noAfterCommitHookRegistered() {
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
             try {
                 Target target = enabledTarget(buildOrg());
                 CertificateRecord cert = certExpiring(target, 10, null);
 
                 service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-                assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
-                // The context-based overload must not be called before afterCommit fires.
-                verify(notificationService, never()).dispatchExpiryAlert(any(ExpiryAlertContext.class));
-
-                TransactionSynchronizationManager.getSynchronizations()
-                        .forEach(s -> s.afterCommit());
-
-                verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+                // R19 fix: no AFTER_COMMIT synchronization is registered for dispatch anymore —
+                // the outbox insert happens synchronously, in-line, in this same transaction.
+                assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                        .getSynchronizations()).isEmpty();
+                verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
             } finally {
-                TransactionSynchronizationManager.clearSynchronization();
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
             }
         }
 
         @Test
-        void withoutActiveSynchronization_dispatchesDirectly() {
-            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+        void withoutActiveSynchronization_stillEnqueuesSynchronously() {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isSynchronizationActive()).isFalse();
 
             Target target = enabledTarget(buildOrg());
             CertificateRecord cert = certExpiring(target, 10, null);
 
             service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
 
-            verify(notificationService).dispatchExpiryAlert(any(ExpiryAlertContext.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
+        }
+
+        @Test
+        void stampAndEnqueue_bothInvoked_stampNeverSkippedWhenEnqueued() {
+            // Invariant the R19 fix depends on: whenever the outbox row is enqueued, the
+            // dedup stamp was ALSO written (both happen in the same transaction/method, so
+            // there is no window where one commits without the other).
+            Target target = enabledTarget(buildOrg());
+            CertificateRecord cert = certExpiring(target, 10, null);
+
+            service.evaluateAndNotify(cert, ExpiryEvaluationService.EvaluationMode.SCHEDULED, null);
+
+            verify(certRepository).stampAlertSentAt(eq(cert.getId()), any(Instant.class));
+            verify(notificationOutboxService).enqueueExpiryAlert(any(ExpiryAlertContext.class));
         }
     }
 
@@ -869,7 +890,49 @@ class ExpiryEvaluationServiceTest {
             service.evaluateRevocationAndNotify(cert);
 
             // In shadow mode: no revocation alert should fire
+            verify(notificationOutboxService, never()).enqueueRevocationAlert(any());
+        }
+
+        @Test
+        void evaluateRevocationAndNotify_transitionIntoRevoked_stampsAndEnqueuesSynchronously() {
+            // R19 fix: revocation alerts are transition-gated (fire once) — if this enqueue
+            // were lost to an AFTER_COMMIT/@Async gap the alert would be gone permanently
+            // (no dedup-window retry like expiry alerts get). Stamp + enqueue must both
+            // happen, in the same call, with no window between them.
+            ReflectionTestUtils.setField(service, "revocationShadowMode", false);
+
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 60, null);
+            cert.setStatus(CertStatus.REVOKED);
+            cert.setLastRevocationAlertSentAt(null); // first edge into REVOKED
+
+            service.evaluateRevocationAndNotify(cert);
+
+            verify(certRepository).stampRevocationAlertSentAt(eq(cert.getId()), any(Instant.class));
+            ArgumentCaptor<com.certguard.dto.internal.RevocationAlertContext> cap =
+                    ArgumentCaptor.forClass(com.certguard.dto.internal.RevocationAlertContext.class);
+            verify(notificationOutboxService).enqueueRevocationAlert(cap.capture());
+            assertThat(cap.getValue().certId()).isEqualTo(cert.getId());
             verify(notificationService, never()).dispatchRevocationAlert(any());
+        }
+
+        @Test
+        void evaluateRevocationAndNotify_alreadyAlerted_noRepeatEnqueue() {
+            // Transition-gated: a second re-check where status is already REVOKED must NOT
+            // re-stamp or re-enqueue.
+            ReflectionTestUtils.setField(service, "revocationShadowMode", false);
+
+            Organization org = buildOrg();
+            Target target = enabledTarget(org);
+            CertificateRecord cert = certExpiring(target, 60, null);
+            cert.setStatus(CertStatus.REVOKED);
+            cert.setLastRevocationAlertSentAt(Instant.now().minus(1, ChronoUnit.HOURS)); // already alerted
+
+            service.evaluateRevocationAndNotify(cert);
+
+            verify(certRepository, never()).stampRevocationAlertSentAt(any(), any());
+            verify(notificationOutboxService, never()).enqueueRevocationAlert(any());
         }
     }
 }

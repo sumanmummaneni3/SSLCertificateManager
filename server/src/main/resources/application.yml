@@ -107,6 +107,27 @@ app:
     # Prevents alert spam from rapid back-to-back force scans. Applied at
     # evaluation time against the target's prior lastScannedAt (RFC 0008 §5).
     force-scan-debounce-seconds: ${ALERT_FORCE_SCAN_DEBOUNCE_SECONDS:120}
+  outbox:
+    # Durable notification outbox (R19 fix — see NotificationOutboxService).
+    # How often NotificationOutboxScheduler drains PENDING rows whose next_attempt_at is due.
+    drain-fixed-delay-ms: ${OUTBOX_DRAIN_FIXED_DELAY_MS:60000}
+    # Max PENDING rows processed per drain tick.
+    batch-size: ${OUTBOX_BATCH_SIZE:200}
+    # A row is marked FAILED (terminal, queryable) after this many failed attempts.
+    # Sized so a multi-day relay outage does NOT exhaust rows into FAILED before the relay
+    # is restored: with the cap below, retries settle to hourly, so 200 attempts ~= 8 days.
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:200}
+    # Exponential backoff base: attempt N waits base * 2^(N-1) seconds before the next try.
+    backoff-base-seconds: ${OUTBOX_BACKOFF_BASE_SECONDS:60}
+    # Clamp on a single backoff interval. Required — an uncapped shift overflows past N=63.
+    backoff-max-seconds: ${OUTBOX_BACKOFF_MAX_SECONDS:3600}
+    # Retention purge (see NotificationOutboxScheduler#purgeExpiredRows). SENT rows are
+    # routine delivery confirmations; FAILED rows are forensic evidence of a real delivery
+    # failure and are kept 3x longer, but not indefinitely — see the scheduler javadoc.
+    purge-schedule-cron: ${OUTBOX_PURGE_SCHEDULE_CRON:0 30 5 * * *}
+    sent-retention-days: ${OUTBOX_SENT_RETENTION_DAYS:30}
+    failed-retention-days: ${OUTBOX_FAILED_RETENTION_DAYS:90}
+    purge-batch-size: ${OUTBOX_PURGE_BATCH_SIZE:500}
   scanning:
     # RFC 0013 §7: scanning mode controls the public-target scan strategy.
     # DIRECT (default) — in-process SslScannerService handles all public scans.
@@ -202,8 +223,10 @@ management:
 logging:
   level:
     com.certguard: INFO
-    org.springframework.security: DEBUG
-    org.flywaydb: DEBUG
+    # DEBUG here dumps the full SecurityFilterChain order on startup — useful when
+    # debugging auth locally, too noisy (and too revealing) for production.
+    org.springframework.security: ${LOG_LEVEL_SECURITY:WARN}
+    org.flywaydb: ${LOG_LEVEL_FLYWAY:INFO}
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
@@ -226,7 +249,7 @@ server:
         same-site: lax
   ssl:
     enabled: true
-    key-store: /opt/certguard/certs/certguard.p12
+    key-store: ${SSL_KEYSTORE_PATH:/opt/certguard/certs/certguard.p12}
     key-store-password: ${SSL_KEYSTORE_PASSWORD:certguard123}
     key-store-type: PKCS12
     key-alias: certguard
