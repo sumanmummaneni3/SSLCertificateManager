@@ -62,6 +62,7 @@ Auth legend: **J** = JWT Bearer (`JwtAuthenticationFilter`); **A** = Agent key h
 | POST | `/api/v1/auth/dev-token` | P (dev-mode) | `email,role` | `{token,orgId,...}` | 403 if not dev, 400 role |
 | POST | `/api/v1/auth/invite/validate` | P | `token` (query) | `{email,message}` | 400 invalid/expired |
 | POST | `/api/v1/auth/invite/accept` | P | `AcceptInviteRequest{token,email,otp}` | `{token,orgId,email,role}` | 400 OTP mismatch |
+| POST | `/api/v1/auth/switch-org` | J | `{orgId}` | `{token,orgId,orgRole}` | 403 non-member/revoked, 400 platform-admin — **HS256, local/dev only** (rejected by the gateway; RFC 0015 §4). Validates via `ActiveOrgResolver.switchTo`, mirrors the auth-service's authoritative `/api/auth/switch-org` |
 | GET | `/api/v1/dashboard` | J | — | `DashboardResponse` | 401 |
 | GET | `/api/v1/certificates` | J | `Pageable` | `Page<CertificateResponse>` | 401 |
 | GET | `/api/v1/certificates/expiring?days=30` | J | — | `List<CertificateResponse>` | — |
@@ -105,6 +106,14 @@ Auth legend: **J** = JWT Bearer (`JwtAuthenticationFilter`); **A** = Agent key h
 | GET/POST | `/api/internal/v1/sales/**` | `SalesAuthFilter` (X-Sales-Key-Id + X-Sales-Key) | per-route | per-route | 401/403 |
 
 Anchors: `SecurityConfig.java:56-73`, `AgentController.java:38-157`, `TargetController.java:30-77`, `CertificateController.java:19-32`, `TeamController.java:28-57`, `OrgController.java:25-59`, `MspClientController.java:27-53`, `LocationController.java:23-49`, `DevAuthController.java:38-122`, `AgentDownloadController.java:21-45`.
+
+### 2a. Auth-service (`certguard-auth-service`) — selected endpoints
+
+Separate service, RS256 signing key owner. Full endpoint set covers OAuth callbacks, email/password register/verify/reset, and JWKS — this row covers only the RFC 0015 Phase 2 addition:
+
+| Method | Path | Auth | Request | Response | Notable errors |
+|---|---|---|---|---|---|
+| POST | `/api/auth/switch-org` | RS256 Bearer | `{orgId}` | `TokenResponse{token,token_type,expires_in,...}` | 403 non-member/revoked-membership/revoked-session, 400 platform-admin — **authoritative**; validates via `AuthProvisioningService.switchActiveOrg`, re-mints via `TokenService.switchOrg`, deletes the presenting session row. Rides the existing `/api/auth/**` gateway allowlist, no `PUBLIC_PATTERNS` change |
 
 ## 3. Database Schema
 
