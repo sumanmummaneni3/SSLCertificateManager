@@ -26,42 +26,79 @@ public class AuthProvisioningService {
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 
+    /** Least-privilege role used when the user has no resolvable membership anywhere. Never ADMIN. */
+    private static final String NO_MEMBERSHIP_ROLE = "VIEWER";
+
     /**
      * Looks up the user by email in the main certguard DB.
      * If the user doesn't exist yet, auto-provisions org + subscription + user + org_member.
      * Returns the org context to embed in the JWT.
+     *
+     * RFC 0015 Phase 1: mirrors {@code ActiveOrgResolver} in the server so both JWT-issuance
+     * paths (server-local HS256, this RS256 path) agree on the same resolution order:
+     *   1. users.last_active_org_id, if it still points at a valid (ACCEPTED, non-revoked) membership.
+     *   2. users.org_id (home org), if valid.
+     *   3. The user's most-recently-created valid membership across all orgs (created_at DESC).
+     *   4. No valid membership anywhere — home org + least-privilege role. Never ADMIN.
+     * The resolved org is written back to users.last_active_org_id when it changes ("sticky").
      */
     public OrgContextRecord resolveOrProvision(String email, String name) {
         List<Map<String, Object>> rows = mainJdbc.queryForList(
-                "SELECT id, org_id, role FROM users WHERE email = ?", email);
+                "SELECT id, org_id, role, last_active_org_id FROM users WHERE email = ?", email);
 
         if (!rows.isEmpty()) {
             Map<String, Object> row = rows.get(0);
             UUID userId = (UUID) row.get("id");
-            UUID orgId  = (UUID) row.get("org_id");
+            UUID homeOrgId = (UUID) row.get("org_id");
             String role = (String) row.get("role");
+            UUID lastActiveOrgId = (UUID) row.get("last_active_org_id");
             boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role) || platformAdminEmails.contains(email);
 
+            UUID orgId = homeOrgId;
             String orgRole = null;
             if (!isPlatformAdmin) {
-                List<Map<String, Object>> memberRows = mainJdbc.queryForList(
-                        "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND invite_status = 'ACCEPTED'",
-                        orgId, userId);
+                UUID resolvedOrgId = null;
+                String resolvedRole = null;
 
-                if (!memberRows.isEmpty()) {
-                    orgRole = (String) memberRows.get(0).get("role");
-                } else {
-                    // users.org_id may point to a placeholder created at invite acceptance.
-                    // Fall back to the oldest accepted membership across all orgs.
-                    List<Map<String, Object>> anyMember = mainJdbc.queryForList(
-                            "SELECT org_id, role FROM org_members WHERE user_id = ? AND invite_status = 'ACCEPTED' ORDER BY created_at ASC LIMIT 1",
-                            userId);
-                    if (!anyMember.isEmpty()) {
-                        orgId = (UUID) anyMember.get(0).get("org_id");
-                        orgRole = (String) anyMember.get(0).get("role");
-                    } else {
-                        orgRole = "ADMIN";
+                if (lastActiveOrgId != null) {
+                    String r = validMembershipRole(lastActiveOrgId, userId);
+                    if (r != null) {
+                        resolvedOrgId = lastActiveOrgId;
+                        resolvedRole = r;
                     }
+                }
+
+                if (resolvedOrgId == null) {
+                    String r = validMembershipRole(homeOrgId, userId);
+                    if (r != null) {
+                        resolvedOrgId = homeOrgId;
+                        resolvedRole = r;
+                    }
+                }
+
+                if (resolvedOrgId == null) {
+                    List<Map<String, Object>> mostRecent = mainJdbc.queryForList(
+                            "SELECT org_id, role FROM org_members " +
+                            "WHERE user_id = ? AND invite_status = 'ACCEPTED' AND revoked_at IS NULL " +
+                            "ORDER BY created_at DESC LIMIT 1",
+                            userId);
+                    if (!mostRecent.isEmpty()) {
+                        resolvedOrgId = (UUID) mostRecent.get(0).get("org_id");
+                        resolvedRole = (String) mostRecent.get(0).get("role");
+                    }
+                }
+
+                if (resolvedOrgId == null) {
+                    // No valid membership anywhere — never default to ADMIN.
+                    resolvedOrgId = homeOrgId;
+                    resolvedRole = NO_MEMBERSHIP_ROLE;
+                }
+
+                orgId = resolvedOrgId;
+                orgRole = resolvedRole;
+
+                if (!orgId.equals(lastActiveOrgId)) {
+                    mainJdbc.update("UPDATE users SET last_active_org_id = ? WHERE id = ?", orgId, userId);
                 }
             }
 
@@ -72,6 +109,18 @@ public class AuthProvisioningService {
         return isPlatformAdmin
                 ? provisionPlatformAdmin(email, name)
                 : provisionRegularUser(email, name);
+    }
+
+    /**
+     * Returns the role of a valid (ACCEPTED, non-revoked) membership for (orgId, userId),
+     * or null if no such membership exists.
+     */
+    private String validMembershipRole(UUID orgId, UUID userId) {
+        List<Map<String, Object>> memberRows = mainJdbc.queryForList(
+                "SELECT role FROM org_members " +
+                "WHERE org_id = ? AND user_id = ? AND invite_status = 'ACCEPTED' AND revoked_at IS NULL",
+                orgId, userId);
+        return memberRows.isEmpty() ? null : (String) memberRows.get(0).get("role");
     }
 
     private OrgContextRecord provisionPlatformAdmin(String email, String name) {

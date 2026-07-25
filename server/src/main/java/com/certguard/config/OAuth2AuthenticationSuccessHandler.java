@@ -13,6 +13,7 @@ import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.SubscriptionRepository;
 import com.certguard.repository.UserRepository;
 import com.certguard.security.JwtTokenProvider;
+import com.certguard.service.ActiveOrgResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -42,6 +43,7 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
     private final OrganizationRepository orgRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final OrgMemberRepository orgMemberRepository;
+    private final ActiveOrgResolver activeOrgResolver;
 
     @Value("${app.base-url:http://localhost:3000}")
     private String baseUrl;
@@ -142,17 +144,21 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
             log.info("Role updated to {} for {}", expectedRole, email);
         }
 
-        // Resolve org-scoped role from OrgMember (null for platform admins)
+        // Resolve org-scoped role. Platform admins are not org members and always stay
+        // on their home org with orgRole=null — do not route them through the resolver.
+        // Non-admins resolve via ActiveOrgResolver (RFC 0015 Phase 1): last-active org,
+        // else home org, else most-recent membership, else home org + least-privilege
+        // role. Never defaults to ADMIN.
+        UUID effectiveOrgId = user.getOrganization().getId();
         String orgRole = null;
         if (!isPlatformAdmin) {
-            orgRole = orgMemberRepository
-                    .findByOrganizationIdAndUserId(user.getOrganization().getId(), user.getId())
-                    .map(m -> m.getRole().name())
-                    .orElse("ADMIN");
+            ActiveOrgResolver.ActiveOrgContext ctx = activeOrgResolver.resolve(user);
+            effectiveOrgId = ctx.orgId();
+            orgRole = ctx.orgRole();
         }
 
         String token = jwtTokenProvider.generateToken(
-                user.getId(), user.getOrganization().getId(), user.getEmail(),
+                user.getId(), effectiveOrgId, user.getEmail(),
                 isPlatformAdmin, orgRole);
 
         String redirect = baseUrl + "/?token=" + token + (isNewUser.get() ? "&newUser=true" : "");

@@ -21,6 +21,23 @@ public interface OrgMemberRepository extends JpaRepository<OrgMember, UUID> {
     List<OrgMember> findAllByUserId(UUID userId);
 
     /**
+     * RFC 0015 Phase 1: used by ActiveOrgResolver to validate that a candidate org
+     * (last-active or home) is still a live, accepted membership for the user —
+     * unlike {@link #findByOrganizationIdAndUserId}, this filters out revoked and
+     * non-accepted rows so a stale/revoked membership can never be resolved as active.
+     */
+    Optional<OrgMember> findByOrganizationIdAndUserIdAndInviteStatusAndRevokedAtIsNull(
+            UUID orgId, UUID userId, InviteStatus status);
+
+    /**
+     * RFC 0015 Phase 1: fallback lookup for ActiveOrgResolver step 3 — the user's
+     * most-recently-created accepted, non-revoked membership across all orgs, used
+     * when neither last_active_org_id nor the home org resolve to a valid membership.
+     */
+    Optional<OrgMember> findFirstByUserIdAndInviteStatusAndRevokedAtIsNullOrderByCreatedAtDesc(
+            UUID userId, InviteStatus status);
+
+    /**
      * RFC 0010: finds all active (non-revoked) org_members of a client org whose user's
      * home org (user.org_id) is the source MSP. These are the direct memberships created
      * by MspClientService.createClient() that must be revoked when the org is transferred.
