@@ -60,7 +60,10 @@ export function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogo
         );
       })}
       <div className="sidebar-footer">
-        {(me?.memberships?.length ?? 0) > 1 ? (
+        {/* Platform admins switch org context via act-as-org (see AppShell's
+            impersonation banner), not this endpoint — the backend 403s
+            switch-org for them, so don't offer a dropdown that always fails. */}
+        {(me?.memberships?.length ?? 0) > 1 && !isPlatformAdmin ? (
           <div className="org-tag">
             <span aria-hidden="true">🏢</span>
             <OrgSwitcher me={me} token={token} onSwitched={onSwitchOrg} onRefreshMe={onRefreshMe} toast={toast} />

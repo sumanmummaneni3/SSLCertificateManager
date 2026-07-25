@@ -7,8 +7,10 @@ import { Spinner } from "./Spinner.jsx";
 // memberships (org name + role) with the active org selected, and calls the
 // switch-org endpoint when the user picks a different one.
 //
-// Only rendered by Sidebar when the user has more than one membership — a
-// single-org user has nothing to switch to.
+// Only rendered by Sidebar when the user has more than one membership and is
+// not a platform admin — a single-org user has nothing to switch to, and
+// platform admins switch org context via act-as-org instead (the backend
+// 403s switch-org for them).
 //
 // Props:
 //   me         — /me payload: { memberships: [{orgId, orgName, role}], currentOrg: {id, name, role}, ... }
@@ -38,9 +40,14 @@ export function OrgSwitcher({ me, token, onSwitched, onRefreshMe, toast }) {
         toast("Switch failed — no token in response", "error");
       }
     } catch (err) {
+      // Surface the server's own ProblemDetail message (err.message already
+      // resolves to detail/title via api.call) rather than assuming *why* —
+      // 403 covers a few distinct cases (revoked/non-member, revoked session,
+      // and platform admins who must use act-as-org instead of switch-org).
       if (err.status === 403) {
-        toast("You no longer have access to that organization.", "error");
-        // Stale membership — drop it from the list without a full reload.
+        toast(err.message, "error");
+        // Refetch /me so a genuinely stale/revoked membership drops out of
+        // the list without a full reload; harmless no-op for the other 403 cases.
         onRefreshMe?.();
       } else {
         toast("Failed to switch organization: " + err.message, "error");
