@@ -173,6 +173,13 @@ public class InvitationService {
         member.setInviteStatus(InviteStatus.ACCEPTED);
         memberRepository.save(member);
 
+        // RFC 0015 Phase 1: stamp the invited org as the user's active org so the
+        // next normal login (OAuth2AuthenticationSuccessHandler / AuthProvisioningService)
+        // resolves back to it instead of snapping to the fixed home org. Unconditional —
+        // applies regardless of onboarding state.
+        user.setLastActiveOrgId(org.getId());
+        userRepository.save(user);
+
         // Clear any prior revocation so a re-invited user can access the org again
         tokenRevocationService.clearRevocationForUserInOrg(user.getId(), org.getId());
 
