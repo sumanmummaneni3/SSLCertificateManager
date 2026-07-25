@@ -27,6 +27,11 @@ import java.util.Locale;
  * <p>Operators should set the property for a single deploy/restart to run the backfill,
  * then unset it (or leave it, since {@code apply} is idempotent — a second run affects 0
  * rows) before the next normal deploy.
+ *
+ * <p>A failure in {@code dry-run}/{@code apply} is caught and logged at ERROR rather than
+ * propagated: a Spring {@link ApplicationRunner} that throws aborts context startup, and a
+ * transient DB error during the one deploy where this actually runs must degrade to "not
+ * applied, retryable next deploy" — not crash-loop the server.
  */
 @Component
 public class LastActiveOrgBackfillRunner implements ApplicationRunner {
@@ -49,15 +54,25 @@ public class LastActiveOrgBackfillRunner implements ApplicationRunner {
             case "off" -> log.debug("RFC 0015 Phase 3 last-active-org backfill: mode=off, skipping");
             case "dry-run" -> {
                 log.info("RFC 0015 Phase 3 last-active-org backfill: starting DRY-RUN (no writes)");
-                List<BackfillLastActiveOrgService.BackfillRow> rows = backfillService.dryRun();
-                log.info("RFC 0015 Phase 3 last-active-org backfill: DRY-RUN complete, {} user(s) would be affected",
-                        rows.size());
+                try {
+                    List<BackfillLastActiveOrgService.BackfillRow> rows = backfillService.dryRun();
+                    log.info("RFC 0015 Phase 3 last-active-org backfill: DRY-RUN complete, {} user(s) would be affected",
+                            rows.size());
+                } catch (Exception e) {
+                    log.error("RFC 0015 Phase 3 last-active-org backfill: mode=dry-run failed — backfill skipped, "
+                            + "retry on the next deploy", e);
+                }
             }
             case "apply" -> {
                 log.info("RFC 0015 Phase 3 last-active-org backfill: starting APPLY");
-                List<BackfillLastActiveOrgService.BackfillRow> rows = backfillService.apply();
-                log.info("RFC 0015 Phase 3 last-active-org backfill: APPLY complete, {} user(s) affected",
-                        rows.size());
+                try {
+                    List<BackfillLastActiveOrgService.BackfillRow> rows = backfillService.apply();
+                    log.info("RFC 0015 Phase 3 last-active-org backfill: APPLY complete, {} user(s) affected",
+                            rows.size());
+                } catch (Exception e) {
+                    log.error("RFC 0015 Phase 3 last-active-org backfill: mode=apply failed — backfill skipped, "
+                            + "retry on the next deploy (idempotent: unaffected rows remain eligible)", e);
+                }
             }
             default -> log.warn(
                     "RFC 0015 Phase 3 last-active-org backfill: unknown mode '{}' (expected off|dry-run|apply), skipping",
