@@ -90,6 +90,28 @@ public class ActiveOrgResolver {
                 orgId, userId, InviteStatus.ACCEPTED);
     }
 
+    /**
+     * RFC 0015 Phase 2 — explicit user-driven switch. Unlike {@link #resolve}, this never
+     * falls back to another org: the caller named {@code requestedOrgId} explicitly, so an
+     * invalid membership is a hard failure, not a resolution step. Reuses the exact same
+     * membership-validation query as {@link #resolve}'s step 1 so switch-eligibility is
+     * always identical to what a future login would accept as "sticky".
+     *
+     * @throws SecurityException if the user has no valid (ACCEPTED, non-revoked) membership
+     *         in {@code requestedOrgId}. Mapped to 403 by {@code GlobalExceptionHandler}.
+     */
+    @Transactional
+    public ActiveOrgContext switchTo(User user, UUID requestedOrgId) {
+        OrgMember membership = validMembership(requestedOrgId, user.getId())
+                .orElseThrow(() -> new SecurityException(
+                        "Not an active member of that organization"));
+
+        ActiveOrgContext resolved = new ActiveOrgContext(requestedOrgId, membership.getRole().name());
+        user.setLastActiveOrgId(requestedOrgId);
+        userRepository.save(user);
+        return resolved;
+    }
+
     private ActiveOrgContext stickyWriteBackIfNeeded(User user, ActiveOrgContext resolved) {
         if (!resolved.orgId().equals(user.getLastActiveOrgId())) {
             user.setLastActiveOrgId(resolved.orgId());

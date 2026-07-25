@@ -1,5 +1,7 @@
 package com.certguard.auth.service;
 
+import com.certguard.auth.exception.AuthException;
+import com.certguard.auth.exception.ForbiddenException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -109,6 +111,62 @@ public class AuthProvisioningService {
         return isPlatformAdmin
                 ? provisionPlatformAdmin(email, name)
                 : provisionRegularUser(email, name);
+    }
+
+    /**
+     * RFC 0015 Phase 2 — explicit, user-driven org switch (the authoritative RS256 path).
+     * Unlike {@link #resolveOrProvision}, an invalid membership here is a hard failure, not
+     * a resolution fallback: the caller named {@code requestedOrgId} explicitly.
+     *
+     * <p>Validation order (all of a-c must complete before the persist in step d — never
+     * stamp {@code last_active_org_id} for an org that fails validation):
+     * <ol>
+     *   <li>Reject platform-admin callers outright — they use a separate act-as-org
+     *       mechanism, not this endpoint.</li>
+     *   <li>The requesting user must hold a valid (ACCEPTED, non-revoked) {@code org_members}
+     *       row for {@code requestedOrgId} — reuses the exact same query as
+     *       {@link #resolveOrProvision}'s step-1 validation via {@link #validMembershipRole}.</li>
+     *   <li>{@code revoked_tokens} must not have a live (non-expired) row for
+     *       (userId, requestedOrgId) — RFC 0001 offboarding revocation.</li>
+     *   <li>Persist: update {@code users.last_active_org_id = requestedOrgId} (the same
+     *       sticky mechanism Phase 1 uses), so the choice survives future logins.</li>
+     * </ol>
+     *
+     * @throws AuthException if no user with {@code email} exists in the main DB.
+     * @throws ForbiddenException for a platform-admin caller, a non-member org, or a
+     *         revoked membership/session — all map to 403 via {@code GlobalExceptionHandler}.
+     */
+    public OrgContextRecord switchActiveOrg(String email, UUID requestedOrgId) {
+        List<Map<String, Object>> rows = mainJdbc.queryForList(
+                "SELECT id, org_id, role FROM users WHERE email = ?", email);
+        if (rows.isEmpty()) {
+            throw new AuthException("User not found");
+        }
+
+        Map<String, Object> row = rows.get(0);
+        UUID userId = (UUID) row.get("id");
+        String role = (String) row.get("role");
+        boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role) || platformAdminEmails.contains(email);
+
+        if (isPlatformAdmin) {
+            throw new ForbiddenException("Platform admins switch via act-as-org, not switch-org");
+        }
+
+        String orgRole = validMembershipRole(requestedOrgId, userId);
+        if (orgRole == null) {
+            throw new ForbiddenException("Not an active member of that organization");
+        }
+
+        boolean sessionRevoked = !mainJdbc.queryForList(
+                "SELECT 1 FROM revoked_tokens WHERE user_id = ? AND org_id = ? AND expires_at > now()",
+                userId, requestedOrgId).isEmpty();
+        if (sessionRevoked) {
+            throw new ForbiddenException("Access to that organization has been revoked");
+        }
+
+        mainJdbc.update("UPDATE users SET last_active_org_id = ? WHERE id = ?", requestedOrgId, userId);
+
+        return new OrgContextRecord(userId, requestedOrgId, orgRole, false);
     }
 
     /**

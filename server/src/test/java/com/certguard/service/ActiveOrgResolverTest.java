@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -164,5 +165,53 @@ class ActiveOrgResolverTest {
         resolver.resolve(user);
 
         verify(userRepository, never()).save(any());
+    }
+
+    // -----------------------------------------------------------------------
+    // RFC 0015 Phase 2 — switchTo (explicit, user-driven switch)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void switchTo_validMembership_succeedsAndWritesBack() {
+        UUID targetOrgId = UUID.randomUUID();
+        when(orgMemberRepository.findByOrganizationIdAndUserIdAndInviteStatusAndRevokedAtIsNull(
+                eq(targetOrgId), eq(user.getId()), eq(InviteStatus.ACCEPTED)))
+                .thenReturn(Optional.of(memberOf(targetOrgId, OrgMemberRole.ENGINEER)));
+        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
+
+        ActiveOrgResolver.ActiveOrgContext ctx = resolver.switchTo(user, targetOrgId);
+
+        assertThat(ctx.orgId()).isEqualTo(targetOrgId);
+        assertThat(ctx.orgRole()).isEqualTo("ENGINEER");
+        assertThat(user.getLastActiveOrgId()).isEqualTo(targetOrgId);
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void switchTo_noValidMembership_throwsSecurityException_noWriteBack() {
+        UUID targetOrgId = UUID.randomUUID();
+        when(orgMemberRepository.findByOrganizationIdAndUserIdAndInviteStatusAndRevokedAtIsNull(
+                eq(targetOrgId), eq(user.getId()), eq(InviteStatus.ACCEPTED)))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> resolver.switchTo(user, targetOrgId))
+                .isInstanceOf(SecurityException.class);
+
+        verify(userRepository, never()).save(any());
+        assertThat(user.getLastActiveOrgId()).isNotEqualTo(targetOrgId);
+    }
+
+    @Test
+    void switchTo_revokedMembership_isTreatedAsInvalid() {
+        // A membership row exists but is revoked / no longer ACCEPTED — the repository
+        // method filters these out at the query level, so it returns empty just like
+        // "no membership at all".
+        UUID targetOrgId = UUID.randomUUID();
+        when(orgMemberRepository.findByOrganizationIdAndUserIdAndInviteStatusAndRevokedAtIsNull(
+                eq(targetOrgId), eq(user.getId()), eq(InviteStatus.ACCEPTED)))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> resolver.switchTo(user, targetOrgId))
+                .isInstanceOf(SecurityException.class);
     }
 }
