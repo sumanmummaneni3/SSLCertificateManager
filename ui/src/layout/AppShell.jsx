@@ -210,7 +210,8 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+      <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout}
+        token={token} onSwitchOrg={onSwitchOrg} onRefreshMe={onRefreshMe} toast={toast} />
       <div className="main">
         {actingAsOrgId && (
           <div className="impersonation-banner" role="alert">
