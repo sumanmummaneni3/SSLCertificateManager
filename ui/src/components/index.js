@@ -5,3 +5,4 @@ export { Badge }        from "./Badge.jsx";
 export { DaysBar }      from "./DaysBar.jsx";
 export { Accordion }    from "./Accordion.jsx";
 export { ConfirmModal } from "./ConfirmModal.jsx";
+export { OrgSwitcher }  from "./OrgSwitcher.jsx";

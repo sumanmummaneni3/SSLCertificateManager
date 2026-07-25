@@ -22,7 +22,7 @@ import { ScannerPoolView }       from "@/panels/platform/ScannerPoolView.jsx";
 import { NetworkScansView }      from "@/panels/network-scans/index.jsx";
 import { NetworkScanDetailView } from "@/panels/network-scans/NetworkScanDetailView.jsx";
 
-export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExpireSession }) {
+export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExpireSession, onSwitchOrg, onRefreshMe }) {
   const [dash, setDash]           = useState(null);
   const [targets, setTargets]     = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -201,7 +201,8 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
   if (loading) {
     return (
       <div className="app">
-        <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+        <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout}
+          token={token} onSwitchOrg={onSwitchOrg} onRefreshMe={onRefreshMe} toast={toast} />
         <div className="main"><div className="loading-center"><Spinner lg /><span>Loading dashboard...</span></div></div>
       </div>
     );
@@ -209,7 +210,8 @@ export function AppShell({ token, org, me, toast, onLogout, initialCertId, onExp
 
   return (
     <div className="app">
-      <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout} />
+      <Sidebar view={view} onView={sidebarNavigate} org={org} me={me} theme={theme} onTheme={setTheme} onLogout={onLogout}
+        token={token} onSwitchOrg={onSwitchOrg} onRefreshMe={onRefreshMe} toast={toast} />
       <div className="main">
         {actingAsOrgId && (
           <div className="impersonation-banner" role="alert">

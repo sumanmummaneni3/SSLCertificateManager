@@ -1,5 +1,6 @@
 package com.certguard.controller;
 
+import com.certguard.enums.InviteStatus;
 import com.certguard.enums.OrgType;
 import com.certguard.repository.OrgMemberRepository;
 import com.certguard.repository.OrganizationRepository;
@@ -49,9 +50,11 @@ public class MeController {
             }
         }
 
-        // All memberships for this user
+        // All memberships for this user the user could actually switch to (RFC 0015 Phase 2):
+        // ACCEPTED and non-revoked only — matches switch-org's own membership validation, so
+        // the switcher never lists an org that would 403 if selected.
         List<Map<String, Object>> memberships = orgMemberRepository
-                .findAllByUserId(principal.getUserId())
+                .findAllByUserIdAndInviteStatusAndRevokedAtIsNull(principal.getUserId(), InviteStatus.ACCEPTED)
                 .stream()
                 .map(m -> {
                     Map<String, Object> entry = new LinkedHashMap<>();

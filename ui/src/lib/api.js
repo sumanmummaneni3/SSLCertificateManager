@@ -69,6 +69,11 @@ export const api = {
   validateSession: (token) => api.call("POST", "/api/auth/validate", { token }),
   getMe:         (token) => api.call("GET",  "/api/v1/auth/me",            null, token),
   getOrg:        (token) => api.call("GET",  "/api/v1/org",              null, token),
+  // RFC 0015 Phase 2 — explicit org switch. Response is shaped like the login
+  // token response (token/expiresIn/email/...); reuse handleToken() with the
+  // returned token rather than re-deriving state here. 403 (not a member /
+  // revoked) returns a standard ProblemDetail body handled by api.call above.
+  switchOrg:     (token, orgId) => api.call("POST", "/api/auth/switch-org", { orgId }, token),
   updateOrgName: (name, token) => api.call("PUT", `/api/v1/org/name?name=${encodeURIComponent(name)}`, null, token),
   completeOnboarding: (data, token) => api.call("POST", "/api/v1/onboarding", data, token),
   // MSP endpoints

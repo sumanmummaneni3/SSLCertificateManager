@@ -1,5 +1,7 @@
 package com.certguard.auth.service;
 
+import com.certguard.auth.exception.AuthException;
+import com.certguard.auth.exception.ForbiddenException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,6 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
@@ -49,6 +52,8 @@ class AuthProvisioningServiceTest {
     Map<UUID, String> validMembershipRoleByOrgId;
     /** Result for the "most-recent membership across all orgs" fallback query. */
     List<Map<String, Object>> mostRecentMembershipResult;
+    /** Whether a live (non-expired) revoked_tokens row exists for the (userId, requested org) pair. */
+    boolean revokedSessionExists;
 
     @BeforeEach
     void setUp() {
@@ -59,12 +64,18 @@ class AuthProvisioningServiceTest {
         usersRow = List.of();
         validMembershipRoleByOrgId = new HashMap<>();
         mostRecentMembershipResult = List.of();
+        revokedSessionExists = false;
 
         lenient().doAnswer(inv -> {
             Object[] args = inv.getArguments();
             String sql = (String) args[0];
             capturedSql.add(sql);
 
+            if (sql.contains("FROM revoked_tokens")) {
+                return revokedSessionExists
+                        ? List.<Map<String, Object>>of(Map.of("?column?", 1))
+                        : List.<Map<String, Object>>of();
+            }
             if (sql.contains("FROM users WHERE email")) {
                 return usersRow;
             }
@@ -165,5 +176,84 @@ class AuthProvisioningServiceTest {
         assertThat(ctx.orgId()).isEqualTo(homeOrgId);
         assertThat(ctx.orgRole()).isNull();
         verify(mainJdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    // -------------------------------------------------------------------------
+    // RFC 0015 Phase 2 — switchActiveOrg (explicit, user-driven switch)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void switchActiveOrg_validMembership_persistsLastActiveOrgId_andReturnsCtx() {
+        UUID requestedOrgId = UUID.randomUUID();
+        usersRow = List.of(userRow(homeOrgId, "MEMBER", null));
+        validMembershipRoleByOrgId.put(requestedOrgId, "ENGINEER");
+
+        OrgContextRecord ctx = service.switchActiveOrg(email, requestedOrgId);
+
+        assertThat(ctx.orgId()).isEqualTo(requestedOrgId);
+        assertThat(ctx.orgRole()).isEqualTo("ENGINEER");
+        assertThat(ctx.platformAdmin()).isFalse();
+        assertThat(capturedSql.stream().anyMatch(sql ->
+                sql.contains("UPDATE users SET last_active_org_id"))).isTrue();
+    }
+
+    @Test
+    void switchActiveOrg_nonMemberOrg_throwsForbidden_noPersistence() {
+        UUID requestedOrgId = UUID.randomUUID();
+        usersRow = List.of(userRow(homeOrgId, "MEMBER", null));
+        // requestedOrgId absent from validMembershipRoleByOrgId — no membership
+
+        assertThatThrownBy(() -> service.switchActiveOrg(email, requestedOrgId))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(capturedSql.stream().anyMatch(sql ->
+                sql.contains("UPDATE users SET last_active_org_id"))).isFalse();
+    }
+
+    @Test
+    void switchActiveOrg_revokedMembership_throwsForbidden() {
+        UUID requestedOrgId = UUID.randomUUID();
+        usersRow = List.of(userRow(homeOrgId, "MEMBER", null));
+        // A revoked membership is filtered out at the "validMembershipRole" query level —
+        // same as "no membership at all" from this service's point of view.
+
+        assertThatThrownBy(() -> service.switchActiveOrg(email, requestedOrgId))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void switchActiveOrg_revokedSession_throwsForbidden_noPersistence() {
+        UUID requestedOrgId = UUID.randomUUID();
+        usersRow = List.of(userRow(homeOrgId, "MEMBER", null));
+        validMembershipRoleByOrgId.put(requestedOrgId, "ADMIN");
+        revokedSessionExists = true;
+
+        assertThatThrownBy(() -> service.switchActiveOrg(email, requestedOrgId))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("revoked");
+
+        assertThat(capturedSql.stream().anyMatch(sql ->
+                sql.contains("UPDATE users SET last_active_org_id"))).isFalse();
+    }
+
+    @Test
+    void switchActiveOrg_platformAdminCaller_rejected() {
+        UUID requestedOrgId = UUID.randomUUID();
+        usersRow = List.of(userRow(homeOrgId, "PLATFORM_ADMIN", null));
+        validMembershipRoleByOrgId.put(requestedOrgId, "ADMIN"); // even if a row existed, must still reject
+
+        assertThatThrownBy(() -> service.switchActiveOrg(email, requestedOrgId))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("act-as-org");
+
+        verify(mainJdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void switchActiveOrg_userNotFound_throwsAuthException() {
+        usersRow = List.of();
+
+        assertThatThrownBy(() -> service.switchActiveOrg(email, UUID.randomUUID()))
+                .isInstanceOf(AuthException.class);
     }
 }

@@ -4,6 +4,8 @@ import com.certguard.auth.dto.response.ValidateResponse;
 import com.certguard.auth.entity.User;
 import com.certguard.auth.entity.UserSession;
 import com.certguard.auth.exception.AuthException;
+import com.certguard.auth.exception.ForbiddenException;
+import com.certguard.auth.repository.UserRepository;
 import com.certguard.auth.repository.UserSessionRepository;
 import com.certguard.auth.security.UnifiedTokenProvider;
 import com.certguard.auth.service.*;
@@ -32,6 +34,7 @@ import static org.mockito.Mockito.*;
 class TokenServiceTest {
 
     @Mock UserSessionRepository sessionRepository;
+    @Mock UserRepository userRepository;
     @Mock GoogleAuthService googleAuthService;
     @Mock MicrosoftAuthService microsoftAuthService;
     @Mock EmailAuthService emailAuthService;
@@ -263,5 +266,90 @@ class TokenServiceTest {
     @Test
     void expirationSeconds_nullCtx_returnsNormalUserTtl() {
         assertThat(tokenProvider.expirationSeconds(null)).isEqualTo(NORMAL_USER_EXPIRATION_MS / 1000);
+    }
+
+    // -------------------------------------------------------------------------
+    // RFC 0015 Phase 2 — switchOrg
+    // -------------------------------------------------------------------------
+
+    @Test
+    void switchOrg_validSwitch_returnsNewTokenScopedToRequestedOrg_andInvalidatesOldSession() {
+        UUID userId = UUID.randomUUID();
+        UUID orgAId = UUID.randomUUID();
+        UUID orgBId = UUID.randomUUID();
+
+        OrgContextRecord ctxA = new OrgContextRecord(userId, orgAId, "ADMIN", false);
+        OrgContextRecord ctxB = new OrgContextRecord(userId, orgBId, "ENGINEER", false);
+
+        User user = User.builder()
+                .id(userId).email("switcher@example.com").name("Switcher").providerId("email").build();
+
+        when(sessionRepository.save(any(UserSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        try {
+            when(provisioningService.resolveOrProvision(anyString(), anyString())).thenReturn(ctxA);
+        } catch (Exception ignored) { }
+        String oldToken = tokenService.createSession(user, "email", "127.0.0.1").token();
+
+        when(userRepository.findByEmail("switcher@example.com")).thenReturn(java.util.Optional.of(user));
+        try {
+            when(provisioningService.switchActiveOrg("switcher@example.com", orgBId)).thenReturn(ctxB);
+            // After the switch, last_active_org_id points at B — createSession's re-resolve reflects that.
+            when(provisioningService.resolveOrProvision(anyString(), anyString())).thenReturn(ctxB);
+        } catch (Exception ignored) { }
+
+        var resp = tokenService.switchOrg(oldToken, orgBId, "127.0.0.1");
+
+        Claims newClaims = tokenProvider.parse(resp.token());
+        assertThat(newClaims.get("orgId", String.class)).isEqualTo(orgBId.toString());
+        assertThat(newClaims.get("orgRole", String.class)).isEqualTo("ENGINEER");
+
+        verify(sessionRepository).deleteBySessionToken(oldToken);
+    }
+
+    @Test
+    void switchOrg_platformAdminCaller_throwsForbidden_beforeAnyPersistence() {
+        UUID userId = UUID.randomUUID();
+        OrgContextRecord adminCtx = new OrgContextRecord(userId, null, null, true);
+
+        User adminUser = User.builder()
+                .id(userId).email("admin@certguard.cloud").name("Admin").providerId("email").build();
+
+        when(sessionRepository.save(any(UserSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        try {
+            when(provisioningService.resolveOrProvision(anyString(), anyString())).thenReturn(adminCtx);
+        } catch (Exception ignored) { }
+        String adminToken = tokenService.createSession(adminUser, "email", "127.0.0.1").token();
+
+        assertThatThrownBy(() -> tokenService.switchOrg(adminToken, UUID.randomUUID(), "127.0.0.1"))
+                .isInstanceOf(ForbiddenException.class);
+
+        verify(sessionRepository, never()).deleteBySessionToken(anyString());
+    }
+
+    @Test
+    void switchOrg_nonMemberOrRevoked_propagatesForbiddenFromProvisioningService() {
+        UUID userId = UUID.randomUUID();
+        UUID orgAId = UUID.randomUUID();
+        UUID targetOrgId = UUID.randomUUID();
+        OrgContextRecord ctxA = new OrgContextRecord(userId, orgAId, "ADMIN", false);
+
+        User user = User.builder()
+                .id(userId).email("switcher2@example.com").name("Switcher2").providerId("email").build();
+
+        when(sessionRepository.save(any(UserSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        try {
+            when(provisioningService.resolveOrProvision(anyString(), anyString())).thenReturn(ctxA);
+        } catch (Exception ignored) { }
+        String oldToken = tokenService.createSession(user, "email", "127.0.0.1").token();
+
+        try {
+            when(provisioningService.switchActiveOrg("switcher2@example.com", targetOrgId))
+                    .thenThrow(new ForbiddenException("Not an active member of that organization"));
+        } catch (Exception ignored) { }
+
+        assertThatThrownBy(() -> tokenService.switchOrg(oldToken, targetOrgId, "127.0.0.1"))
+                .isInstanceOf(ForbiddenException.class);
+
+        verify(sessionRepository, never()).deleteBySessionToken(anyString());
     }
 }

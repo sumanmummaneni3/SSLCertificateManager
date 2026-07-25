@@ -250,6 +250,26 @@ export default function App() {
     setPhase("launch");
   };
 
+  // RFC 0015 Phase 2 — org switcher support.
+  // onSwitchOrg: OrgSwitcher already has the new token from a successful
+  // switch-org call; reuse handleToken so the refetch-and-reset-dashboard-state
+  // flow is identical to a fresh login (no second, hand-rolled refetch path).
+  const onSwitchOrg = (newToken) => {
+    handleToken(newToken);
+  };
+
+  // onRefreshMe: lets OrgSwitcher drop a stale membership (e.g. after a 403 on
+  // an org the user was just revoked from) without a full page reload.
+  const refreshMe = useCallback(async () => {
+    if (!token) return;
+    try {
+      const me = await api.getMe(token);
+      setMeData(me);
+    } catch {
+      // Non-fatal — the reactive 401 handler covers real session expiry.
+    }
+  }, [token]);
+
   const afterOrgSetup = async () => {
     const org = await api.getOrg(token).catch(() => orgData);
     setOrgData(org);
@@ -297,7 +317,7 @@ export default function App() {
       {phase === "reset-password" && <ResetPasswordScreen resetToken={authUrlToken} onGoToSignIn={goToLaunch} />}
       {phase === "org-setup"    && <OrgSetup token={token} onDone={afterOrgSetup} toast={toast} />}
       {phase === "first-target" && <FirstTarget token={token} onDone={afterFirstTarget} toast={toast} />}
-      {phase === "app"          && <AppShell token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} onExpireSession={expireSession} />}
+      {phase === "app"          && <AppShell token={token} org={orgData} me={meData} toast={toast} onLogout={handleLogout} initialCertId={returnToCertId} onExpireSession={expireSession} onSwitchOrg={onSwitchOrg} onRefreshMe={refreshMe} />}
       {phase === "invite"       && <InviteAcceptScreen inviteToken={inviteToken} onAccepted={handleToken} toast={toast} />}
       {phase === "anon-landing" && (
         <ScanLandingPage

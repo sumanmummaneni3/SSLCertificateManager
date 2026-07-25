@@ -1,6 +1,7 @@
 import { useTheme } from "@/theme/useTheme.js";
 import { SIDEBAR_THEMES } from "@/theme/tokens.js";
 import { NAV_GROUPS, MSP_GROUP, ADMIN_GROUP } from "./navGroups.js";
+import { OrgSwitcher } from "@/components/OrgSwitcher.jsx";
 
 function NavItem({ item, active, onView }) {
   return (
@@ -17,7 +18,7 @@ function NavItem({ item, active, onView }) {
   );
 }
 
-export function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout }) {
+export function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogout, token, onSwitchOrg, onRefreshMe, toast }) {
   const { mode, toggle } = useTheme();
   const themeVars = SIDEBAR_THEMES[theme]?.vars || SIDEBAR_THEMES.dark.vars;
   const isMsp = org?.orgType === "MSP";
@@ -59,7 +60,17 @@ export function Sidebar({ view, onView, org, me, theme = "dark", onTheme, onLogo
         );
       })}
       <div className="sidebar-footer">
-        <div className="org-tag"><span aria-hidden="true">🏢</span> <span>{org?.name || "My Org"}</span></div>
+        {/* Platform admins switch org context via act-as-org (see AppShell's
+            impersonation banner), not this endpoint — the backend 403s
+            switch-org for them, so don't offer a dropdown that always fails. */}
+        {(me?.memberships?.length ?? 0) > 1 && !isPlatformAdmin ? (
+          <div className="org-tag">
+            <span aria-hidden="true">🏢</span>
+            <OrgSwitcher me={me} token={token} onSwitched={onSwitchOrg} onRefreshMe={onRefreshMe} toast={toast} />
+          </div>
+        ) : (
+          <div className="org-tag"><span aria-hidden="true">🏢</span> <span>{org?.name || "My Org"}</span></div>
+        )}
         {org?.email && <div className="org-tag" style={{ fontSize: "0.62rem" }}>{org.email}</div>}
         <div className="org-tag" style={{ fontSize: "0.62rem" }}>
           Plan: <span>{org?.subscriptionTier || "—"}</span>
