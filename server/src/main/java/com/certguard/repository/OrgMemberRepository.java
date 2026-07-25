@@ -21,6 +21,14 @@ public interface OrgMemberRepository extends JpaRepository<OrgMember, UUID> {
     List<OrgMember> findAllByUserId(UUID userId);
 
     /**
+     * RFC 0015 Phase 2 — the exact set of orgs a user can actually switch to (used by
+     * MeController's {@code memberships} list so the UI org-switcher never offers a
+     * revoked or still-pending membership). Unlike {@link #findAllByUserId}, this
+     * filters out revoked and non-accepted rows.
+     */
+    List<OrgMember> findAllByUserIdAndInviteStatusAndRevokedAtIsNull(UUID userId, InviteStatus status);
+
+    /**
      * RFC 0015 Phase 1: used by ActiveOrgResolver to validate that a candidate org
      * (last-active or home) is still a live, accepted membership for the user —
      * unlike {@link #findByOrganizationIdAndUserId}, this filters out revoked and

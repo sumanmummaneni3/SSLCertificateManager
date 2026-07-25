@@ -142,6 +142,23 @@ public class AuthController {
     }
 
     /**
+     * POST /api/auth/switch-org
+     * RFC 0015 Phase 2 — the AUTHORITATIVE explicit org switch (RS256). A logged-in user
+     * with multiple org memberships picks a different org without logging out; validates
+     * membership + revocation, persists the choice as {@code last_active_org_id} (sticky
+     * on future logins), invalidates the presenting session, and returns a freshly-scoped
+     * token. Mirrors the identity-extraction pattern of {@link #logout}.
+     */
+    @PostMapping("/switch-org")
+    public ResponseEntity<TokenResponse> switchOrg(@Valid @RequestBody SwitchOrgRequest req,
+                                                    @RequestHeader("Authorization") String authHeader,
+                                                    HttpServletRequest httpReq) {
+        String token = extractBearer(authHeader);
+        TokenResponse resp = tokenService.switchOrg(token, req.orgId(), clientIp(httpReq));
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
      * DELETE /api/auth/session
      * Revokes the current session. The token is immediately invalid for /validate calls.
      */
