@@ -94,6 +94,16 @@ app:
     # Comma-separated list of Google-authenticated emails that receive PLATFORM_ADMIN role.
     # Set via environment variable: PLATFORM_ADMIN_EMAILS=you@yourdomain.com
     emails: ${PLATFORM_ADMIN_EMAILS:}
+  backfill:
+    last-active-org:
+      # RFC 0015 Phase 3 — one-shot targeted rescue for users stuck before Phase 1 shipped
+      # (see LastActiveOrgBackfillRunner / BackfillLastActiveOrgService). NOT a scheduled
+      # job: runs once at startup, only when explicitly set. Values:
+      #   off      (default) — do nothing.
+      #   dry-run  — identify and log affected users; zero writes.
+      #   apply    — perform the backfill (idempotent — a second run affects 0 rows).
+      # Must default to off; never set this in a normal deploy's baseline config.
+      mode: ${APP_BACKFILL_LAST_ACTIVE_ORG_MODE:off}
   renewal-service:
     url: ${RENEWAL_SERVICE_URL:http://renewal-service:8444}
   internal:
